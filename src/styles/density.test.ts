@@ -63,7 +63,7 @@ describe('list density', () => {
   it('keeps every chrome height on the shared compact scale', () => {
     expect(tokens).toContain('--header-h: 44px');
     expect(tokens).toContain('--footer-h: 30px');
-    expect(rule(app, '.history-pane'))
+    expect(rule(app, '.history-content'))
       .toContain('grid-template-rows: var(--header-h) minmax(0, 1fr) var(--footer-h)');
   });
 
