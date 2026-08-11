@@ -1918,6 +1918,7 @@ fn to_sql_i64(value: u64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::PlatformKind;
 
     #[test]
     fn sync_preferences_are_safe_by_default() {
