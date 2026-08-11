@@ -16,8 +16,8 @@ use crate::clipboard::listener::{self, CaptureSink, ClipEvent};
 use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::models::{
-    ClipItem, Counts, ImageCompression, ImageFormat, ImageMeta, ItemKind, ListQuery, PasteFlavor,
-    Settings, StoredFile, StoredFileStatus, SyncState, SystemAppearance,
+    ClipItem, Counts, DeviceIdentity, ImageCompression, ImageFormat, ImageMeta, ItemKind,
+    ListQuery, PasteFlavor, Settings, StoredFile, StoredFileStatus, SyncState, SystemAppearance,
 };
 use crate::win::paste;
 use crate::AppState;
@@ -230,8 +230,32 @@ pub async fn counts(state: tauri::State<'_, AppState>) -> Result<Counts> {
 }
 
 #[tauri::command]
-pub async fn load_settings(state: tauri::State<'_, AppState>) -> Result<Settings> {
-    Ok(state.settings.read().clone())
+pub async fn known_devices(state: tauri::State<'_, AppState>) -> Result<Vec<DeviceIdentity>> {
+    let mut devices = state.db.known_devices()?;
+    let local = state.settings.read().device_identity();
+    if let Some(stored_local) = devices.iter_mut().find(|device| device.id == "local") {
+        stored_local.name = local.name;
+        stored_local.platform = local.platform;
+        stored_local.color = local.color;
+    }
+    for peer in state.sync.state(&state.settings.read()).peers {
+        if !devices.iter().any(|device| device.id == peer.device.id) {
+            devices.push(peer.device);
+        }
+    }
+    Ok(devices)
+}
+
+#[tauri::command]
+pub async fn load_settings(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<Settings> {
+    let registered = autostart_enabled(&app)?;
+    let mut settings = state.settings.read().clone();
+    if settings.launch_at_login != registered {
+        settings.launch_at_login = registered;
+        state.db.save_settings(&settings)?;
+        *state.settings.write() = settings.clone();
+    }
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -243,6 +267,7 @@ pub async fn save_settings(
     // Storage changes use the verified migration command; never accept a raw
     // path mutation through the general settings form.
     let previous = state.settings.read().clone();
+    let previous_autostart = autostart_enabled(&app)?;
     settings.storage_path = previous.storage_path.clone();
     settings.file_include_extensions =
         crate::capture_policy::normalize_extensions(&settings.file_include_extensions);
@@ -250,12 +275,21 @@ pub async fn save_settings(
         crate::capture_policy::normalize_extensions(&settings.file_exclude_extensions);
     settings.ignored_apps = crate::capture_policy::normalize_ignored_apps(&settings.ignored_apps);
     settings.image_quality = settings.image_quality.clamp(1, 100);
+    validate_filter_shortcuts(&settings)?;
     // Both accelerators are validated together so Settings can surface a clear
     // "same shortcut" error instead of one action silently stealing the other.
     let hotkeys_changed = settings.hotkey != previous.hotkey
         || settings.full_window_hotkey != previous.full_window_hotkey;
+    if settings.launch_at_login != previous_autostart {
+        set_autostart_enabled(&app, settings.launch_at_login)?;
+    }
     if hotkeys_changed {
-        register_hotkeys(&app, &settings.hotkey, &settings.full_window_hotkey)?;
+        if let Err(error) = register_hotkeys(&app, &settings.hotkey, &settings.full_window_hotkey) {
+            if settings.launch_at_login != previous_autostart {
+                let _ = set_autostart_enabled(&app, previous_autostart);
+            }
+            return Err(error);
+        }
     }
     if let Err(error) = state.db.save_settings(&settings) {
         if hotkeys_changed {
@@ -263,6 +297,13 @@ pub async fn save_settings(
                 register_hotkeys(&app, &previous.hotkey, &previous.full_window_hotkey)
             {
                 log::error!("could not restore the previous hotkeys: {rollback_error}");
+            }
+        }
+        if settings.launch_at_login != previous_autostart {
+            if let Err(rollback_error) = set_autostart_enabled(&app, previous_autostart) {
+                log::error!(
+                    "could not restore the previous launch-at-login state: {rollback_error}"
+                );
             }
         }
         return Err(error);
@@ -1165,14 +1206,68 @@ fn write_thumbnail(bytes: &[u8], dest: &std::path::Path) -> Result<()> {
 /// running app. Called from `save_settings`.
 pub fn apply_runtime_settings(app: &AppHandle, settings: &Settings) -> Result<()> {
     crate::native_appearance::apply_all(app, settings);
-    let autostart = app.autolaunch();
-    let autostart_result = if settings.launch_at_login {
-        autostart.enable()
+    Ok(())
+}
+
+fn autostart_enabled(app: &AppHandle) -> Result<bool> {
+    app.autolaunch().is_enabled().map_err(|error| {
+        Error::Other(format!(
+            "Windows launch-at-login state could not be read: {error}"
+        ))
+    })
+}
+
+fn set_autostart_enabled(app: &AppHandle, enabled: bool) -> Result<()> {
+    let registration = app.autolaunch();
+    let result = if enabled {
+        registration.enable()
     } else {
-        autostart.disable()
+        registration.disable()
     };
-    if let Err(error) = autostart_result {
-        log::warn!("could not update launch-at-login setting: {error}");
+    result.map_err(|error| {
+        Error::Other(format!(
+            "Windows launch-at-login could not be updated: {error}"
+        ))
+    })
+}
+
+fn validate_filter_shortcuts(settings: &Settings) -> Result<()> {
+    const LABELS: [&str; 9] = [
+        "Toggle navigation",
+        "All history",
+        "Favorites",
+        "Text filter",
+        "Image filter",
+        "Link filter",
+        "File filter",
+        "Email filter",
+        "Color filter",
+    ];
+    if settings.filter_shortcuts.len() != LABELS.len() {
+        return Err(Error::Other(format!(
+            "Keyboard shortcuts must contain exactly {} filter actions",
+            LABELS.len()
+        )));
+    }
+    let (quick, full) =
+        crate::hotkey::validate_distinct(&settings.hotkey, &settings.full_window_hotkey)?;
+    let mut assigned =
+        std::collections::HashMap::from([(quick, "Quick clipboard"), (full, "Open full Clipmo")]);
+    for index in 0..=9 {
+        let combination = format!("Ctrl+{index}");
+        assigned.insert(
+            crate::hotkey::parse(&combination)?,
+            "Device quick switching",
+        );
+    }
+    for (label, combination) in LABELS.into_iter().zip(&settings.filter_shortcuts) {
+        let parsed = crate::hotkey::parse(combination)
+            .map_err(|error| Error::Other(format!("{label}: {error}")))?;
+        if let Some(existing) = assigned.insert(parsed, label) {
+            return Err(Error::Other(format!(
+                "“{label}” and “{existing}” cannot use the same shortcut"
+            )));
+        }
     }
     Ok(())
 }

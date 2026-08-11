@@ -12,7 +12,7 @@ use std::sync::Arc;
 #[cfg(not(test))]
 use tauri::{Manager, WindowEvent};
 #[cfg(not(test))]
-use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 
 pub mod capture_policy;
 pub mod clipboard;
@@ -106,6 +106,7 @@ pub fn run() {
             commands::clear_history,
             commands::clear_category,
             commands::counts,
+            commands::known_devices,
             commands::load_settings,
             commands::save_settings,
             commands::change_storage_location,
@@ -189,7 +190,11 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("could not resolve app data dir: {e}"))?;
     let db_path = data_dir.join("clipdeck.db");
     let db = Arc::new(db::Db::open(&db_path)?);
-    let loaded_settings = db.load_settings().unwrap_or_default();
+    let mut loaded_settings = db.load_settings().unwrap_or_default();
+    match app.autolaunch().is_enabled() {
+        Ok(registered) => loaded_settings.launch_at_login = registered,
+        Err(error) => log::warn!("launch-at-login state could not be read during startup: {error}"),
+    }
     db.save_settings(&loaded_settings)?;
     let settings = Arc::new(parking_lot::RwLock::new(loaded_settings));
     let requested_root = settings
@@ -261,7 +266,9 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(error) = commands::enforce_history_policy_on_startup(app) {
         log::error!("startup history cleanup failed: {error}");
     }
-    if let Err(error) = commands::install_clipboard_listener(app) { log::warn!("clipboard listener unavailable: {error}"); }
+    if let Err(error) = commands::install_clipboard_listener(app) {
+        log::warn!("clipboard listener unavailable: {error}");
+    }
 
     Ok(())
 }

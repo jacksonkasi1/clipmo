@@ -59,6 +59,8 @@
   --gap-tight: 2px;
   --gap-control: 6px;
   --gap-section: 10px;
+  --sidebar-w: 44px;
+  --transition-pane: 170ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* Native-material windows.

@@ -1,5 +1,5 @@
 // ** import types
-import type { ClipItem, Counts, ItemKind, ListQuery, Settings, SyncState, SystemAppearance } from './types';
+import type { ClipItem, Counts, DeviceIdentity, ItemKind, ListQuery, Settings, SyncState, SystemAppearance } from './types';
 
 // ** import lib
 import { create } from 'zustand';
@@ -16,6 +16,9 @@ interface State {
   search: string;
   activeKinds: ItemKind[];
   favoritesOnly: boolean;
+  devices: DeviceIdentity[];
+  activeDeviceId: string | null;
+  sidebarOpen: boolean;
   counts: Counts;
   settings: Settings | null;
   sync: SyncState | null;
@@ -69,7 +72,12 @@ interface Actions {
   requestResync: (source: ResyncSource) => Promise<void>;
   setSearch: (search: string) => Promise<void>;
   toggleKind: (kind: ItemKind) => Promise<void>;
+  setCategory: (kind: ItemKind | null) => Promise<void>;
+  showFavorites: () => Promise<void>;
   toggleFavoritesOnly: () => Promise<void>;
+  loadKnownDevices: () => Promise<void>;
+  setDevice: (deviceId: string | null) => Promise<void>;
+  toggleSidebar: () => void;
   select: (id: number | null) => void;
   selectOnly: (id: number) => void;
   selectToggle: (id: number) => void;
@@ -115,6 +123,9 @@ export const useStore = create<State & Actions>((set, get) => ({
   search: '',
   activeKinds: [],
   favoritesOnly: false,
+  devices: [],
+  activeDeviceId: null,
+  sidebarOpen: false,
   counts: {
     total: 0,
     favorites: 0,
@@ -267,10 +278,38 @@ export const useStore = create<State & Actions>((set, get) => ({
     await get().refresh();
   },
 
+  setCategory: async (kind) => {
+    set({ activeKinds: kind ? [kind] : [], favoritesOnly: false });
+    await get().refresh();
+  },
+
+  showFavorites: async () => {
+    set({ activeKinds: [], favoritesOnly: true });
+    await get().refresh();
+  },
+
   toggleFavoritesOnly: async () => {
     set({ favoritesOnly: !get().favoritesOnly });
     await get().refresh();
   },
+
+  loadKnownDevices: async () => {
+    const devices = await api.knownDevices();
+    set((state) => ({
+      devices,
+      activeDeviceId: state.activeDeviceId !== null
+        && devices.some((device) => device.id === state.activeDeviceId)
+        ? state.activeDeviceId
+        : null,
+    }));
+  },
+
+  setDevice: async (deviceId) => {
+    set({ activeDeviceId: deviceId });
+    await get().refresh();
+  },
+
+  toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
 
   select: (id) => {
     if (id === null) {
@@ -498,6 +537,7 @@ function buildQuery(s: State, offset: number): ListQuery {
     search: s.search.trim() || null,
     kinds: s.activeKinds,
     favoritesOnly: s.favoritesOnly,
+    deviceIds: s.activeDeviceId ? [s.activeDeviceId] : [],
     limit: HISTORY_PAGE_SIZE,
     offset,
   };
@@ -514,7 +554,10 @@ export async function bootStore() {
   // either webview is starting cannot be missed. One failed startup request
   // must not disable all later real-time updates.
   const listenerResults = await Promise.allSettled([
-    on<ClipItem>('clip-updated', () => void refresh()),
+    on<ClipItem>('clip-updated', () => {
+      void refresh();
+      void useStore.getState().loadKnownDevices();
+    }),
     on<string>('clip-touched', () => void refresh()),
     on<Settings>('settings-updated', (settings) => {
       useStore.setState((state) => ({
@@ -524,6 +567,7 @@ export async function bootStore() {
     }),
     on<void>('sync-peers-updated', () => {
       void useStore.getState().loadSyncState();
+      void useStore.getState().loadKnownDevices();
     }),
     on<SystemAppearance>('appearance-changed', (appearance) => {
       useStore.getState().applyAppearance(appearance);
@@ -558,6 +602,7 @@ export async function bootStore() {
     initialRefresh,
     useStore.getState().loadSettings(),
     useStore.getState().loadSyncState(),
+    useStore.getState().loadKnownDevices(),
     syncAppearance(),
   ]);
   const loadFailure = loadResults.find(

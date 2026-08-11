@@ -85,6 +85,9 @@ describe('refresh race resolution', () => {
       search: '',
       activeKinds: [],
       favoritesOnly: false,
+      devices: [],
+      activeDeviceId: null,
+      sidebarOpen: false,
       counts: baseCounts,
       settings: null,
       sync: null,
@@ -182,7 +185,12 @@ describe('refresh race resolution', () => {
     apiMock.listItems.mockResolvedValueOnce([]);
     apiMock.counts.mockResolvedValueOnce(baseCounts);
 
-    useStore.setState({ search: 'clip', activeKinds: ['files'], favoritesOnly: true });
+    useStore.setState({
+      search: 'clip',
+      activeKinds: ['files'],
+      favoritesOnly: true,
+      activeDeviceId: 'android-1',
+    });
     await useStore.getState().refresh();
 
     const firstCall = apiMock.listItems.mock.calls[0];
@@ -191,5 +199,6 @@ describe('refresh race resolution', () => {
     expect(query.search).toBe('clip');
     expect(query.kinds).toEqual(['files']);
     expect(query.favoritesOnly).toBe(true);
+    expect(query.deviceIds).toEqual(['android-1']);
   });
 });

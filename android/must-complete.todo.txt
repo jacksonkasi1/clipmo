@@ -1,0 +1,138 @@
+CLIPMO ANDROID — MUST COMPLETE BEFORE CALLING SYNC FINISHED
+===========================================================
+
+This checklist is based on the current Android and Windows/Rust source audit.
+Do not mark an item complete without the listed build/device evidence.
+
+P0 — WINDOWS/RUST WIRE COMPATIBILITY
+------------------------------------
+[ ] Make ClipSyncService JSON exactly match Rust protocol "clipmo-lan-v2".
+    Rust uses camelCase JSON fields. Android currently declares snake_case
+    properties such as pairing_code, tcp_port, device_id, wall_ms, id_hash,
+    content_hash, and copied_at. Use @JsonProperty or camelCase Kotlin names.
+
+[ ] Add Jackson Kotlin support (jackson-module-kotlin + registerKotlinModule).
+    Plain jackson-databind is not sufficient for reliable Kotlin data-class
+    construction/deserialization.
+
+[ ] Add polymorphic SyncBody metadata matching Rust serde:
+      { "type": "clipUpsert", ... }
+      { "type": "clipEdit", ... }
+      { "type": "favoriteToggle", ... }
+      { "type": "tombstone", ... }
+    Use @JsonTypeInfo and @JsonSubTypes (or an explicit wire DTO/parser).
+
+[ ] Add golden protocol tests in both projects.
+    - Android serializes a text ClipUpsert; Rust deserializes it.
+    - Rust serializes a text ClipUpsert; Android deserializes it.
+    - Verify every field name and enum value, not only discovery packets.
+    Discovery/pairing visibility does NOT prove clipboard transfer works.
+
+P0 — TEXT SYNC AND LOOP PREVENTION
+----------------------------------
+[ ] Android -> Windows: copy unique text on Android and verify the exact text,
+    Android device id/name/platform, and synced status in Windows SQLite/UI.
+
+[ ] Windows -> Android: copy unique text on Windows and verify it appears in
+    Android history and, where Android permits, the Android system clipboard.
+
+[ ] Prevent echo loops. watchLocalChanges must enqueue only locally originated
+    rows (for example sync_status='local'), never rows imported from Windows.
+
+[ ] Persist sync_last_seen_id after each processed batch. A service/app restart
+    must not resend the entire Android history.
+
+[ ] When writing a remote value to Android's system clipboard, set a one-shot
+    suppression token/hash before the write. MonitorService must consume that
+    token and skip reinserting/rebroadcasting the remote value.
+
+[ ] Use stable id_hash and origin version records. Never replace id_hash with
+    content_hash during edits; those identifiers have different purposes.
+
+[ ] Store origin_lamport and origin_wall_ms as Long values. Do not narrow them
+    with toInt(), which overflows real timestamps and large Lamport clocks.
+
+P0 — SERVICE LIFECYCLE AND RECONNECTION
+---------------------------------------
+[ ] On a null/sticky ClipSyncService intent, restore device id, device name,
+    pairing/trust state, and enabled state from persistent preferences.
+
+[ ] When Clipmo opens, restart MonitorService and ClipSyncService when their
+    persisted toggles are enabled. Reopening must reconnect automatically.
+
+[ ] Temporary Wi-Fi loss must retain pairing/trust, mark peers offline, and
+    rediscover/reconnect when the LAN returns without user repair.
+
+[ ] Persist a trusted-device list independent of currently discovered peers.
+    Provide Disconnect/Forget/Unpair per device and test multiple peers.
+
+[ ] Do not start a dataSync foreground service directly from BOOT_COMPLETED on
+    Android 15 / targetSdk 35: Android throws ForegroundServiceStartNotAllowedException.
+    Use an Android-supported restart/reconnect design and test API 35 behavior.
+    Reference:
+    https://developer.android.com/about/versions/15/changes/foreground-service-types
+
+[ ] Handle Android 15's dataSync foreground-service time budget. A permanent
+    dataSync FGS is limited; implement onTimeout and a supported continuation
+    strategy rather than relying on an endless service.
+
+P0 — ANDROID CLIPBOARD PLATFORM LIMITS
+--------------------------------------
+[ ] Decide and document the supported capture model for Android 10+.
+    Ordinary background apps cannot reliably read every clipboard change.
+    Verify behavior while Clipmo is foreground, background, screen-locked, and
+    after process death. Do not claim unrestricted background capture if the OS
+    blocks it. Reference:
+    https://developer.android.com/privacy-and-security/risks/secure-clipboard-handling
+
+[ ] Never log raw clipboard contents, pairing secrets, or transferred payloads.
+
+P1 — SECURITY / REAL PAIRING
+----------------------------
+[ ] Treat the short pairing code as bootstrap only, not permanent authentication.
+    The current LAN frames are plaintext and a matching code is accepted from
+    any sender. Establish per-device trust keys and authenticated encryption
+    (for example TLS/Noise with pinned device identities).
+
+[ ] Reject untrusted device ids before accepting TCP payloads. Validate that
+    envelope.device.id equals envelope.body.version.deviceId.
+
+[ ] Rotate/revoke credentials on Forget/Unpair. Pairing must survive app and
+    device restarts until explicitly revoked.
+
+[ ] Keep frame/header/blob size limits and filename/path sanitization aligned
+    with Rust. Add malformed-frame, oversized-frame, and path-traversal tests.
+
+P1 — IMAGES, FILES, AND MUTATIONS
+--------------------------------
+[ ] Finish text, URL, email, and color first. Then implement image/file bodies
+    with the exact Rust chunk framing and byte limits.
+
+[ ] Verify favorite, edit, and tombstone propagation in both directions.
+[ ] Verify concurrent edits use Lamport/wall-clock/device-id ordering.
+[ ] Verify file extension allow/block policy and total/per-file size limits.
+
+BUILD AND DEVICE EVIDENCE
+-------------------------
+[ ] Use JDK 17. Run: gradlew.bat clean testDebugUnitTest assembleDebug
+[ ] Run lint: gradlew.bat lintDebug
+[ ] Install APK with adb and launch it.
+[ ] Inspect Logcat for MainActivity, MonitorService, and ClipSyncService crashes.
+[ ] Test Android API 29, API 34, and API 35 (real device where possible).
+[ ] Test two Windows devices plus at least one Android device on the same LAN.
+[ ] Test restart, reboot, Wi-Fi off/on, IP address change, and process kill.
+[ ] Record exact pass/fail evidence for:
+    - Windows -> Android text
+    - Android -> Windows text
+    - Windows -> Windows text
+    - no echo loop / no duplicate storm
+    - pairing/trust survives restart
+    - forgotten device cannot reconnect
+
+CLEANUP BEFORE COMMIT
+---------------------
+[ ] Remove development artifacts from production source if they are not needed:
+    debug_bytes.py, fix_buf.py, and test.txt.
+[ ] Keep only one authoritative Android database/model layer. The current tree
+    contains overlapping clipboard item/store helpers; consolidate after the
+    active migration is complete.

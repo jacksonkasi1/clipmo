@@ -1,8 +1,9 @@
 // ** import lib
-import { CornerDownLeft, Trash2, X } from 'lucide-react';
+import { CornerDownLeft, PanelLeftOpen, Trash2, X } from 'lucide-react';
 
 import { IconButton } from './IconButton';
 import { useStore } from '../lib/store';
+import { resolvedFilterShortcuts } from '../lib/filter-shortcuts';
 
 /** A compact keyboard-hint strip shared by the quick and full windows. */
 export function Footer() {
@@ -13,6 +14,10 @@ export function Footer() {
   const selectedIds = useStore((s) => s.selectedIds);
   const deleteSelected = useStore((s) => s.deleteSelected);
   const pasteOnEnter = useStore((s) => s.settings?.pasteOnEnter ?? true);
+  const sidebarOpen = useStore((s) => s.sidebarOpen);
+  const toggleSidebar = useStore((s) => s.toggleSidebar);
+  const settings = useStore((s) => s.settings);
+  const navigationShortcut = resolvedFilterShortcuts(settings?.filterShortcuts)[0];
   const hasSelection = items.some((item) => item.id === selectedId);
   const primaryVerb = pasteOnEnter ? 'Paste' : 'Copy';
 
@@ -37,6 +42,18 @@ export function Footer() {
 
   return (
     <footer className={`history-footer is-${mode}`} aria-label="Keyboard actions">
+      {!sidebarOpen && (
+        <button
+          type="button"
+          className="footer-menu-button"
+          title={`Open navigation (${navigationShortcut})`}
+          aria-label={`Open navigation, ${navigationShortcut}`}
+          onClick={toggleSidebar}
+        >
+          <PanelLeftOpen size={14} aria-hidden />
+          <span>Navigate</span>
+        </button>
+      )}
       <span className="footer-hint">
         <kbd aria-label="Up and down arrows">↑↓</kbd>
         <span>Navigate</span>

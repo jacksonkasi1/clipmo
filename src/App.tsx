@@ -5,12 +5,14 @@ import type { Backdrop } from './lib/types';
 import { useEffect, useRef, useState } from 'react';
 
 import { CommandPalette } from './components/CommandPalette';
+import { ClipboardSidebar } from './components/ClipboardSidebar';
 import { DetailsTable } from './components/DetailsTable';
 import { Footer } from './components/Footer';
 import { ItemList } from './components/ItemList';
 import { PreviewPane } from './components/PreviewPane';
 import { SearchBar } from './components/SearchBar';
 import { getListKeyboardAction } from './lib/list-navigation';
+import { FILTER_SHORTCUTS, matchesShortcut, resolvedFilterShortcuts } from './lib/filter-shortcuts';
 import { useStore } from './lib/store';
 import { api, on } from './lib/tauri';
 import { applyTheme } from './lib/theme';
@@ -38,6 +40,12 @@ export default function App() {
   const deleteItem = useStore((s) => s.deleteItem);
   const deleteSelected = useStore((s) => s.deleteSelected);
   const clearHistory = useStore((s) => s.clearHistory);
+  const devices = useStore((s) => s.devices);
+  const sidebarOpen = useStore((s) => s.sidebarOpen);
+  const toggleSidebar = useStore((s) => s.toggleSidebar);
+  const setCategory = useStore((s) => s.setCategory);
+  const showFavorites = useStore((s) => s.showFavorites);
+  const setDevice = useStore((s) => s.setDevice);
   const readinessSignaled = useRef(false);
   const [quickEntering, setQuickEntering] = useState(false);
 
@@ -99,6 +107,34 @@ export default function App() {
       const target = event.target as HTMLElement | null;
       const editing =
         target?.matches('input, textarea, select, [contenteditable="true"]') ?? false;
+
+      if (!editing && modifier && /^\d$/.test(event.key)) {
+        const deviceIndex = Number(event.key) - 1;
+        const device = devices[deviceIndex];
+        if (event.key === '0' || device) {
+          event.preventDefault();
+          void setDevice(event.key === '0' ? null : device?.id ?? null);
+          return;
+        }
+      }
+      const filterShortcutIndex = editing
+        ? -1
+        : resolvedFilterShortcuts(settings?.filterShortcuts)
+            .findIndex((shortcut) => matchesShortcut(event, shortcut));
+      if (filterShortcutIndex >= 0) {
+        event.preventDefault();
+        const target = FILTER_SHORTCUTS[filterShortcutIndex]?.target;
+        if (target === 'navigation') {
+          toggleSidebar();
+        } else if (target === 'favorites') {
+          void showFavorites();
+        } else if (target === 'all') {
+          void setCategory(null);
+        } else if (target) {
+          void setCategory(target);
+        }
+        return;
+      }
 
       if (showCommands && event.key === 'Escape') {
         event.preventDefault();
@@ -212,6 +248,11 @@ export default function App() {
     showCommands,
     showPreview,
     toggleFavorite,
+    devices,
+    setCategory,
+    setDevice,
+    showFavorites,
+    toggleSidebar,
   ]);
 
   useEffect(() => {
@@ -270,10 +311,16 @@ export default function App() {
 
   const clipboardLayout = (
     <>
-      <aside className="history-pane" aria-label="Clipboard history">
-        <SearchBar />
-        <ItemList />
-        <Footer />
+      <aside
+        className={`history-pane ${sidebarOpen ? 'sidebar-is-open' : ''}`}
+        aria-label="Clipboard history"
+      >
+        <ClipboardSidebar />
+        <div className="history-content">
+          <SearchBar />
+          <ItemList />
+          <Footer />
+        </div>
       </aside>
       {showPreview && (
         <main className="content-pane">

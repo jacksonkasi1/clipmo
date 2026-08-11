@@ -4,6 +4,7 @@ import type {
   ApplicationInfo,
   ClipItem,
   Counts,
+  DeviceIdentity,
   IgnoredApp,
   FlavorBundle,
   ItemKind,
@@ -50,6 +51,7 @@ export const api = {
   clearCategory: (kind: ItemKind, includeFavorites = false) =>
     invoke<void>('clear_category', { kind, includeFavorites }),
   counts: () => invoke<Counts>('counts'),
+  knownDevices: () => invoke<DeviceIdentity[]>('known_devices'),
   loadSettings: () => invoke<Settings>('load_settings'),
   saveSettings: (settings: Settings) =>
     invoke<Settings>('save_settings', { settings }),

@@ -93,6 +93,7 @@ export interface ClipItem {
 export interface ListQuery {
   search?: string | null;
   kinds?: ItemKind[];
+  deviceIds?: string[];
   favoritesOnly?: boolean;
   limit?: number;
   offset?: number;
@@ -142,6 +143,8 @@ export interface Settings {
   hotkey: string;
   /** Accelerator that opens the full, decorated application window. */
   fullWindowHotkey: string;
+  /** Navigation + category shortcuts, ordered by FILTER_SHORTCUTS. */
+  filterShortcuts?: string[];
   maxItems: number;
   retentionDays: number;
   captureImages: boolean;

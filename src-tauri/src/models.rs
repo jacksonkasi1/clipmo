@@ -309,6 +309,10 @@ pub struct ListQuery {
     /// Restrict to one or more categories. Empty = no kind filter.
     #[serde(default)]
     pub kinds: Vec<ItemKind>,
+    /// Restrict results to clipboard entries originating from these devices.
+    /// Empty = all devices. The special local id is stored as `local`.
+    #[serde(default)]
+    pub device_ids: Vec<String>,
     /// Only return starred entries.
     #[serde(default)]
     pub favorites_only: bool,
@@ -381,6 +385,15 @@ fn default_image_quality() -> u8 {
     80
 }
 
+fn default_filter_shortcuts() -> Vec<String> {
+    [
+        "Ctrl+B", "Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5", "Alt+6", "Alt+7", "Alt+8",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
 /// User-facing configuration, persisted in the `settings` table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -395,6 +408,10 @@ pub struct Settings {
     /// window. Must never equal [`Settings::hotkey`].
     #[serde(default = "default_full_window_hotkey")]
     pub full_window_hotkey: String,
+    /// In-app navigation/category shortcuts. Ordering is shared with the
+    /// frontend FILTER_SHORTCUTS definition.
+    #[serde(default = "default_filter_shortcuts")]
+    pub filter_shortcuts: Vec<String>,
     /// Maximum number of non-favorite entries retained. 0 disables pruning.
     pub max_items: u32,
     /// Delete non-favorite entries older than this many days. 0 disables.
@@ -475,6 +492,7 @@ impl Default for Settings {
             // third-party clipboard managers on Windows.
             hotkey: "Ctrl+Shift+V".to_string(),
             full_window_hotkey: default_full_window_hotkey(),
+            filter_shortcuts: default_filter_shortcuts(),
             max_items: 10_000,
             retention_days: 0,
             capture_images: true,

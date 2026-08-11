@@ -329,8 +329,9 @@ CREATE TABLE IF NOT EXISTS settings (
                     .trim()
                     .to_lowercase()
             );
-            sql.push_str(" AND (id IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?) OR lower(COALESCE(app_name, '')) LIKE ? OR lower(COALESCE(app_exe, '')) LIKE ? OR lower(COALESCE(tags, '')) LIKE ?)");
+            sql.push_str(" AND (id IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?) OR lower(COALESCE(app_name, '')) LIKE ? OR lower(COALESCE(app_exe, '')) LIKE ? OR lower(COALESCE(tags, '')) LIKE ? OR lower(COALESCE(device_name, '')) LIKE ?)");
             binds.push(Box::new(expr));
+            binds.push(Box::new(plain.clone()));
             binds.push(Box::new(plain.clone()));
             binds.push(Box::new(plain.clone()));
             binds.push(Box::new(plain));
@@ -343,6 +344,16 @@ CREATE TABLE IF NOT EXISTS settings (
             sql.push_str(&format!(" AND kind IN ({placeholders})"));
             for kind in &query.kinds {
                 binds.push(Box::new(kind.as_str().to_string()));
+            }
+        }
+
+        if !query.device_ids.is_empty() {
+            let placeholders = std::iter::repeat_n("?", query.device_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            sql.push_str(&format!(" AND device_id IN ({placeholders})"));
+            for device_id in &query.device_ids {
+                binds.push(Box::new(device_id.clone()));
             }
         }
 
@@ -363,6 +374,29 @@ CREATE TABLE IF NOT EXISTS settings (
             out.push(row?);
         }
         Ok(out)
+    }
+
+    /// Returns every device represented in persisted history, most recently
+    /// active first. Device identity is metadata, never inferred from labels.
+    pub fn known_devices(&self) -> Result<Vec<DeviceIdentity>> {
+        let conn = self.conn.lock();
+        let mut statement = conn.prepare_cached(
+            "SELECT device_id, device_name, device_platform, device_color,
+                    MAX(last_copied_at) AS most_recent
+             FROM items
+             GROUP BY device_id, device_name, device_platform, device_color
+             ORDER BY most_recent DESC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(DeviceIdentity {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                platform: PlatformKind::from_db_value(&row.get::<_, String>(2)?),
+                color: row.get(3)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Error::from)
     }
 
     pub fn get(&self, id: i64) -> Result<Option<ClipItem>> {
@@ -1096,6 +1130,46 @@ mod tests {
             .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].content, "the quick brown fox");
+    }
+
+    #[test]
+    fn device_category_and_search_filters_compose() {
+        let db = Db::open_in_memory().unwrap();
+        let mut android_link = text_item("https://github.com/clipmo", "android-link");
+        android_link.kind = ItemKind::Link;
+        android_link.device = Some(DeviceIdentity {
+            id: "phone-1".into(),
+            name: "Android phone".into(),
+            platform: PlatformKind::Android,
+            color: "#00aa00".into(),
+        });
+        db.upsert(&android_link).unwrap();
+
+        let mut windows_link = text_item("https://github.com/windows", "windows-link");
+        windows_link.kind = ItemKind::Link;
+        db.upsert(&windows_link).unwrap();
+
+        let hits = db
+            .list(&ListQuery {
+                search: Some("github".into()),
+                kinds: vec![ItemKind::Link],
+                device_ids: vec!["phone-1".into()],
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].device.id, "phone-1");
+
+        let device_name_hits = db
+            .list(&ListQuery {
+                search: Some("android phone".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(device_name_hits.len(), 1);
+        assert_eq!(device_name_hits[0].device.id, "phone-1");
+        assert_eq!(db.known_devices().unwrap().len(), 2);
     }
 
     #[test]

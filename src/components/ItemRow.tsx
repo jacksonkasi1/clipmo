@@ -36,10 +36,16 @@ export function ItemRow({
 }: Props) {
   const toggleFavorite = useStore((s) => s.toggleFavorite);
   // The left list is for scanning, so it carries the smallest amount of
-  // information that still identifies a row. Everything the list used to
-  // repeat — device name, sync wording, "Copied N times" — now lives only in
-  // the details pane, which is where a user goes to inspect an entry.
-  const remote = item.syncStatus !== 'local' && item.syncStatus !== 'synced';
+  // information that still identifies a row. A remote device name remains
+  // visible as quiet provenance; verbose sync wording and copy counts live in
+  // the details pane.
+  const hasSyncState = item.syncStatus !== 'local';
+  const remoteDeviceName = hasSyncState && item.device.name !== 'This device'
+    ? item.device.name
+    : null;
+  const syncDescription = remoteDeviceName
+    ? `${remoteDeviceName} · ${item.syncStatus}`
+    : `Sync ${item.syncStatus}`;
 
   return (
     <div
@@ -73,16 +79,17 @@ export function ItemRow({
         {mode === 'full' && (
           <div className="row-subtitle">
             <span>{item.source?.name ?? kindLabel(item.kind)}</span>
+            {remoteDeviceName && <span className="row-device-name"> · {remoteDeviceName}</span>}
           </div>
         )}
       </div>
       <div className="row-trailing">
         {/* Cross-device state is a single dot, not a badge with text and icons. */}
-        {remote && (
+        {hasSyncState && (
           <span
             className={`row-signal is-${item.syncStatus}`}
-            title={`${item.device.name} · ${item.syncStatus}`}
-            aria-label={`${item.device.name}, ${item.syncStatus}`}
+            title={syncDescription}
+            aria-label={syncDescription}
             role="img"
           />
         )}

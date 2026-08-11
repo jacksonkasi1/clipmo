@@ -2009,4 +2009,81 @@ mod tests {
         assert_eq!(safe_file_name(r"..\\..\\secret.txt"), "secret.txt");
         assert_eq!(safe_file_name("../../secret.txt"), "secret.txt");
     }
+
+    #[test]
+    fn rust_deserializes_android_clip_upsert_golden_json() {
+        let json = r##"{
+          "protocol":"clipmo-lan-v2",
+          "pairingCode":"123456",
+          "device":{"id":"android-device","name":"Pixel","platform":"android","color":"#78F13D"},
+          "tcpPort":47634,
+          "body":{
+            "type":"clipUpsert",
+            "clip":{
+              "idHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "kind":"text",
+              "preview":"from Android",
+              "content":"from Android",
+              "contentHash":"22222222222222222222222222222222",
+              "favorite":false,
+              "copiedAt":1700000000000,
+              "version":{"deviceId":"android-device","lamport":42,"wallMs":1700000000000}
+            }
+          }
+        }"##;
+
+        let envelope: SyncEnvelope = serde_json::from_str(json).expect("Android wire JSON");
+        assert_eq!(envelope.pairing_code, "123456");
+        assert_eq!(envelope.tcp_port, 47_634);
+        match envelope.body {
+            SyncBody::ClipUpsert { clip } => {
+                assert_eq!(clip.content, "from Android");
+                assert_eq!(clip.version.device_id, "android-device");
+            }
+            _ => panic!("expected clipUpsert"),
+        }
+    }
+
+    #[test]
+    fn rust_serializes_clip_upsert_with_android_field_names() {
+        let envelope = SyncEnvelope {
+            protocol: PROTOCOL.into(),
+            pairing_code: "123456".into(),
+            device: DeviceIdentity {
+                id: "windows-device".into(),
+                name: "Desktop".into(),
+                platform: PlatformKind::Windows,
+                color: "#1677FF".into(),
+            },
+            tcp_port: 47_634,
+            body: SyncBody::ClipUpsert {
+                clip: ClipSnapshot {
+                    id_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+                    kind: ItemKind::Text,
+                    preview: "hello".into(),
+                    content: "hello".into(),
+                    content_hash: "33333333333333333333333333333333".into(),
+                    favorite: false,
+                    copied_at: 1_700_000_000_001,
+                    version: SyncVersion {
+                        device_id: "windows-device".into(),
+                        lamport: 7,
+                        wall_ms: 1_700_000_000_001,
+                    },
+                },
+            },
+        };
+        let value = serde_json::to_value(envelope).expect("Rust wire JSON");
+        assert_eq!(value["pairingCode"], "123456");
+        assert_eq!(value["tcpPort"], 47_634);
+        assert_eq!(value["body"]["type"], "clipUpsert");
+        assert_eq!(
+            value["body"]["clip"]["idHash"],
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
+        assert_eq!(
+            value["body"]["clip"]["version"]["deviceId"],
+            "windows-device"
+        );
+    }
 }

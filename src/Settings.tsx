@@ -41,6 +41,7 @@ import { useStore } from './lib/store';
 import { api, fileSrc } from './lib/tauri';
 import { getPlatform } from './lib/platform';
 import { APP_SHORTCUTS, shortcutKeys } from './lib/shortcuts';
+import { FILTER_SHORTCUTS, resolvedFilterShortcuts } from './lib/filter-shortcuts';
 import { applyTheme } from './lib/theme';
 
 const HISTORY_KINDS = [
@@ -135,6 +136,16 @@ export default function Settings() {
       setSaving(false);
     }
   };
+
+  const configuredFilterShortcuts = resolvedFilterShortcuts(local.filterShortcuts);
+  const shortcutConflict = findShortcutConflict([
+    { label: 'Quick clipboard', shortcut: local.hotkey },
+    { label: 'Open full Clipmo', shortcut: local.fullWindowHotkey },
+    ...FILTER_SHORTCUTS.map((definition, index) => ({
+      label: definition.label,
+      shortcut: configuredFilterShortcuts[index] ?? definition.defaultShortcut,
+    })),
+  ]);
 
   const chooseStorage = async () => {
     setSaved(false);
@@ -438,9 +449,27 @@ export default function Settings() {
               onChange={(value) => update('fullWindowHotkey', value)}
             />
           </Row>
-          {local.hotkey.toLowerCase() === local.fullWindowHotkey.toLowerCase() && (
+          {FILTER_SHORTCUTS.map((definition, index) => (
+            <Row
+              key={definition.target}
+              id={`filter-shortcut-${definition.target}`}
+              label={definition.label}
+              description={`${definition.description} ${SHORTCUT_RECORDER_DESCRIPTION}`}
+            >
+              <ShortcutRecorder
+                value={configuredFilterShortcuts[index] ?? definition.defaultShortcut}
+                onChange={(value) => update(
+                  'filterShortcuts',
+                  configuredFilterShortcuts.map((shortcut, shortcutIndex) => (
+                    shortcutIndex === index ? value : shortcut
+                  )),
+                )}
+              />
+            </Row>
+          ))}
+          {shortcutConflict && (
             <p className="settings-validation-error" role="alert">
-              “Quick clipboard” and “Open full Clipmo” cannot use the same shortcut.
+              “{shortcutConflict[0]}” and “{shortcutConflict[1]}” cannot use the same shortcut.
             </p>
           )}
           <div className="shortcut-reference" aria-label="Keyboard shortcut reference">
@@ -487,7 +516,7 @@ export default function Settings() {
         <button
           type="button"
           className="primary-button"
-          disabled={saving}
+          disabled={saving || Boolean(shortcutConflict)}
           onClick={() => void persist()}
         >
           <Save size={16} aria-hidden /> {saving ? 'Saving…' : 'Save changes'}
@@ -1011,6 +1040,7 @@ function normaliseSettings(settings: SettingsType): SettingsType {
   const legacyApps = settings.ignoredApps as unknown as Array<IgnoredApp | string>;
   return {
     ...settings,
+    filterShortcuts: resolvedFilterShortcuts(settings.filterShortcuts),
     ignoredApps: dedupeIgnored(legacyApps.map((app) => typeof app === 'string' ? {
       id: app.toLocaleLowerCase(),
       displayName: baseName(app).replace(/\.exe$/i, ''),
@@ -1021,6 +1051,19 @@ function normaliseSettings(settings: SettingsType): SettingsType {
       iconPath: null,
     } : app)),
   };
+}
+
+function findShortcutConflict(
+  values: Array<{ label: string; shortcut: string }>,
+): [string, string] | null {
+  const seen = new Map<string, string>();
+  for (const value of values) {
+    const normalized = value.shortcut.trim().toLowerCase();
+    const existing = seen.get(normalized);
+    if (existing) return [value.label, existing];
+    seen.set(normalized, value.label);
+  }
+  return null;
 }
 
 function ColorInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
