@@ -1,13 +1,16 @@
 //! Best-effort Windows application discovery for the ignored-app picker.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::models::{ApplicationInfo, IgnoredApp};
 
 const CACHE_TTL: Duration = Duration::from_secs(30);
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Timestamped snapshot of the installed-application scan.
 type InstalledSnapshot = Option<(Instant, Vec<ApplicationInfo>)>;
 
@@ -23,8 +26,12 @@ pub fn resolve(executable_path: &str) -> Option<IgnoredApp> {
 
 pub fn running() -> Vec<ApplicationInfo> {
     let system = sysinfo::System::new_all();
+    let visible_processes = visible_window_processes();
     let mut apps = BTreeMap::new();
-    for process in system.processes().values() {
+    for (pid, process) in system.processes() {
+        if !visible_processes.contains(&pid.as_u32()) {
+            continue;
+        }
         let Some(path) = process.exe() else { continue };
         if path.as_os_str().is_empty() || !path.exists() {
             continue;
@@ -53,13 +60,9 @@ pub fn installed(refresh: bool) -> Vec<ApplicationInfo> {
         }
     }
 
-    let mut apps: BTreeMap<String, ApplicationInfo> = running()
-        .into_iter()
-        .map(|app| (app.identity.id.clone(), app))
-        .collect();
+    let mut apps = BTreeMap::new();
     discover_uninstall_registry(&mut apps);
     discover_start_menu_executables(&mut apps);
-    discover_packaged_apps(&mut apps);
     let result: Vec<_> = apps.into_values().collect();
     if let Ok(mut guard) = cache.lock() {
         *guard = Some((Instant::now(), result.clone()));
@@ -86,8 +89,7 @@ pub fn extract_icon(executable_path: &str) -> Option<String> {
     }
 
     let script = r#"Add-Type -AssemblyName System.Drawing; $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($args[0]); if ($null -eq $icon) { exit 2 }; $bitmap = $icon.ToBitmap(); $bitmap.Save($args[1], [System.Drawing.Imaging.ImageFormat]::Png); $bitmap.Dispose(); $icon.Dispose()"#;
-    let status = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+    let status = hidden_powershell(script)
         .arg(executable)
         .arg(&icon_path)
         .status()
@@ -124,9 +126,11 @@ fn insert_path(
     display_name: Option<String>,
     publisher: Option<String>,
 ) {
-    if path
-        .extension()
-        .is_none_or(|ext| !ext.eq_ignore_ascii_case("exe"))
+    if !path.is_file()
+        || path
+            .extension()
+            .is_none_or(|ext| !ext.eq_ignore_ascii_case("exe"))
+        || is_helper_executable(&path)
     {
         return;
     }
@@ -176,19 +180,28 @@ fn discover_uninstall_registry(apps: &mut BTreeMap<String, ApplicationInfo>) {
                 let Some(raw): Option<String> = child.get_value("DisplayIcon").ok() else {
                     continue;
                 };
-                let path = raw.trim().trim_matches('"').split(',').next().unwrap_or("");
-                insert_path(apps, PathBuf::from(path), display_name, publisher);
+                let Some(path) = display_icon_executable(&raw) else {
+                    continue;
+                };
+                insert_path(apps, path, display_name, publisher);
             }
         }
     }
 }
 
+fn display_icon_executable(raw: &str) -> Option<PathBuf> {
+    let value = raw.trim();
+    let path = if let Some(quoted) = value.strip_prefix('"') {
+        quoted.split('"').next().unwrap_or_default()
+    } else {
+        value.split(',').next().unwrap_or_default().trim()
+    };
+    (!path.is_empty()).then(|| PathBuf::from(path))
+}
+
 fn discover_start_menu_executables(apps: &mut BTreeMap<String, ApplicationInfo>) {
     let script = r#"$shell = New-Object -ComObject WScript.Shell; Get-ChildItem @($env:APPDATA + '\Microsoft\Windows\Start Menu\Programs', $env:PROGRAMDATA + '\Microsoft\Windows\Start Menu\Programs') -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | ForEach-Object { $shortcut = $shell.CreateShortcut($_.FullName); if ($shortcut.TargetPath -like '*.exe') { [pscustomobject]@{ Name = $_.BaseName; Path = $shortcut.TargetPath } } } | ConvertTo-Json -Compress"#;
-    if let Ok(output) = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output()
-    {
+    if let Ok(output) = hidden_powershell(script).output() {
         if output.status.success() {
             if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
                 let entries: Vec<&serde_json::Value> = match &value {
@@ -212,81 +225,62 @@ fn discover_start_menu_executables(apps: &mut BTreeMap<String, ApplicationInfo>)
             }
         }
     }
-
-    for root in [
-        std::env::var_os("APPDATA").map(PathBuf::from),
-        std::env::var_os("PROGRAMDATA").map(PathBuf::from),
-    ]
-    .into_iter()
-    .flatten()
-    .map(|root| root.join(r"Microsoft\Windows\Start Menu\Programs"))
-    {
-        walk_executables(&root, 0, apps);
-    }
 }
 
-fn walk_executables(directory: &Path, depth: usize, apps: &mut BTreeMap<String, ApplicationInfo>) {
-    if depth > 6 {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return;
+fn hidden_powershell(script: &str) -> Command {
+    let mut command = Command::new("powershell.exe");
+    command.creation_flags(CREATE_NO_WINDOW).args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        script,
+    ]);
+    command
+}
+
+fn is_helper_executable(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    name.starts_with("unins")
+        || matches!(
+            name.as_str(),
+            "setup.exe"
+                | "uninstall.exe"
+                | "uninstaller.exe"
+                | "update.exe"
+                | "updater.exe"
+                | "installer.exe"
+                | "crashpad_handler.exe"
+                | "squirrel.exe"
+                | "maintenancetool.exe"
+        )
+}
+
+fn visible_window_processes() -> BTreeSet<u32> {
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible,
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            walk_executables(&path, depth + 1, apps);
-        } else {
-            insert_path(apps, path, None, None);
+
+    unsafe extern "system" fn collect(hwnd: HWND, parameter: LPARAM) -> BOOL {
+        if IsWindowVisible(hwnd).as_bool() && GetWindowTextLengthW(hwnd) > 0 {
+            let processes = &mut *(parameter.0 as *mut BTreeSet<u32>);
+            let mut pid = 0;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid != 0 {
+                processes.insert(pid);
+            }
         }
+        BOOL(1)
     }
-}
 
-fn discover_packaged_apps(apps: &mut BTreeMap<String, ApplicationInfo>) {
-    let output = std::process::Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress",
-        ])
-        .output();
-    let Ok(output) = output else { return };
-    if !output.status.success() {
-        return;
-    }
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
-        return;
-    };
-    let entries: Vec<&serde_json::Value> = match &value {
-        serde_json::Value::Array(values) => values.iter().collect(),
-        serde_json::Value::Object(_) => vec![&value],
-        _ => return,
-    };
-    for entry in entries {
-        let Some(app_id) = entry.get("AppID").and_then(|value| value.as_str()) else {
-            continue;
-        };
-        let display_name = entry
-            .get("Name")
-            .and_then(|value| value.as_str())
-            .unwrap_or(app_id)
-            .to_string();
-        let identity = IgnoredApp {
-            id: format!("aumid:{}", app_id.to_lowercase()),
-            display_name,
-            executable_path: String::new(),
-            executable_name: String::new(),
-            app_user_model_id: Some(app_id.to_string()),
-            package_family_name: app_id.split('!').next().map(str::to_string),
-            icon_path: None,
-        };
-        apps.entry(identity.id.clone()).or_insert(ApplicationInfo {
-            identity,
-            publisher: None,
-            running: false,
-            installed: true,
-            recently_used: None,
-        });
-    }
+    let mut processes = BTreeSet::new();
+    let parameter =
+        windows::Win32::Foundation::LPARAM((&mut processes as *mut BTreeSet<u32>) as isize);
+    let _ = unsafe { EnumWindows(Some(collect), parameter) };
+    processes
 }

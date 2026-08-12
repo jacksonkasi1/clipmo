@@ -31,6 +31,7 @@ android {
  )
  }
  debug {
+ applicationIdSuffix = ".debug"
  signingConfig = signingConfigs.getByName("release")
  }
  }
@@ -39,18 +40,30 @@ android {
  targetCompatibility = JavaVersion.VERSION_17
  }
  kotlinOptions { jvmTarget = "17" }
- buildFeatures { viewBinding = true }
+ buildFeatures {
+ compose = true
+ viewBinding = false
+ }
+ composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
 }
 
 dependencies {
  implementation("androidx.core:core-ktx:1.15.0")
- implementation("androidx.appcompat:appcompat:1.7.0")
- implementation("com.google.android.material:material:1.12.0")
- implementation("androidx.constraintlayout:constraintlayout:2.2.0")
- implementation("androidx.recyclerview:recyclerview:1.4.0")
- implementation("androidx.cardview:cardview:1.0.0")
- implementation("androidx.preference:preference:1.2.1")
+ implementation("androidx.activity:activity-compose:1.9.3")
+ implementation(platform("androidx.compose:compose-bom:2024.06.00"))
+ implementation("androidx.compose.foundation:foundation")
+ implementation("androidx.compose.runtime:runtime")
+ implementation("androidx.compose.ui:ui")
+ implementation("androidx.compose.ui:ui-text-google-fonts")
+ implementation("androidx.compose.ui:ui-tooling-preview")
+ debugImplementation("androidx.compose.ui:ui-tooling")
  implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
  implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.8.7")
+ implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
  implementation("androidx.datastore:datastore-preferences:1.1.1")
+ implementation("androidx.compose.material:material")
+ implementation("androidx.compose.material:material-icons-extended")
+ implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
+ implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2")
+ testImplementation("junit:junit:4.13.2")
 }

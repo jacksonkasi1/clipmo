@@ -1,6 +1,13 @@
 <resources>
  <string name="app_name">Clipmo</string>
- <string name="search_hint">Search history...</string>
+ <string name="search_hint">Search history</string>
+ <string name="lan_sync">LAN Sync</string>
+ <string name="pairing_code">Pairing Code</string>
+ <string name="clipboard_monitoring">Clipboard Monitoring</string>
+ <string name="clear_history">Clear history</string>
+ <string name="favorite">Favorite</string>
+ <string name="copy">Copy</string>
+ <string name="item_metadata">%1$s · %2$s · %3$s</string>
  <string name="monitoring_on">Monitoring enabled</string>
  <string name="monitoring_off">Monitoring disabled</string>
  <string name="copied">Copied to clipboard</string>

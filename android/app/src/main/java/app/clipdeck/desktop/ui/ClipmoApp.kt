@@ -1,0 +1,1051 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
+package app.clipdeck.desktop.ui
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.ExperimentalMaterialApi
+import androidx.compose.material.DismissDirection
+import androidx.compose.material.DismissValue
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
+import androidx.compose.material.SwipeToDismiss
+import androidx.compose.material.rememberDismissState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import app.clipdeck.desktop.data.ClipKind
+import app.clipdeck.desktop.data.ClipRecord
+import app.clipdeck.desktop.data.TrustedDeviceRecord
+import app.clipdeck.desktop.R
+import app.clipdeck.desktop.ui.theme.ClipmoTheme
+import app.clipdeck.desktop.ui.theme.ClipmoThemeMode
+import java.text.DateFormat
+import java.util.Date
+import kotlinx.coroutines.delay
+
+private enum class ClipmoScreen { HISTORY, COLLECTIONS, DEVICES, SETTINGS }
+private enum class ClipFilter(val label: String) { ALL("All"), TEXT("Text"), LINKS("Links"), IMAGES("Images"), FILES("Files"), STARRED("Starred") }
+
+data class ClipmoUiState(
+    val clips: List<ClipRecord>,
+    val monitorEnabled: Boolean,
+    val syncEnabled: Boolean,
+    val copyLiveSyncToClipboard: Boolean,
+    val pairingCode: String,
+    val pairingModeActive: Boolean,
+    val localDeviceName: String,
+    val localDeviceId: String,
+    val themeMode: ClipmoThemeMode,
+    val trustedDevices: List<TrustedDeviceRecord>,
+    val collections: List<String>,
+)
+
+@Composable
+fun ClipmoApp(
+    state: ClipmoUiState,
+    onCopy: (ClipRecord) -> Unit,
+    onFavorite: (ClipRecord) -> Unit,
+    onDelete: (ClipRecord) -> Unit,
+    onFavoriteMany: (Set<Long>) -> Unit,
+    onDeleteMany: (Set<Long>) -> Unit,
+    onCreateCollection: (String) -> Unit,
+    onAddToCollection: (Set<Long>, String) -> Unit,
+    onClear: () -> Unit,
+    onMonitorChanged: (Boolean) -> Unit,
+    onSyncChanged: (Boolean) -> Unit,
+    onCopyLiveSyncChanged: (Boolean) -> Unit,
+    onPairingCodeChanged: (String) -> Unit,
+    onThemeChanged: (ClipmoThemeMode) -> Unit,
+    onForgetDevice: (TrustedDeviceRecord) -> Unit,
+    onStartPairing: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    ClipmoTheme(state.themeMode) {
+        var screen by rememberSaveable { mutableStateOf(ClipmoScreen.HISTORY) }
+        var pendingDelete by remember { mutableStateOf<ClipRecord?>(null) }
+        var pendingClear by remember { mutableStateOf(false) }
+        val colors = ClipmoTheme.colors
+        Box(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .background(colors.background),
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                ClipmoTopBar(
+                    screen = screen,
+                    onSettings = { screen = ClipmoScreen.SETTINGS },
+                    onBack = if (screen == ClipmoScreen.SETTINGS) ({ screen = ClipmoScreen.HISTORY }) else null,
+                )
+                Box(Modifier.weight(1f)) {
+                    when (screen) {
+                        ClipmoScreen.HISTORY -> HistoryScreen(state, onCopy, onFavorite, onDelete, onFavoriteMany, onDeleteMany, onAddToCollection, onRefresh)
+                        ClipmoScreen.COLLECTIONS -> CollectionsScreen(state, onCopy, onFavorite, { pendingDelete = it }, onCreateCollection)
+                        ClipmoScreen.DEVICES -> DevicesScreen(state, onForgetDevice, onPairingCodeChanged, onSyncChanged, onStartPairing, onRefresh)
+                        ClipmoScreen.SETTINGS -> SettingsScreen(
+                            state = state,
+                            onMonitorChanged = onMonitorChanged,
+                            onSyncChanged = onSyncChanged,
+                            onCopyLiveSyncChanged = onCopyLiveSyncChanged,
+                            onPairingCodeChanged = onPairingCodeChanged,
+                            onThemeChanged = onThemeChanged,
+                            onClear = { pendingClear = true },
+                        )
+                    }
+                }
+                if (screen != ClipmoScreen.SETTINGS) {
+                    ClipmoBottomBar(screen) { screen = it }
+                }
+            }
+            pendingDelete?.let { clip ->
+                ClipmoConfirmOverlay(
+                    title = "Delete clip?",
+                    message = clip.content.take(100),
+                    confirmLabel = "Delete",
+                    onDismiss = { pendingDelete = null },
+                    onConfirm = { onDelete(clip); pendingDelete = null },
+                )
+            }
+            if (pendingClear) {
+                ClipmoConfirmOverlay(
+                    title = "Clear clipboard history?",
+                    message = "This removes every local clip and cannot be undone.",
+                    confirmLabel = "Clear all",
+                    onDismiss = { pendingClear = false },
+                    onConfirm = { onClear(); pendingClear = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClipmoTopBar(screen: ClipmoScreen, onSettings: () -> Unit, onBack: (() -> Unit)?) {
+    val colors = ClipmoTheme.colors
+    val type = ClipmoTheme.typography
+    val space = ClipmoTheme.spacing
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(ClipmoTheme.dimensions.topBarHeight)
+            .padding(horizontal = space.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (onBack != null) {
+            ClipmoIconButton(ClipmoIconKind.BACK, "Back", onBack)
+            Spacer(Modifier.width(space.xs))
+        } else {
+            Image(
+                painter = painterResource(R.drawable.clipmo_logo),
+                contentDescription = "Clipmo logo",
+                modifier = Modifier.size(26.dp).clip(RoundedCornerShape(7.dp)),
+            )
+            Spacer(Modifier.width(space.sm))
+        }
+        androidx.compose.foundation.text.BasicText(
+            text = if (screen == ClipmoScreen.SETTINGS) "Settings" else "Clipmo",
+            style = if (screen == ClipmoScreen.SETTINGS) type.title.copy(color = colors.textPrimary) else type.brand.copy(color = colors.textPrimary),
+            modifier = Modifier.weight(1f),
+        )
+        if (screen != ClipmoScreen.SETTINGS) ClipmoIconButton(ClipmoIconKind.SETTINGS, "Settings", onSettings)
+    }
+}
+
+@OptIn(ExperimentalMaterialApi::class)
+@Composable
+private fun HistoryScreen(
+    state: ClipmoUiState,
+    onCopy: (ClipRecord) -> Unit,
+    onFavorite: (ClipRecord) -> Unit,
+    onDelete: (ClipRecord) -> Unit,
+    onFavoriteMany: (Set<Long>) -> Unit,
+    onDeleteMany: (Set<Long>) -> Unit,
+    onAddToCollection: (Set<Long>, String) -> Unit,
+    onRefresh: () -> Unit,
+) {
+    val clips = state.clips
+    var query by rememberSaveable { mutableStateOf("") }
+    var filter by rememberSaveable { mutableStateOf(ClipFilter.ALL) }
+    var selectedDevice by rememberSaveable { mutableStateOf("all") }
+    var refreshing by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var pendingBulkDelete by remember { mutableStateOf<Set<Long>?>(null) }
+    var collectionPickerIds by remember { mutableStateOf<Set<Long>?>(null) }
+    val devices = remember(clips, state.trustedDevices, state.localDeviceId) {
+        listOf(Triple("all", "All devices", clips.size), Triple(state.localDeviceId, "This phone", clips.count { it.isLocalTo(state.localDeviceId) })) +
+            state.trustedDevices.map { device -> Triple(device.id, device.name, clips.count { it.originDevice == device.id }) }
+    }
+    LaunchedEffect(devices.map { it.first }) {
+        if (devices.none { it.first == selectedDevice }) selectedDevice = "all"
+    }
+    LaunchedEffect(clips.map(ClipRecord::id)) {
+        selectedIds = selectedIds.intersect(clips.mapTo(mutableSetOf(), ClipRecord::id))
+    }
+    LaunchedEffect(refreshing) {
+        if (refreshing) {
+            onRefresh()
+            delay(700)
+            refreshing = false
+        }
+    }
+    val shown = remember(clips, query, filter, selectedDevice) {
+        clips.filter { clip ->
+            (selectedDevice == "all" || if (selectedDevice == state.localDeviceId) clip.isLocalTo(state.localDeviceId) else clip.originDevice == selectedDevice) &&
+                clip.content.contains(query, ignoreCase = true) && when (filter) {
+                ClipFilter.ALL -> true
+                ClipFilter.TEXT -> clip.kind == ClipKind.TEXT
+                ClipFilter.LINKS -> clip.kind == ClipKind.URL
+                ClipFilter.IMAGES -> clip.kind == ClipKind.IMAGE
+                ClipFilter.FILES -> clip.kind == ClipKind.FILE
+                ClipFilter.STARRED -> clip.favorite
+            }
+        }
+    }
+    val trustedNames = state.trustedDevices.associate { it.id to it.name }
+    val grouped = shown.groupBy { clip ->
+        when {
+            clip.isLocalTo(state.localDeviceId) -> "This Android phone"
+            !clip.originDevice.isNullOrBlank() -> trustedNames[clip.originDevice] ?: sourceLabel(clip.source)
+            else -> sourceLabel(clip.source)
+        }
+    }
+    val pullState = rememberPullRefreshState(refreshing, { refreshing = true })
+    Box(Modifier.fillMaxSize().pullRefresh(pullState)) {
+      LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = ClipmoTheme.spacing.lg)) {
+        item {
+            Column(Modifier.padding(horizontal = ClipmoTheme.spacing.md)) {
+                if (selectedIds.isNotEmpty()) {
+                    ClipmoSelectionBar(
+                        selectedCount = selectedIds.size,
+                        onStar = {
+                            onFavoriteMany(selectedIds)
+                            selectedIds = emptySet()
+                        },
+                        onDelete = { pendingBulkDelete = selectedIds },
+                        onCollection = { collectionPickerIds = selectedIds },
+                        onClose = { selectedIds = emptySet() },
+                    )
+                } else {
+                    ClipmoSearchBar(value = query, hint = "Search clips", onValueChange = { query = it })
+                }
+                Spacer(Modifier.height(ClipmoTheme.spacing.sm))
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.xs),
+                ) {
+                    devices.forEach { (id, name, count) ->
+                        ClipmoPill("$name · $count", selectedDevice == id) { selectedDevice = id }
+                    }
+                }
+                Spacer(Modifier.height(ClipmoTheme.spacing.sm))
+                ClipmoFilterRow(filter) { filter = it }
+                Spacer(Modifier.height(ClipmoTheme.spacing.lg))
+            }
+        }
+        if (shown.isEmpty()) {
+            item { ClipmoEmptyState(if (clips.isEmpty()) "Your clipboard is quiet" else "No matching clips", "Copy something on this device to see it here.") }
+        } else {
+            grouped.forEach { (device, deviceClips) ->
+                item { ClipmoDeviceHeader(device, deviceClips.size) }
+                items(deviceClips, key = { it.id }) { clip ->
+                    ClipmoSwipeToDelete(
+                        clip = clip,
+                        enabled = selectedIds.isEmpty(),
+                        onDelete = onDelete,
+                        onChooseCollection = { collectionPickerIds = setOf(clip.id) },
+                    ) {
+                        ClipmoClipboardCard(
+                            clip = clip,
+                            onCopy = onCopy,
+                            onFavorite = onFavorite,
+                            onDelete = onDelete,
+                            selected = clip.id in selectedIds,
+                            selectionMode = selectedIds.isNotEmpty(),
+                            onSelect = {
+                                selectedIds = if (clip.id in selectedIds) selectedIds - clip.id else selectedIds + clip.id
+                            },
+                        )
+                    }
+                }
+                item { Spacer(Modifier.height(ClipmoTheme.spacing.md)) }
+            }
+        }
+      }
+      PullRefreshIndicator(refreshing, pullState, Modifier.align(Alignment.TopCenter), contentColor = ClipmoTheme.colors.accent)
+      pendingBulkDelete?.let { ids ->
+          ClipmoConfirmOverlay(
+              title = "Delete ${ids.size} clips?",
+              message = "The selected clips will be removed from synced devices.",
+              confirmLabel = "Delete",
+              onDismiss = { pendingBulkDelete = null },
+              onConfirm = {
+                  onDeleteMany(ids)
+                  selectedIds = emptySet()
+                  pendingBulkDelete = null
+              },
+          )
+      }
+      collectionPickerIds?.let { ids ->
+          ClipmoCollectionPickerOverlay(
+              collections = state.collections,
+              selectedCount = ids.size,
+              onDismiss = { collectionPickerIds = null },
+              onCollection = { collection ->
+                  onAddToCollection(ids, collection)
+                  selectedIds = emptySet()
+                  collectionPickerIds = null
+              },
+          )
+      }
+    }
+}
+
+@Composable
+private fun CollectionsScreen(
+    state: ClipmoUiState,
+    onCopy: (ClipRecord) -> Unit,
+    onFavorite: (ClipRecord) -> Unit,
+    onDelete: (ClipRecord) -> Unit,
+    onCreateCollection: (String) -> Unit,
+) {
+    val clips = state.clips
+    val tags = remember(clips, state.collections) {
+        (state.collections + clips.flatMap(ClipRecord::tags)).distinctBy(String::lowercase).sortedBy(String::lowercase)
+    }
+    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var creatingCollection by remember { mutableStateOf(false) }
+    LaunchedEffect(tags) { if (selected !in tags) selected = tags.firstOrNull() }
+    val selectedClips = clips.filter { selected != null && selected in it.tags }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = ClipmoTheme.spacing.lg)) {
+        item {
+            Column(Modifier.padding(horizontal = ClipmoTheme.spacing.md)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.foundation.text.BasicText("Tag collections", style = ClipmoTheme.typography.section.copy(color = ClipmoTheme.colors.textSecondary), modifier = Modifier.weight(1f))
+                    ClipmoPill("+ New", false) { creatingCollection = true }
+                }
+                Spacer(Modifier.height(ClipmoTheme.spacing.sm))
+                if (tags.isEmpty()) ClipmoEmptyState("No tag collections yet", "Create a collection, then long-press clips to add them.")
+                else Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
+                    tags.forEach { tag ->
+                        ClipmoCollectionCard(tag, ClipmoIconKind.COLLECTION, clips.count { tag in it.tags }, selected == tag, Modifier.width(138.dp)) { selected = tag }
+                    }
+                }
+                Spacer(Modifier.height(ClipmoTheme.spacing.xl))
+                selected?.let { androidx.compose.foundation.text.BasicText(it, style = ClipmoTheme.typography.section.copy(color = ClipmoTheme.colors.textPrimary)) }
+                Spacer(Modifier.height(ClipmoTheme.spacing.sm))
+            }
+        }
+        if (tags.isNotEmpty() && selectedClips.isEmpty()) item { ClipmoEmptyState("No clips here yet", "Tagged clips will appear in this collection.") }
+        items(selectedClips, key = { it.id }) { ClipmoClipboardCard(it, onCopy, onFavorite, onDelete) }
+    }
+    if (creatingCollection) {
+        ClipmoCreateCollectionOverlay(
+            onDismiss = { creatingCollection = false },
+            onCreate = {
+                onCreateCollection(it)
+                selected = it.trim()
+                creatingCollection = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun DevicesScreen(
+    state: ClipmoUiState,
+    onForgetDevice: (TrustedDeviceRecord) -> Unit,
+    onPairingCodeChanged: (String) -> Unit,
+    onSyncChanged: (Boolean) -> Unit,
+    onStartPairing: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    val space = ClipmoTheme.spacing
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = space.md, vertical = space.sm)) {
+        item {
+            androidx.compose.foundation.text.BasicText("Add a device", style = ClipmoTheme.typography.section.copy(color = colors.textSecondary))
+            Spacer(Modifier.height(space.sm))
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(ClipmoTheme.shapes.panel)).background(colors.surface).border(1.dp, colors.border, RoundedCornerShape(ClipmoTheme.shapes.panel)).padding(space.md)) {
+                androidx.compose.foundation.text.BasicText("Use the same pairing code on every Clipmo device.", style = ClipmoTheme.typography.body.copy(color = colors.textPrimary))
+                Spacer(Modifier.height(space.sm))
+                ClipmoSearchBar(state.pairingCode, "Pairing code", onPairingCodeChanged, searchIcon = false)
+                Spacer(Modifier.height(space.sm))
+                Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
+                    ClipmoPill(if (state.pairingModeActive) "Pairing…" else "Add another device", state.pairingModeActive, Modifier.weight(1f)) {
+                        if (!state.syncEnabled) onSyncChanged(true)
+                        onStartPairing()
+                    }
+                    ClipmoPill("Refresh", false, Modifier.weight(1f), onRefresh)
+                }
+            }
+            Spacer(Modifier.height(space.xl))
+            androidx.compose.foundation.text.BasicText("This device", style = ClipmoTheme.typography.section.copy(color = colors.textSecondary))
+            Spacer(Modifier.height(space.sm))
+            ClipmoDeviceCard(state.localDeviceName, "Android · Ready", true)
+            Spacer(Modifier.height(space.xl))
+            androidx.compose.foundation.text.BasicText("Paired devices", style = ClipmoTheme.typography.section.copy(color = colors.textSecondary))
+            Spacer(Modifier.height(space.sm))
+            if (state.trustedDevices.isEmpty()) {
+                ClipmoEmptyState(
+                    if (state.syncEnabled) "Looking for your devices" else "Sync is off",
+                    if (state.syncEnabled) "Paired devices will appear independently as they reconnect on your LAN." else "Enable sync in Settings to discover and pair multiple devices.",
+                )
+            } else {
+                state.trustedDevices.chunked(2).forEach { rowDevices ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(space.sm)) {
+                        rowDevices.forEach { device ->
+                            Box(Modifier.weight(1f)) {
+                                ClipmoDeviceCard(
+                                    name = device.name,
+                                    subtitle = "${device.platform.replaceFirstChar(Char::uppercase)} · ${if (device.online) "Connected" else "Offline"}",
+                                    online = device.online,
+                                    action = "Forget",
+                                    onAction = { onForgetDevice(device) },
+                                )
+                            }
+                        }
+                        if (rowDevices.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(space.sm))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen(
+    state: ClipmoUiState,
+    onMonitorChanged: (Boolean) -> Unit,
+    onSyncChanged: (Boolean) -> Unit,
+    onCopyLiveSyncChanged: (Boolean) -> Unit,
+    onPairingCodeChanged: (String) -> Unit,
+    onThemeChanged: (ClipmoThemeMode) -> Unit,
+    onClear: () -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    val space = ClipmoTheme.spacing
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = space.md, vertical = space.sm)) {
+        item {
+            ClipmoSettingsGroup("Clipboard") {
+                ClipmoSettingsToggle("Clipboard monitoring", "Capture clipboard changes while Clipmo is allowed to run.", state.monitorEnabled, onMonitorChanged)
+            }
+            Spacer(Modifier.height(space.lg))
+            ClipmoSettingsGroup("Local sync") {
+                ClipmoSettingsToggle("LAN sync", "Reconnect to every trusted device on the same network.", state.syncEnabled, onSyncChanged)
+                Spacer(Modifier.height(space.md))
+                ClipmoSettingsToggle(
+                    "Copy live synced clips",
+                    "Off keeps incoming history inside Clipmo. On copies only newly received text to the phone clipboard, never reconnect history.",
+                    state.copyLiveSyncToClipboard,
+                    onCopyLiveSyncChanged,
+                )
+                Spacer(Modifier.height(space.md))
+                androidx.compose.foundation.text.BasicText("Pairing code", style = ClipmoTheme.typography.label.copy(color = colors.textSecondary))
+                Spacer(Modifier.height(space.xs))
+                ClipmoSearchBar(state.pairingCode, "Enter code", onPairingCodeChanged, searchIcon = false)
+            }
+            Spacer(Modifier.height(space.lg))
+            ClipmoSettingsGroup("Appearance") {
+                Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
+                    ClipmoThemeMode.entries.forEach { mode ->
+                        ClipmoPill(mode.name.lowercase().replaceFirstChar { it.uppercase() }, state.themeMode == mode, Modifier.weight(1f)) { onThemeChanged(mode) }
+                    }
+                }
+            }
+            Spacer(Modifier.height(space.lg))
+            ClipmoSettingsGroup("History") {
+                ClipmoActionRow("Clear clipboard history", "Remove every locally stored clip", colors.danger, onClear)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClipmoSearchBar(value: String, hint: String, onValueChange: (String) -> Unit, searchIcon: Boolean = true) {
+    val colors = ClipmoTheme.colors
+    val shape = RoundedCornerShape(ClipmoTheme.shapes.search)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(ClipmoTheme.dimensions.searchHeight)
+            .clip(shape)
+            .background(colors.surface)
+            .border(1.dp, colors.border, shape)
+            .padding(horizontal = ClipmoTheme.spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (searchIcon) {
+            ClipmoIcon(ClipmoIconKind.SEARCH, colors.textMuted, Modifier.size(14.dp))
+            Spacer(Modifier.width(ClipmoTheme.spacing.sm))
+        }
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.weight(1f),
+            textStyle = ClipmoTheme.typography.body.copy(color = colors.textPrimary),
+            cursorBrush = SolidColor(colors.accent),
+            singleLine = true,
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (value.isEmpty()) androidx.compose.foundation.text.BasicText(hint, style = ClipmoTheme.typography.body.copy(color = colors.textMuted))
+                    inner()
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun ClipmoFilterRow(selected: ClipFilter, onSelected: (ClipFilter) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.xs),
+    ) { ClipFilter.entries.forEach { filter -> ClipmoPill(filter.label, filter == selected) { onSelected(filter) } } }
+}
+
+@Composable
+private fun ClipmoPill(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val colors = ClipmoTheme.colors
+    val background by animateColorAsState(if (selected) colors.textPrimary else colors.surface, tween(150), label = "pill")
+    val foreground = if (selected) colors.background else colors.textSecondary
+    Box(
+        modifier
+            .height(ClipmoTheme.dimensions.chipHeight)
+            .clip(RoundedCornerShape(ClipmoTheme.shapes.pill))
+            .background(background)
+            .border(1.dp, if (selected) background else colors.border, RoundedCornerShape(ClipmoTheme.shapes.pill))
+            .combinedClickable(onClick = onClick)
+            .padding(horizontal = ClipmoTheme.spacing.md),
+        contentAlignment = Alignment.Center,
+    ) { androidx.compose.foundation.text.BasicText(label, style = ClipmoTheme.typography.metadata.copy(color = foreground)) }
+}
+
+@Composable
+private fun ClipmoDeviceHeader(name: String, count: Int) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = ClipmoTheme.spacing.md, vertical = ClipmoTheme.spacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ClipmoIcon(ClipmoIconKind.DEVICE, ClipmoTheme.colors.textMuted, Modifier.size(13.dp))
+        Spacer(Modifier.width(ClipmoTheme.spacing.xs))
+        androidx.compose.foundation.text.BasicText(name, style = ClipmoTheme.typography.label.copy(color = ClipmoTheme.colors.textSecondary), modifier = Modifier.weight(1f))
+        androidx.compose.foundation.text.BasicText(count.toString(), style = ClipmoTheme.typography.metadata.copy(color = ClipmoTheme.colors.textMuted))
+    }
+}
+
+@Composable
+private fun ClipmoSelectionBar(
+    selectedCount: Int,
+    onStar: () -> Unit,
+    onDelete: () -> Unit,
+    onCollection: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(ClipmoTheme.dimensions.searchHeight)
+            .clip(RoundedCornerShape(ClipmoTheme.shapes.search))
+            .background(colors.surface)
+            .border(1.dp, colors.accent, RoundedCornerShape(ClipmoTheme.shapes.search))
+            .padding(start = ClipmoTheme.spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.foundation.text.BasicText(
+            "$selectedCount selected",
+            style = ClipmoTheme.typography.body.copy(color = colors.textPrimary),
+            modifier = Modifier.weight(1f),
+        )
+        ClipmoIconButton(ClipmoIconKind.COLLECTION, "Add selected clips to collection", onCollection, colors.accent)
+        ClipmoIconButton(ClipmoIconKind.STAR, "Star selected clips", onStar, colors.accent)
+        ClipmoIconButton(ClipmoIconKind.DELETE, "Delete selected clips", onDelete, colors.danger)
+        ClipmoIconButton(ClipmoIconKind.BACK, "Exit selection", onClose)
+    }
+}
+
+@OptIn(ExperimentalMaterialApi::class)
+@Composable
+private fun ClipmoSwipeToDelete(
+    clip: ClipRecord,
+    enabled: Boolean,
+    onDelete: (ClipRecord) -> Unit,
+    onChooseCollection: (ClipRecord) -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    val dismissState = rememberDismissState(
+        confirmStateChange = { value ->
+            if (value == DismissValue.DismissedToEnd) onDelete(clip)
+            if (value == DismissValue.DismissedToStart) onChooseCollection(clip)
+            value == DismissValue.DismissedToEnd
+        },
+    )
+    SwipeToDismiss(
+        state = dismissState,
+        directions = if (enabled) setOf(DismissDirection.StartToEnd, DismissDirection.EndToStart) else emptySet(),
+        background = {
+            val movingToCollection = dismissState.dismissDirection == DismissDirection.EndToStart
+            Box(
+                Modifier
+                    .padding(horizontal = ClipmoTheme.spacing.md, vertical = ClipmoTheme.spacing.xxs)
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(ClipmoTheme.shapes.card))
+                    .background(if (movingToCollection) colors.accent else colors.danger)
+                    .padding(horizontal = ClipmoTheme.spacing.md),
+                contentAlignment = if (movingToCollection) Alignment.CenterEnd else Alignment.CenterStart,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ClipmoIcon(if (movingToCollection) ClipmoIconKind.COLLECTION else ClipmoIconKind.DELETE, Color.White, Modifier.size(18.dp))
+                    Spacer(Modifier.width(ClipmoTheme.spacing.sm))
+                    androidx.compose.foundation.text.BasicText(
+                        if (movingToCollection) "Collection" else "Delete",
+                        style = ClipmoTheme.typography.label.copy(color = Color.White),
+                    )
+                }
+            }
+        },
+        dismissContent = { content() },
+    )
+}
+
+@Composable
+private fun ClipmoClipboardCard(
+    clip: ClipRecord,
+    onCopy: (ClipRecord) -> Unit,
+    onFavorite: (ClipRecord) -> Unit,
+    onDelete: (ClipRecord) -> Unit,
+    selected: Boolean = false,
+    selectionMode: Boolean = false,
+    onSelect: (() -> Unit)? = null,
+) {
+    val colors = ClipmoTheme.colors
+    val imageBitmap = remember(clip.assetPaths, clip.kind) {
+        if (clip.kind == ClipKind.IMAGE) {
+            val assets = clip.assetPaths?.lineSequence()?.filter(String::isNotBlank)?.toList().orEmpty()
+            val preview = assets.firstOrNull { it.endsWith("thumb.jpg", ignoreCase = true) }
+                ?: assets.firstOrNull()
+            preview?.let(android.graphics.BitmapFactory::decodeFile)?.asImageBitmap()
+        } else null
+    }
+    Row(
+        Modifier
+            .padding(horizontal = ClipmoTheme.spacing.md, vertical = ClipmoTheme.spacing.xxs)
+            .fillMaxWidth()
+            .heightIn(min = ClipmoTheme.dimensions.clipMinHeight)
+            .clip(RoundedCornerShape(ClipmoTheme.shapes.card))
+            .background(if (selected) colors.surfacePressed else colors.surfaceRaised)
+            .border(
+                1.dp,
+                if (selected) colors.accent else Color.Transparent,
+                RoundedCornerShape(ClipmoTheme.shapes.card),
+            )
+            .combinedClickable(
+                onClick = {
+                    if (selectionMode && onSelect != null) onSelect() else onCopy(clip)
+                },
+                onLongClick = onSelect ?: { onDelete(clip) },
+            )
+            .padding(start = ClipmoTheme.spacing.sm, end = ClipmoTheme.spacing.xs, top = ClipmoTheme.spacing.sm, bottom = ClipmoTheme.spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(ClipmoTheme.dimensions.thumbnail)
+                .clip(RoundedCornerShape(7.dp))
+                .background(colors.surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selectionMode) {
+                ClipmoIcon(
+                    ClipmoIconKind.CHECK,
+                    if (selected) colors.accent else colors.textMuted,
+                    Modifier.size(18.dp),
+                )
+            } else if (imageBitmap != null) {
+                Image(
+                    bitmap = imageBitmap,
+                    contentDescription = "Image preview",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                ClipmoIcon(iconFor(clip.kind), if (clip.kind == ClipKind.URL) colors.accent else colors.textSecondary, Modifier.size(17.dp))
+            }
+        }
+        Spacer(Modifier.width(ClipmoTheme.spacing.sm))
+        Column(Modifier.weight(1f)) {
+            androidx.compose.foundation.text.BasicText(
+                clipPreview(clip),
+                style = ClipmoTheme.typography.body.copy(color = colors.textPrimary),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(ClipmoTheme.spacing.xxs))
+            androidx.compose.foundation.text.BasicText(
+                "${kindLabel(clip.kind)}  ·  ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(clip.timestamp))}",
+                style = ClipmoTheme.typography.metadata.copy(color = colors.textMuted),
+                maxLines = 1,
+            )
+        }
+        if (!selectionMode) {
+            ClipmoIconButton(ClipmoIconKind.STAR, if (clip.favorite) "Unstar" else "Star", { onFavorite(clip) }, if (clip.favorite) colors.accent else colors.textMuted)
+            ClipmoIconButton(ClipmoIconKind.COPY, "Copy", { onCopy(clip) })
+        }
+    }
+}
+
+@Composable
+private fun ClipmoCollectionCard(name: String, icon: ClipmoIconKind, count: Int, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val colors = ClipmoTheme.colors
+    Column(modifier.combinedClickable(onClick = onClick)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .height(92.dp)
+                .clip(RoundedCornerShape(ClipmoTheme.shapes.card))
+                .background(if (selected) colors.surfacePressed else colors.surfaceRaised)
+                .border(1.dp, if (selected) colors.accent else colors.border, RoundedCornerShape(ClipmoTheme.shapes.card))
+                .padding(ClipmoTheme.spacing.md),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            ClipmoIcon(icon, if (selected) colors.accent else colors.textSecondary, Modifier.size(17.dp))
+            Column {
+                androidx.compose.foundation.text.BasicText(count.toString(), style = ClipmoTheme.typography.title.copy(color = colors.textPrimary))
+                androidx.compose.foundation.text.BasicText(if (count == 1) "Clip" else "Clips", style = ClipmoTheme.typography.metadata.copy(color = colors.textMuted))
+            }
+        }
+        Spacer(Modifier.height(ClipmoTheme.spacing.xs))
+        androidx.compose.foundation.text.BasicText(name, style = ClipmoTheme.typography.label.copy(color = colors.textSecondary))
+    }
+}
+
+@Composable
+private fun ClipmoDeviceCard(
+    name: String,
+    subtitle: String,
+    online: Boolean,
+    action: String? = null,
+    onAction: (() -> Unit)? = null,
+) {
+    val colors = ClipmoTheme.colors
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(ClipmoTheme.shapes.card)).background(colors.surfaceRaised).padding(ClipmoTheme.spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(colors.surface), contentAlignment = Alignment.Center) {
+            ClipmoIcon(ClipmoIconKind.DEVICE, colors.textSecondary, Modifier.size(18.dp))
+        }
+        Spacer(Modifier.width(ClipmoTheme.spacing.sm))
+        Column(Modifier.weight(1f)) {
+            androidx.compose.foundation.text.BasicText(name, style = ClipmoTheme.typography.body.copy(color = colors.textPrimary))
+            androidx.compose.foundation.text.BasicText(subtitle, style = ClipmoTheme.typography.metadata.copy(color = colors.textMuted))
+        }
+        Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(if (online) colors.accent else colors.textMuted))
+        if (action != null && onAction != null) {
+            Spacer(Modifier.width(ClipmoTheme.spacing.sm))
+            ClipmoPill(action, false, onClick = onAction)
+        }
+    }
+}
+
+@Composable
+private fun ClipmoSettingsGroup(title: String, content: @Composable () -> Unit) {
+    val colors = ClipmoTheme.colors
+    androidx.compose.foundation.text.BasicText(title, style = ClipmoTheme.typography.section.copy(color = colors.textSecondary))
+    Spacer(Modifier.height(ClipmoTheme.spacing.sm))
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(ClipmoTheme.shapes.panel)).background(colors.surface).border(1.dp, colors.border, RoundedCornerShape(ClipmoTheme.shapes.panel)).padding(ClipmoTheme.spacing.md)) { content() }
+}
+
+@Composable
+private fun ClipmoSettingsToggle(title: String, subtitle: String, checked: Boolean, onChanged: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            androidx.compose.foundation.text.BasicText(title, style = ClipmoTheme.typography.body.copy(color = ClipmoTheme.colors.textPrimary))
+            Spacer(Modifier.height(ClipmoTheme.spacing.xxs))
+            androidx.compose.foundation.text.BasicText(subtitle, style = ClipmoTheme.typography.metadata.copy(color = ClipmoTheme.colors.textMuted))
+        }
+        Spacer(Modifier.width(ClipmoTheme.spacing.md))
+        ClipmoToggle(checked, onChanged)
+    }
+}
+
+@Composable
+private fun ClipmoToggle(checked: Boolean, onChanged: (Boolean) -> Unit) {
+    val colors = ClipmoTheme.colors
+    val track by animateColorAsState(if (checked) colors.accent else colors.surfacePressed, tween(150), label = "toggle")
+    val position by animateFloatAsState(if (checked) 20f else 2f, tween(150), label = "thumb")
+    Box(
+        Modifier
+            .width(42.dp)
+            .height(24.dp)
+            .clip(RoundedCornerShape(50))
+            .background(track)
+            .semantics { role = Role.Switch; contentDescription = if (checked) "On" else "Off" }
+            .combinedClickable(onClick = { onChanged(!checked) }),
+    ) {
+        Box(Modifier.padding(start = position.dp, top = 2.dp).size(20.dp).clip(RoundedCornerShape(50)).background(if (checked) Color(0xFF102607) else colors.textSecondary))
+    }
+}
+
+@Composable
+private fun ClipmoActionRow(title: String, subtitle: String, color: Color, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().combinedClickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
+        ClipmoIcon(ClipmoIconKind.DELETE, color, Modifier.size(17.dp))
+        Spacer(Modifier.width(ClipmoTheme.spacing.sm))
+        Column {
+            androidx.compose.foundation.text.BasicText(title, style = ClipmoTheme.typography.body.copy(color = color))
+            androidx.compose.foundation.text.BasicText(subtitle, style = ClipmoTheme.typography.metadata.copy(color = ClipmoTheme.colors.textMuted))
+        }
+    }
+}
+
+@Composable
+private fun ClipmoBottomBar(selected: ClipmoScreen, onSelected: (ClipmoScreen) -> Unit) {
+    val colors = ClipmoTheme.colors
+    Row(
+        Modifier.fillMaxWidth().height(54.dp).background(colors.background).border(1.dp, colors.border).padding(horizontal = ClipmoTheme.spacing.xl),
+        horizontalArrangement = Arrangement.SpaceAround,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        listOf(
+            Triple(ClipmoScreen.HISTORY, ClipmoIconKind.CLIPBOARD, "Clips"),
+            Triple(ClipmoScreen.COLLECTIONS, ClipmoIconKind.COLLECTION, "Collections"),
+            Triple(ClipmoScreen.DEVICES, ClipmoIconKind.DEVICE, "Devices"),
+        ).forEach { (screen, icon, label) ->
+            val active = selected == screen
+            Column(
+                Modifier.weight(1f).fillMaxHeight().combinedClickable(onClick = { onSelected(screen) }),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                ClipmoIcon(icon, if (active) colors.accent else colors.textMuted, Modifier.size(17.dp))
+                Spacer(Modifier.height(2.dp))
+                androidx.compose.foundation.text.BasicText(label, style = ClipmoTheme.typography.metadata.copy(color = if (active) colors.textPrimary else colors.textMuted))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClipmoIconButton(kind: ClipmoIconKind, description: String, onClick: () -> Unit, tint: Color = ClipmoTheme.colors.textSecondary) {
+    Box(
+        Modifier
+            .requiredSize(ClipmoTheme.dimensions.touch)
+            .clip(RoundedCornerShape(ClipmoTheme.shapes.pill))
+            .combinedClickable(onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) { ClipmoIcon(kind, tint, Modifier.size(ClipmoTheme.dimensions.icon)) }
+}
+
+@Composable
+private fun ClipmoEmptyState(title: String, message: String) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 44.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Image(
+            painter = painterResource(R.drawable.clipmo_logo),
+            contentDescription = null,
+            modifier = Modifier.size(46.dp).clip(RoundedCornerShape(12.dp)),
+        )
+        Spacer(Modifier.height(ClipmoTheme.spacing.md))
+        androidx.compose.foundation.text.BasicText(title, style = ClipmoTheme.typography.section.copy(color = ClipmoTheme.colors.textPrimary))
+        Spacer(Modifier.height(ClipmoTheme.spacing.xs))
+        androidx.compose.foundation.text.BasicText(message, style = ClipmoTheme.typography.metadata.copy(color = ClipmoTheme.colors.textMuted))
+    }
+}
+
+@Composable
+private fun ClipmoCreateCollectionOverlay(
+    onDismiss: () -> Unit,
+    onCreate: (String) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    val colors = ClipmoTheme.colors
+    Box(Modifier.fillMaxSize().background(colors.scrim).combinedClickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier
+                .widthIn(max = 320.dp)
+                .padding(ClipmoTheme.spacing.xl)
+                .clip(RoundedCornerShape(ClipmoTheme.shapes.panel))
+                .background(colors.surfaceRaised)
+                .border(1.dp, colors.border, RoundedCornerShape(ClipmoTheme.shapes.panel))
+                .combinedClickable(onClick = {})
+                .padding(ClipmoTheme.spacing.lg),
+        ) {
+            androidx.compose.foundation.text.BasicText("New collection", style = ClipmoTheme.typography.title.copy(color = colors.textPrimary))
+            Spacer(Modifier.height(ClipmoTheme.spacing.md))
+            ClipmoSearchBar(name, "Collection name", { name = it.take(40) }, searchIcon = false)
+            Spacer(Modifier.height(ClipmoTheme.spacing.lg))
+            Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
+                ClipmoPill("Cancel", false, Modifier.weight(1f), onDismiss)
+                ClipmoPill("Create", true, Modifier.weight(1f)) {
+                    if (name.isNotBlank()) onCreate(name.trim())
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClipmoCollectionPickerOverlay(
+    collections: List<String>,
+    selectedCount: Int,
+    onDismiss: () -> Unit,
+    onCollection: (String) -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    Box(Modifier.fillMaxSize().background(colors.scrim).combinedClickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier
+                .widthIn(max = 340.dp)
+                .padding(ClipmoTheme.spacing.xl)
+                .clip(RoundedCornerShape(ClipmoTheme.shapes.panel))
+                .background(colors.surfaceRaised)
+                .border(1.dp, colors.border, RoundedCornerShape(ClipmoTheme.shapes.panel))
+                .combinedClickable(onClick = {})
+                .padding(ClipmoTheme.spacing.lg),
+        ) {
+            androidx.compose.foundation.text.BasicText("Add to collection", style = ClipmoTheme.typography.title.copy(color = colors.textPrimary))
+            Spacer(Modifier.height(ClipmoTheme.spacing.xs))
+            androidx.compose.foundation.text.BasicText(
+                if (selectedCount == 1) "Choose a collection for this clip." else "Choose a collection for $selectedCount clips.",
+                style = ClipmoTheme.typography.metadata.copy(color = colors.textMuted),
+            )
+            Spacer(Modifier.height(ClipmoTheme.spacing.md))
+            if (collections.isEmpty()) {
+                androidx.compose.foundation.text.BasicText(
+                    "Create a collection from the Collections tab first.",
+                    style = ClipmoTheme.typography.body.copy(color = colors.textSecondary),
+                )
+            } else {
+                LazyColumn(Modifier.heightIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.xs)) {
+                    items(collections, key = { it }) { collection ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(ClipmoTheme.shapes.card))
+                                .background(colors.surface)
+                                .combinedClickable(onClick = { onCollection(collection) })
+                                .padding(ClipmoTheme.spacing.md),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ClipmoIcon(ClipmoIconKind.COLLECTION, colors.accent, Modifier.size(17.dp))
+                            Spacer(Modifier.width(ClipmoTheme.spacing.sm))
+                            androidx.compose.foundation.text.BasicText(collection, style = ClipmoTheme.typography.body.copy(color = colors.textPrimary))
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(ClipmoTheme.spacing.md))
+            ClipmoPill("Close", false, Modifier.fillMaxWidth(), onDismiss)
+        }
+    }
+}
+
+@Composable
+private fun ClipmoConfirmOverlay(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    Box(Modifier.fillMaxSize().background(colors.scrim).combinedClickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.widthIn(max = 320.dp).padding(ClipmoTheme.spacing.xl).clip(RoundedCornerShape(ClipmoTheme.shapes.panel)).background(colors.surfaceRaised).border(1.dp, colors.border, RoundedCornerShape(ClipmoTheme.shapes.panel)).combinedClickable(onClick = {}).padding(ClipmoTheme.spacing.lg),
+        ) {
+            androidx.compose.foundation.text.BasicText(title, style = ClipmoTheme.typography.title.copy(color = colors.textPrimary))
+            Spacer(Modifier.height(ClipmoTheme.spacing.sm))
+            androidx.compose.foundation.text.BasicText(message, style = ClipmoTheme.typography.body.copy(color = colors.textSecondary), maxLines = 3, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(ClipmoTheme.spacing.lg))
+            Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
+                ClipmoPill("Cancel", false, Modifier.weight(1f), onDismiss)
+                Box(Modifier.weight(1f).height(ClipmoTheme.dimensions.chipHeight).clip(RoundedCornerShape(ClipmoTheme.shapes.pill)).background(colors.danger).combinedClickable(onClick = onConfirm), contentAlignment = Alignment.Center) {
+                    androidx.compose.foundation.text.BasicText(confirmLabel, style = ClipmoTheme.typography.label.copy(color = Color.White))
+                }
+            }
+        }
+    }
+}
+
+private fun sourceLabel(source: String?): String = when {
+    source.isNullOrBlank() || source == "clipboard" -> "This Android phone"
+    else -> source.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+}
+private fun kindLabel(kind: ClipKind): String = when (kind) { ClipKind.TEXT -> "Text"; ClipKind.URL -> "Link"; ClipKind.IMAGE -> "Image"; ClipKind.FILE -> "File" }
+private fun iconFor(kind: ClipKind): ClipmoIconKind = when (kind) { ClipKind.TEXT -> ClipmoIconKind.TEXT; ClipKind.URL -> ClipmoIconKind.LINK; ClipKind.IMAGE -> ClipmoIconKind.IMAGE; ClipKind.FILE -> ClipmoIconKind.FILE }
+
+private fun ClipRecord.isLocalTo(localDeviceId: String): Boolean =
+    if (!originDevice.isNullOrBlank()) originDevice == localDeviceId
+    else source.isNullOrBlank() || source == "clipboard"
+private fun clipPreview(clip: ClipRecord): String = when (clip.kind) { ClipKind.IMAGE -> "Image"; ClipKind.FILE -> clip.content.substringAfterLast('/'); else -> clip.content.trim() }
