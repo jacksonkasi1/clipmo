@@ -19,8 +19,9 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::error::{Error, Result};
 use crate::models::{
-    now_ms, ClipItem, Counts, DeviceIdentity, ImageMeta, ItemKind, ListQuery, NewItem,
-    PlatformKind, Settings, SourceApp, StoredFile, SyncStatus,
+    now_ms, BulkFilterAction, ClipItem, Counts, DeviceIdentity, FilterScope, FilterScopeKind,
+    ImageMeta, ItemKind, ListQuery, NewItem, PlatformKind, Settings, SourceApp, StoredFile,
+    SyncStatus,
 };
 
 /// Column list shared by every read query so that `row_to_item` stays valid.
@@ -369,6 +370,18 @@ CREATE TABLE IF NOT EXISTS settings (
             }
         }
 
+        if !query.source_exes.is_empty() {
+            let placeholders = std::iter::repeat_n("?", query.source_exes.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            sql.push_str(&format!(
+                " AND lower(COALESCE(app_exe, '')) IN ({placeholders})"
+            ));
+            for source_exe in &query.source_exes {
+                binds.push(Box::new(source_exe.trim().to_lowercase()));
+            }
+        }
+
         if query.favorites_only {
             sql.push_str(" AND favorite = 1");
         }
@@ -424,6 +437,60 @@ CREATE TABLE IF NOT EXISTS settings (
         let rows = statement.query_map([], |row| row.get(0))?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(Error::from)
+    }
+
+    /// Returns source applications represented in history, newest first.
+    pub fn known_sources(&self) -> Result<Vec<SourceApp>> {
+        let conn = self.conn.lock();
+        let mut statement = conn.prepare_cached(
+            "SELECT app_name, app_exe, app_icon
+             FROM items
+             WHERE app_exe IS NOT NULL AND trim(app_exe) != ''
+             GROUP BY lower(app_exe)
+             ORDER BY MAX(last_copied_at) DESC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(SourceApp {
+                name: row
+                    .get::<_, Option<String>>(0)?
+                    .unwrap_or_else(|| "Application".into()),
+                exe_path: row.get(1)?,
+                icon_path: row.get(2)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Error::from)
+    }
+
+    pub fn apply_filter_action(
+        &self,
+        scope: &FilterScope,
+        action: BulkFilterAction,
+    ) -> Result<Vec<String>> {
+        let conn = self.conn.lock();
+        let predicate = match scope.kind {
+            FilterScopeKind::Tag => {
+                "EXISTS (SELECT 1 FROM json_each(items.tags) AS t WHERE lower(t.value) = lower(?1))"
+            }
+            FilterScopeKind::Device => "device_id = ?1",
+            FilterScopeKind::Source => "lower(COALESCE(app_exe, '')) = lower(?1)",
+        };
+        if matches!(action, BulkFilterAction::FavoriteAll) {
+            conn.execute(
+                &format!("UPDATE items SET favorite = 1 WHERE {predicate}"),
+                params![scope.value],
+            )?;
+            return Ok(Vec::new());
+        }
+        let favorite_guard = if matches!(action, BulkFilterAction::DeleteNonFavorites) {
+            " AND favorite = 0"
+        } else {
+            ""
+        };
+        let filter = format!("WHERE {predicate}{favorite_guard}");
+        let assets = collect_assets(&conn, &filter, params![scope.value])?;
+        conn.execute(&format!("DELETE FROM items {filter}"), params![scope.value])?;
+        filter_unreferenced_assets(&conn, assets)
     }
 
     pub fn get(&self, id: i64) -> Result<Option<ClipItem>> {

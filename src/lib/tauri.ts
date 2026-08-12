@@ -14,6 +14,9 @@ import type {
   Settings,
   SyncState,
   SystemAppearance,
+  SourceApp,
+  FilterScope,
+  BulkFilterAction,
 } from './types';
 
 // ** import lib
@@ -53,6 +56,9 @@ export const api = {
   counts: () => invoke<Counts>('counts'),
   knownDevices: () => invoke<DeviceIdentity[]>('known_devices'),
   knownTags: () => invoke<string[]>('known_tags'),
+  knownSources: () => invoke<SourceApp[]>('known_sources'),
+  applyFilterAction: (scope: FilterScope, action: BulkFilterAction) =>
+    invoke<void>('apply_filter_action', { scope, action }),
   loadSettings: () => invoke<Settings>('load_settings'),
   saveSettings: (settings: Settings) =>
     invoke<Settings>('save_settings', { settings }),

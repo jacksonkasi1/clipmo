@@ -4,9 +4,10 @@ import type { PlatformKind } from '../lib/types';
 
 // ** import lib
 import { useEffect } from 'react';
-import { Apple, Globe2, Monitor, Smartphone, Tag, Terminal, X } from 'lucide-react';
+import { Apple, AppWindow, Globe2, Monitor, Smartphone, Tag, Terminal, X } from 'lucide-react';
 
 import { useStore } from '../lib/store';
+import { fileSrc } from '../lib/tauri';
 import { tagColorClass } from '../lib/tag-color';
 
 type ExplorerIcon = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
@@ -18,6 +19,9 @@ export function SidebarExplorerDialog({ open, onClose }: { open: boolean; onClos
   const activeDeviceId = useStore((state) => state.activeDeviceId);
   const setTag = useStore((state) => state.setTag);
   const setDevice = useStore((state) => state.setDevice);
+  const sources = useStore((state) => state.sources);
+  const activeSourceExe = useStore((state) => state.activeSourceExe);
+  const setSource = useStore((state) => state.setSource);
 
   useEffect(() => {
     if (!open) return;
@@ -38,7 +42,7 @@ export function SidebarExplorerDialog({ open, onClose }: { open: boolean; onClos
         <header>
           <div>
             <h2 id="sidebar-explorer-title">Explore filters</h2>
-            <p>Find every tag and connected source device.</p>
+            <p>Find every tag, source application, and connected device.</p>
           </div>
           <button type="button" className="icon-button" aria-label="Close filter explorer" onClick={onClose}>
             <X size={16} aria-hidden />
@@ -64,6 +68,21 @@ export function SidebarExplorerDialog({ open, onClose }: { open: boolean; onClos
                   onClick={() => { void setTag(tag); onClose(); }}
                 >
                   <Tag className={tagColorClass(tag)} size={16} fill="currentColor" aria-hidden /> #{tag}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section aria-labelledby="explorer-applications-title">
+            <h3 id="explorer-applications-title">Applications</h3>
+            <div className="explorer-option-grid">
+              <button type="button" className={`explorer-option ${activeSourceExe === null ? 'is-active' : ''}`} onClick={() => { void setSource(null); onClose(); }}>
+                <Globe2 size={16} aria-hidden /> All applications
+              </button>
+              {sources.map((source) => (
+                <button key={source.exePath} type="button" className={`explorer-option ${activeSourceExe?.toLowerCase() === source.exePath.toLowerCase() ? 'is-active' : ''}`} onClick={() => { void setSource(source.exePath); onClose(); }}>
+                  {source.iconPath ? <img className="explorer-app-icon" src={fileSrc(source.iconPath)} alt="" aria-hidden /> : <AppWindow size={16} aria-hidden />}
+                  {source.name}
                 </button>
               ))}
             </div>

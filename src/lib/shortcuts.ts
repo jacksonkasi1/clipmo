@@ -24,6 +24,8 @@ export const APP_SHORTCUTS: ShortcutDefinition[] = [
   { id: 'settings', label: 'Open settings', description: 'Open Clipmo settings.', action: 'settings' },
   { id: 'preview', label: 'Toggle preview', description: 'Show or hide the preview pane.', action: 'preview' },
   { id: 'clear', label: 'Clear non-favorites', description: 'Clear history while keeping favorites.', action: 'clearHistory' },
+  { id: 'all-devices', label: 'Show all devices', description: 'Clear the source-device filter.', keys: ['Ctrl', '0'] },
+  { id: 'switch-device', label: 'Switch source device', description: 'Select one of the first nine source devices.', keys: ['Ctrl', '1–9'] },
   { id: 'hide', label: 'Hide Clipmo', description: 'Close the popup without quitting.', keys: ['Esc'] },
 ];
 

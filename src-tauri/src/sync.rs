@@ -249,6 +249,10 @@ impl SyncService {
     }
 
     pub fn enqueue_item(&self, item: &ClipItem) {
+        self.enqueue_item_with_delivery(item, true);
+    }
+
+    fn enqueue_item_with_delivery(&self, item: &ClipItem, live: bool) {
         let Some(settings) = &self.settings else {
             return;
         };
@@ -260,18 +264,20 @@ impl SyncService {
             ItemKind::Text | ItemKind::Link | ItemKind::Email | ItemKind::Color
                 if preferences.sync_text =>
             {
-                self.enqueue_ready_item(item.clone());
+                self.enqueue_ready_item(item.clone(), live);
             }
-            ItemKind::Image if preferences.sync_images => self.enqueue_ready_item(item.clone()),
+            ItemKind::Image if preferences.sync_images => {
+                self.enqueue_ready_item(item.clone(), live)
+            }
             ItemKind::Files if preferences.sync_files => {
                 if item
                     .file_assets
                     .iter()
                     .any(|asset| asset.status == StoredFileStatus::Ready)
                 {
-                    self.enqueue_ready_item(item.clone());
+                    self.enqueue_ready_item(item.clone(), live);
                 } else {
-                    self.defer_file_item(item.id);
+                    self.defer_file_item(item.id, live);
                 }
             }
             _ => {}
@@ -294,11 +300,11 @@ impl SyncService {
             }
         };
         for item in items.into_iter().rev() {
-            self.enqueue_item(&item);
+            self.enqueue_item_with_delivery(&item, false);
         }
     }
 
-    fn defer_file_item(&self, id: i64) {
+    fn defer_file_item(&self, id: i64, live: bool) {
         let service = self.clone();
         let _ = std::thread::Builder::new()
             .name("sync-file-wait".into())
@@ -316,7 +322,7 @@ impl SyncService {
                         .iter()
                         .any(|asset| asset.status == StoredFileStatus::Ready)
                     {
-                        service.enqueue_ready_item(item);
+                        service.enqueue_ready_item(item, live);
                         return;
                     }
                     if item.file_assets.iter().all(|asset| {
@@ -334,7 +340,7 @@ impl SyncService {
             });
     }
 
-    fn enqueue_ready_item(&self, item: ClipItem) {
+    fn enqueue_ready_item(&self, item: ClipItem, live: bool) {
         let Some(store) = &self.store else {
             return;
         };
@@ -347,7 +353,7 @@ impl SyncService {
             }
         };
         let preferences = self.preferences.read().clone();
-        let Some(job) = build_upsert_job(&item, &record, &preferences) else {
+        let Some(job) = build_upsert_job(&item, &record, &preferences, live) else {
             return;
         };
         self.push_job(job, &preferences);
@@ -636,6 +642,8 @@ struct ClipSnapshot {
     favorite: bool,
     #[serde(default)]
     tags: Vec<String>,
+    #[serde(default)]
+    live: bool,
     copied_at: i64,
     version: SyncVersion,
 }
@@ -814,7 +822,7 @@ fn listen_for_peers(socket: UdpSocket, service: SyncService, app: AppHandle) {
             .peers
             .read()
             .get(&message.device.id)
-            .map_or(true, |peer| seen_at - peer.last_seen_at > 30_000);
+            .is_none_or(|peer| seen_at - peer.last_seen_at > 30_000);
         service.peers.write().insert(
             message.device.id.clone(),
             PeerRecord {
@@ -1501,6 +1509,7 @@ fn build_upsert_job(
     item: &ClipItem,
     record: &SyncRecord,
     preferences: &SyncPreferences,
+    live: bool,
 ) -> Option<SyncJob> {
     let clip = ClipSnapshot {
         id_hash: record.id_hash.clone(),
@@ -1510,6 +1519,7 @@ fn build_upsert_job(
         content_hash: record.content_hash.clone(),
         favorite: item.favorite,
         tags: item.tags.clone(),
+        live,
         copied_at: item.last_copied_at,
         version: record.version.clone(),
     };
@@ -2141,6 +2151,7 @@ mod tests {
             SyncBody::ClipUpsert { clip } => {
                 assert_eq!(clip.content, "from Android");
                 assert_eq!(clip.version.device_id, "android-device");
+                assert!(!clip.live);
             }
             _ => panic!("expected clipUpsert"),
         }
@@ -2167,6 +2178,7 @@ mod tests {
                     content_hash: "33333333333333333333333333333333".into(),
                     favorite: false,
                     tags: Vec::new(),
+                    live: true,
                     copied_at: 1_700_000_000_001,
                     version: SyncVersion {
                         device_id: "windows-device".into(),
@@ -2180,6 +2192,7 @@ mod tests {
         assert_eq!(value["pairingCode"], "123456");
         assert_eq!(value["tcpPort"], 47_634);
         assert_eq!(value["body"]["type"], "clipUpsert");
+        assert_eq!(value["body"]["clip"]["live"], true);
         assert_eq!(
             value["body"]["clip"]["idHash"],
             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

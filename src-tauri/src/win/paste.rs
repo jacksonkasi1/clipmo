@@ -21,7 +21,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId,
-    IsWindow, SetForegroundWindow, ShowWindow, ASFW_ANY, SW_RESTORE,
+    IsIconic, IsWindow, SetForegroundWindow, ShowWindow, ASFW_ANY, SW_RESTORE,
 };
 
 /// Sends Ctrl+V to the foreground window captured before the popup opened.
@@ -53,9 +53,14 @@ pub fn paste_to(target: isize) -> bool {
             let _ = AttachThreadInput(our_tid, target_tid, true);
         }
 
-        let _ = ShowWindow(target, SW_RESTORE);
+        // SW_RESTORE also turns a maximized window into a normal/half-sized
+        // window. Only restore an actually minimized target.
+        if IsIconic(target).as_bool() {
+            let _ = ShowWindow(target, SW_RESTORE);
+        }
         let _ = BringWindowToTop(target);
-        let focused = SetForegroundWindow(target).as_bool();
+        let requested = SetForegroundWindow(target).as_bool();
+        let focused = requested && wait_for_foreground(target);
         let sent = focused && send_ctrl_v();
 
         if target_tid != 0 && our_tid != 0 && target_tid != our_tid {
@@ -64,6 +69,16 @@ pub fn paste_to(target: isize) -> bool {
 
         sent
     }
+}
+
+fn wait_for_foreground(target: HWND) -> bool {
+    for _ in 0..20 {
+        if unsafe { GetForegroundWindow() } == target {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    false
 }
 
 unsafe fn release_modifiers() {

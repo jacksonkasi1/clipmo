@@ -108,6 +108,8 @@ pub fn run() {
             commands::counts,
             commands::known_devices,
             commands::known_tags,
+            commands::known_sources,
+            commands::apply_filter_action,
             commands::load_settings,
             commands::save_settings,
             commands::set_launch_at_login,

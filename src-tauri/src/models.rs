@@ -316,6 +316,9 @@ pub struct ListQuery {
     /// Restrict results to entries carrying any of these normalized tags.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Restrict results to entries captured from these executable paths.
+    #[serde(default)]
+    pub source_exes: Vec<String>,
     /// Only return starred entries.
     #[serde(default)]
     pub favorites_only: bool,
@@ -386,6 +389,29 @@ fn default_full_window_hotkey() -> String {
 
 fn default_image_quality() -> u8 {
     80
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterScope {
+    pub kind: FilterScopeKind,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FilterScopeKind {
+    Tag,
+    Device,
+    Source,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BulkFilterAction {
+    FavoriteAll,
+    DeleteNonFavorites,
+    DeleteAll,
 }
 
 fn default_filter_shortcuts() -> Vec<String> {

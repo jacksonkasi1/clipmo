@@ -1,10 +1,11 @@
 // ** import types
 import type { ComponentType, SVGProps } from 'react';
-import type { ItemKind, PlatformKind } from '../lib/types';
+import type { FilterScope, ItemKind, PlatformKind } from '../lib/types';
 
 // ** import lib
 import {
   Apple,
+  AppWindow,
   File,
   FileText,
   Globe2,
@@ -22,8 +23,10 @@ import {
   Tag,
   Terminal,
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 import { useStore } from '../lib/store';
+import { api, fileSrc } from '../lib/tauri';
 import { resolvedFilterShortcuts } from '../lib/filter-shortcuts';
 import { tagColorClass } from '../lib/tag-color';
 
@@ -53,6 +56,9 @@ interface ClipboardSidebarProps {
 
 const MAX_RAIL_TAGS = 3;
 const MAX_RAIL_DEVICES = 3;
+const MAX_RAIL_SOURCES = 3;
+
+type ContextState = { x: number; y: number; scope: FilterScope; label: string } | null;
 
 export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSidebarProps) {
   const open = useStore((state) => state.sidebarOpen);
@@ -62,15 +68,49 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
   const activeDeviceId = useStore((state) => state.activeDeviceId);
   const tags = useStore((state) => state.tags);
   const activeTag = useStore((state) => state.activeTag);
+  const sources = useStore((state) => state.sources);
+  const activeSourceExe = useStore((state) => state.activeSourceExe);
   const setCategory = useStore((state) => state.setCategory);
   const showFavorites = useStore((state) => state.showFavorites);
   const setDevice = useStore((state) => state.setDevice);
   const setTag = useStore((state) => state.setTag);
+  const setSource = useStore((state) => state.setSource);
+  const applyFilterAction = useStore((state) => state.applyFilterAction);
   const toggleSidebar = useStore((state) => state.toggleSidebar);
   const settings = useStore((state) => state.settings);
   const showDevices = devices.length > 1;
-  const hasOverflow = tags.length > MAX_RAIL_TAGS || devices.length > MAX_RAIL_DEVICES;
+  const hasOverflow = tags.length > MAX_RAIL_TAGS || devices.length > MAX_RAIL_DEVICES || sources.length > MAX_RAIL_SOURCES;
   const shortcuts = resolvedFilterShortcuts(settings?.filterShortcuts);
+  const [context, setContext] = useState<ContextState>(null);
+
+  useEffect(() => {
+    if (!context) return;
+    const close = () => setContext(null);
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('blur', close);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('blur', close);
+    };
+  }, [context]);
+
+  const openContext = (event: React.MouseEvent, scope: FilterScope, label: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContext({ x: event.clientX, y: event.clientY, scope, label });
+  };
+
+  const runContextAction = async (action: 'favoriteAll' | 'deleteNonFavorites' | 'deleteAll') => {
+    if (!context) return;
+    const current = context;
+    setContext(null);
+    if (action !== 'favoriteAll') {
+      const wording = action === 'deleteAll' ? 'all items' : 'all non-favorite items';
+      const approved = await api.confirm(`Delete ${wording} in ${current.label}?`, 'Delete filtered history');
+      if (!approved) return;
+    }
+    await applyFilterAction(current.scope, action);
+  };
 
   const chooseCategory = (category: CategoryDefinition['id']) => {
     if (category === 'favorites') {
@@ -133,10 +173,31 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
             aria-pressed={activeTag === tag}
             tabIndex={open ? 0 : -1}
             onClick={() => void setTag(activeTag === tag ? null : tag)}
+            onContextMenu={(event) => openContext(event, { kind: 'tag', value: tag }, `#${tag}`)}
           >
             <Tag className={tagColorClass(tag)} size={17} fill="currentColor" aria-hidden />
           </button>
         ))}
+        {sources.slice(0, MAX_RAIL_SOURCES).map((source) => {
+          const active = activeSourceExe?.toLowerCase() === source.exePath.toLowerCase();
+          return (
+            <button
+              key={source.exePath}
+              type="button"
+              className={`sidebar-button source-filter ${active ? 'is-active' : ''}`}
+              title={`From ${source.name}`}
+              aria-label={`Filter by application ${source.name}`}
+              aria-pressed={active}
+              tabIndex={open ? 0 : -1}
+              onClick={() => void setSource(active ? null : source.exePath)}
+              onContextMenu={(event) => openContext(event, { kind: 'source', value: source.exePath }, source.name)}
+            >
+              {source.iconPath
+                ? <img src={fileSrc(source.iconPath)} alt="" aria-hidden />
+                : <AppWindow size={16} aria-hidden />}
+            </button>
+          );
+        })}
         {showDevices && (
           <>
           <button
@@ -163,6 +224,7 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
                 aria-pressed={active}
                 tabIndex={open ? 0 : -1}
                 onClick={() => void setDevice(device.id)}
+                onContextMenu={(event) => openContext(event, { kind: 'device', value: device.id }, device.name)}
               >
                 <PlatformIcon size={16} aria-hidden />
                 <span className="device-filter-dot" style={{ backgroundColor: device.color }} />
@@ -175,8 +237,8 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
           <button
             type="button"
             className="sidebar-button"
-            title="Explore all tags and devices"
-            aria-label="Explore all tags and devices"
+            title="Explore all tags, applications, and devices"
+            aria-label="Explore all tags, applications, and devices"
             tabIndex={open ? 0 : -1}
             onClick={onExploreFilters}
           >
@@ -195,6 +257,19 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
       >
         <PanelLeftClose size={17} aria-hidden />
       </button>
+      {context && (
+        <div
+          className="sidebar-context-menu"
+          role="menu"
+          aria-label={`Actions for ${context.label}`}
+          style={{ left: context.x, top: context.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button type="button" role="menuitem" onClick={() => void runContextAction('favoriteAll')}>Star all</button>
+          <button type="button" role="menuitem" onClick={() => void runContextAction('deleteNonFavorites')}>Delete non-favorites</button>
+          <button type="button" role="menuitem" className="is-danger" onClick={() => void runContextAction('deleteAll')}>Delete all</button>
+        </div>
+      )}
     </nav>
   );
 }

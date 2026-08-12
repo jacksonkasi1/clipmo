@@ -95,10 +95,18 @@ export interface ListQuery {
   kinds?: ItemKind[];
   deviceIds?: string[];
   tags?: string[];
+  sourceExes?: string[];
   favoritesOnly?: boolean;
   limit?: number;
   offset?: number;
 }
+
+export type FilterScope = {
+  kind: 'tag' | 'device' | 'source';
+  value: string;
+};
+
+export type BulkFilterAction = 'favoriteAll' | 'deleteNonFavorites' | 'deleteAll';
 
 export interface FlavorBundle {
   text: string | null;

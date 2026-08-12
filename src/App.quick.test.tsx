@@ -11,6 +11,8 @@ const apiMock = vi.hoisted(() => ({
   syncState: vi.fn(),
   knownDevices: vi.fn(),
   knownTags: vi.fn(),
+  knownSources: vi.fn(),
+  applyFilterAction: vi.fn(),
   syncNativeAppearance: vi.fn(),
   signalFrontendReady: vi.fn(),
   signalQuickDataHydrated: vi.fn(),
@@ -155,6 +157,8 @@ beforeEach(() => {
   apiMock.syncState.mockReset().mockResolvedValue(null);
   apiMock.knownDevices.mockReset().mockResolvedValue([]);
   apiMock.knownTags.mockReset().mockResolvedValue([]);
+  apiMock.knownSources.mockReset().mockResolvedValue([]);
+  apiMock.applyFilterAction.mockReset().mockResolvedValue(undefined);
   apiMock.syncNativeAppearance.mockReset().mockResolvedValue({ accent: '#000', dark: false });
   apiMock.signalFrontendReady.mockReset().mockResolvedValue(undefined);
   apiMock.signalQuickDataHydrated.mockReset().mockResolvedValue(undefined);

@@ -14,6 +14,7 @@ const apiMock = vi.hoisted(() => ({
   loadSettings: vi.fn(),
   knownDevices: vi.fn(),
   knownTags: vi.fn(),
+  knownSources: vi.fn(),
 }));
 
 vi.mock('./tauri', () => ({
@@ -120,6 +121,7 @@ beforeEach(() => {
   apiMock.syncState.mockReset().mockResolvedValue(null);
   apiMock.knownDevices.mockReset().mockResolvedValue([]);
   apiMock.knownTags.mockReset().mockResolvedValue([]);
+  apiMock.knownSources.mockReset().mockResolvedValue([]);
   apiMock.signalQuickDataHydrated.mockReset().mockResolvedValue(undefined);
   apiMock.quickReadinessState.mockReset().mockResolvedValue(baseReadiness);
   apiMock.syncNativeAppearance.mockReset().mockResolvedValue({ accent: '#000', dark: false });

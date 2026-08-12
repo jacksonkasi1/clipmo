@@ -51,7 +51,6 @@ export function Footer() {
           onClick={toggleSidebar}
         >
           <PanelLeftOpen size={14} aria-hidden />
-          <span>Navigate</span>
         </button>
       )}
       <span className="footer-hint">

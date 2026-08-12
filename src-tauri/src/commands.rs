@@ -16,9 +16,9 @@ use crate::clipboard::listener::{self, CaptureSink, ClipEvent};
 use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::models::{
-    ClipItem, Counts, DeviceIdentity, IgnoredApp, ImageCompression, ImageFormat, ImageMeta,
-    ItemKind, ListQuery, PasteFlavor, Settings, StoredFile, StoredFileStatus, SyncState,
-    SystemAppearance,
+    BulkFilterAction, ClipItem, Counts, DeviceIdentity, FilterScope, IgnoredApp, ImageCompression,
+    ImageFormat, ImageMeta, ItemKind, ListQuery, PasteFlavor, Settings, SourceApp, StoredFile,
+    StoredFileStatus, SyncState, SystemAppearance,
 };
 use crate::win::paste;
 use crate::AppState;
@@ -250,6 +250,35 @@ pub async fn known_devices(state: tauri::State<'_, AppState>) -> Result<Vec<Devi
 #[tauri::command]
 pub async fn known_tags(state: tauri::State<'_, AppState>) -> Result<Vec<String>> {
     state.db.known_tags()
+}
+
+#[tauri::command]
+pub async fn known_sources(state: tauri::State<'_, AppState>) -> Result<Vec<SourceApp>> {
+    let mut sources = state.db.known_sources()?;
+    for source in &mut sources {
+        if source
+            .icon_path
+            .as_ref()
+            .is_none_or(|path| !std::path::Path::new(path).exists())
+        {
+            source.icon_path = crate::win::apps::extract_icon(&source.exe_path);
+        }
+    }
+    Ok(sources)
+}
+
+#[tauri::command]
+pub async fn apply_filter_action(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    scope: FilterScope,
+    action: BulkFilterAction,
+) -> Result<()> {
+    let _storage_guard = state.storage_operation.read();
+    let orphans = state.db.apply_filter_action(&scope, action)?;
+    cleanup_asset_paths(&state.storage_root.read(), orphans);
+    let _ = app.emit("clip-updated", ());
+    Ok(())
 }
 
 #[tauri::command]

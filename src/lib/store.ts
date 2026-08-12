@@ -1,5 +1,5 @@
 // ** import types
-import type { ClipItem, Counts, DeviceIdentity, ItemKind, ListQuery, Settings, SyncState, SystemAppearance } from './types';
+import type { BulkFilterAction, ClipItem, Counts, DeviceIdentity, FilterScope, ItemKind, ListQuery, Settings, SourceApp, SyncState, SystemAppearance } from './types';
 
 // ** import lib
 import { create } from 'zustand';
@@ -20,6 +20,8 @@ interface State {
   activeDeviceId: string | null;
   tags: string[];
   activeTag: string | null;
+  sources: SourceApp[];
+  activeSourceExe: string | null;
   sidebarOpen: boolean;
   counts: Counts;
   settings: Settings | null;
@@ -81,6 +83,9 @@ interface Actions {
   setDevice: (deviceId: string | null) => Promise<void>;
   loadKnownTags: () => Promise<void>;
   setTag: (tag: string | null) => Promise<void>;
+  loadKnownSources: () => Promise<void>;
+  setSource: (sourceExe: string | null) => Promise<void>;
+  applyFilterAction: (scope: FilterScope, action: BulkFilterAction) => Promise<void>;
   toggleSidebar: () => void;
   select: (id: number | null) => void;
   selectOnly: (id: number) => void;
@@ -133,6 +138,8 @@ export const useStore = create<State & Actions>((set, get) => ({
   activeDeviceId: null,
   tags: [],
   activeTag: null,
+  sources: [],
+  activeSourceExe: null,
   sidebarOpen: false,
   counts: {
     total: 0,
@@ -330,6 +337,32 @@ export const useStore = create<State & Actions>((set, get) => ({
   setTag: async (tag) => {
     set({ activeTag: tag });
     await get().refresh();
+  },
+
+  loadKnownSources: async () => {
+    const sources = await api.knownSources();
+    set((state) => ({
+      sources,
+      activeSourceExe: state.activeSourceExe !== null
+        && sources.some((source) => source.exePath.toLowerCase() === state.activeSourceExe?.toLowerCase())
+        ? state.activeSourceExe
+        : null,
+    }));
+  },
+
+  setSource: async (sourceExe) => {
+    set({ activeSourceExe: sourceExe });
+    await get().refresh();
+  },
+
+  applyFilterAction: async (scope, action) => {
+    await api.applyFilterAction(scope, action);
+    await Promise.all([
+      get().refresh(),
+      get().loadKnownTags(),
+      get().loadKnownDevices(),
+      get().loadKnownSources(),
+    ]);
   },
 
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
@@ -575,6 +608,7 @@ function buildQuery(s: State, offset: number): ListQuery {
     favoritesOnly: s.favoritesOnly,
     deviceIds: s.activeDeviceId ? [s.activeDeviceId] : [],
     tags: s.activeTag ? [s.activeTag] : [],
+    sourceExes: s.activeSourceExe ? [s.activeSourceExe] : [],
     limit: HISTORY_PAGE_SIZE,
     offset,
   };
@@ -595,6 +629,7 @@ export async function bootStore() {
       void refresh();
       void useStore.getState().loadKnownDevices();
       void useStore.getState().loadKnownTags();
+      void useStore.getState().loadKnownSources();
     }),
     on<string>('clip-touched', () => void refresh()),
     on<Settings>('settings-updated', (settings) => {
@@ -642,6 +677,7 @@ export async function bootStore() {
     useStore.getState().loadSyncState(),
     useStore.getState().loadKnownDevices(),
     useStore.getState().loadKnownTags(),
+    useStore.getState().loadKnownSources(),
     syncAppearance(),
   ]);
   const loadFailure = loadResults.find(

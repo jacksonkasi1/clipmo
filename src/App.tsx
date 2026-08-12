@@ -186,10 +186,11 @@ export default function App() {
         selectAll();
         return;
       }
-      if (modifier && key === 'c' && selectedId && !window.getSelection()?.toString()) {
+      if (modifier && key === 'c' && selectedId !== null && !window.getSelection()?.toString()) {
         event.preventDefault();
-        const target = selectedIds.length > 1 ? selectedIds : [selectedId];
-        for (const id of target) void api.copyToClipboard(id, 'original');
+        // A clipboard can contain one logical payload. Ctrl+C therefore
+        // copies the focused row even when a range is selected.
+        void api.copyToClipboard(selectedId, 'original');
       } else if (modifier && key === 'e' && selectedId) {
         event.preventDefault();
         if (!showPreview) {
