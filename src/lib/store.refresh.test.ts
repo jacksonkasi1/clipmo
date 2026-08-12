@@ -203,4 +203,16 @@ describe('refresh race resolution', () => {
     expect(query.deviceIds).toEqual(['android-1']);
     expect(query.tags).toEqual(['work']);
   });
+
+  it('does not rescan aggregate counts for search-only refreshes', async () => {
+    apiMock.listItems.mockResolvedValueOnce([]);
+    apiMock.counts.mockClear();
+
+    await useStore.getState().setSearch('fast filter');
+
+    expect(apiMock.counts).not.toHaveBeenCalled();
+    expect(apiMock.listItems).toHaveBeenCalledWith(expect.objectContaining({
+      search: 'fast filter',
+    }));
+  });
 });

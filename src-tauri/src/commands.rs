@@ -261,7 +261,7 @@ pub async fn known_sources(state: tauri::State<'_, AppState>) -> Result<Vec<Sour
             .as_ref()
             .is_none_or(|path| !std::path::Path::new(path).exists())
         {
-            source.icon_path = crate::win::icon::extract(&source.exe_path);
+            source.icon_path = crate::win::icon::cached(&source.exe_path);
         }
     }
     Ok(sources)

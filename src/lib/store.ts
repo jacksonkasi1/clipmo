@@ -71,7 +71,7 @@ interface State {
 }
 
 interface Actions {
-  refresh: () => Promise<void>;
+  refresh: (includeCounts?: boolean) => Promise<void>;
   loadMore: () => Promise<void>;
   requestResync: (source: ResyncSource) => Promise<void>;
   setSearch: (search: string) => Promise<void>;
@@ -124,6 +124,7 @@ interface Actions {
 export type ResyncSource = 'open' | 'visible' | 'focus' | 'manual';
 
 let historyGeneration = 0;
+let metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 export const useStore = create<State & Actions>((set, get) => ({
   items: [],
@@ -169,7 +170,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   nextOffset: 0,
   resyncGeneration: 0,
 
-  refresh: async () => {
+  refresh: async (includeCounts = true) => {
     // Each call bumps the shared `historyGeneration` so the *latest* call is
     // the only one that can commit results. Older fetches that resolve after a
     // newer one already started are silently dropped, so a slow SQLite read
@@ -179,7 +180,10 @@ export const useStore = create<State & Actions>((set, get) => ({
     set({ loading: true, loadingMore: false });
     try {
       const query = buildQuery(get(), 0);
-      const [page, counts] = await Promise.all([api.listItems(query), api.counts()]);
+      const [page, counts] = await Promise.all([
+        api.listItems(query),
+        includeCounts ? api.counts() : Promise.resolve(get().counts),
+      ]);
       if (generation !== historyGeneration) {
         if (isDevBuild()) {
           console.debug('[clipmo] refresh discarded as stale', {
@@ -282,7 +286,7 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   setSearch: async (search) => {
     set({ search });
-    await get().refresh();
+    await get().refresh(false);
   },
 
   toggleKind: async (kind) => {
@@ -290,22 +294,22 @@ export const useStore = create<State & Actions>((set, get) => ({
       ? get().activeKinds.filter((k) => k !== kind)
       : [...get().activeKinds, kind];
     set({ activeKinds: active });
-    await get().refresh();
+    await get().refresh(false);
   },
 
   setCategory: async (kind) => {
     set({ activeKinds: kind ? [kind] : [], favoritesOnly: false });
-    await get().refresh();
+    await get().refresh(false);
   },
 
   showFavorites: async () => {
     set({ activeKinds: [], favoritesOnly: true });
-    await get().refresh();
+    await get().refresh(false);
   },
 
   toggleFavoritesOnly: async () => {
     set({ favoritesOnly: !get().favoritesOnly });
-    await get().refresh();
+    await get().refresh(false);
   },
 
   loadKnownDevices: async () => {
@@ -321,7 +325,7 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   setDevice: async (deviceId) => {
     set({ activeDeviceId: deviceId });
-    await get().refresh();
+    await get().refresh(false);
   },
 
   loadKnownTags: async () => {
@@ -336,7 +340,7 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   setTag: async (tag) => {
     set({ activeTag: tag });
-    await get().refresh();
+    await get().refresh(false);
   },
 
   loadKnownSources: async () => {
@@ -352,7 +356,7 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   setSource: async (sourceExe) => {
     set({ activeSourceExe: sourceExe });
-    await get().refresh();
+    await get().refresh(false);
   },
 
   applyFilterAction: async (scope, action) => {
@@ -621,15 +625,23 @@ export async function bootStore() {
       console.error('Failed to refresh clipboard history', error);
     });
 
+  const scheduleMetadataRefresh = () => {
+    if (metadataRefreshTimer !== null) clearTimeout(metadataRefreshTimer);
+    metadataRefreshTimer = setTimeout(() => {
+      metadataRefreshTimer = null;
+      void useStore.getState().loadKnownDevices();
+      void useStore.getState().loadKnownTags();
+      void useStore.getState().loadKnownSources();
+    }, 350);
+  };
+
   // Subscribe before the initial fetch so a clipboard update that lands while
   // either webview is starting cannot be missed. One failed startup request
   // must not disable all later real-time updates.
   const listenerResults = await Promise.allSettled([
     on<ClipItem>('clip-updated', () => {
       void refresh();
-      void useStore.getState().loadKnownDevices();
-      void useStore.getState().loadKnownTags();
-      void useStore.getState().loadKnownSources();
+      scheduleMetadataRefresh();
     }),
     on<string>('clip-touched', () => void refresh()),
     on<Settings>('settings-updated', (settings) => {
