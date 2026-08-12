@@ -261,7 +261,7 @@ pub async fn known_sources(state: tauri::State<'_, AppState>) -> Result<Vec<Sour
             .as_ref()
             .is_none_or(|path| !std::path::Path::new(path).exists())
         {
-            source.icon_path = crate::win::apps::extract_icon(&source.exe_path);
+            source.icon_path = crate::win::icon::extract(&source.exe_path);
         }
     }
     Ok(sources)
@@ -472,7 +472,7 @@ pub async fn resolve_application_identity(
 
 #[tauri::command]
 pub async fn extract_application_icon(executable_path: String) -> Result<Option<String>> {
-    Ok(crate::win::apps::extract_icon(&executable_path))
+    Ok(crate::win::icon::extract(&executable_path))
 }
 
 #[tauri::command]

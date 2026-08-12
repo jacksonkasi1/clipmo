@@ -17,6 +17,8 @@ pub mod apps;
 #[cfg(not(test))]
 pub mod backdrop;
 #[cfg(not(test))]
+pub mod icon;
+#[cfg(not(test))]
 pub mod monitor;
 #[cfg(not(test))]
 pub mod paste;
