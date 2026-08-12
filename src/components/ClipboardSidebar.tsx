@@ -24,11 +24,12 @@ import {
   Terminal,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { useStore } from '../lib/store';
 import { api, fileSrc } from '../lib/tauri';
 import { resolvedFilterShortcuts } from '../lib/filter-shortcuts';
-import { tagColorClass } from '../lib/tag-color';
+import { tagColorClass, tagColorIndex, tagColorKey } from '../lib/tag-color';
 
 type SidebarIcon = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
 
@@ -57,6 +58,9 @@ interface ClipboardSidebarProps {
 const MAX_RAIL_TAGS = 3;
 const MAX_RAIL_DEVICES = 3;
 const MAX_RAIL_SOURCES = 3;
+const CONTEXT_MENU_WIDTH = 190;
+const CONTEXT_MENU_HEIGHT = 196;
+const CONTEXT_MENU_MARGIN = 8;
 
 type ContextState = { x: number; y: number; scope: FilterScope; label: string } | null;
 
@@ -68,12 +72,14 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
   const activeDeviceId = useStore((state) => state.activeDeviceId);
   const tags = useStore((state) => state.tags);
   const activeTag = useStore((state) => state.activeTag);
+  const tagColors = useStore((state) => state.tagColors);
   const sources = useStore((state) => state.sources);
   const activeSourceExe = useStore((state) => state.activeSourceExe);
   const setCategory = useStore((state) => state.setCategory);
   const showFavorites = useStore((state) => state.showFavorites);
   const setDevice = useStore((state) => state.setDevice);
   const setTag = useStore((state) => state.setTag);
+  const setTagColor = useStore((state) => state.setTagColor);
   const setSource = useStore((state) => state.setSource);
   const applyFilterAction = useStore((state) => state.applyFilterAction);
   const toggleSidebar = useStore((state) => state.toggleSidebar);
@@ -97,8 +103,23 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
   const openContext = (event: React.MouseEvent, scope: FilterScope, label: string) => {
     event.preventDefault();
     event.stopPropagation();
-    setContext({ x: event.clientX, y: event.clientY, scope, label });
+    const x = Math.max(CONTEXT_MENU_MARGIN, Math.min(
+      event.clientX,
+      window.innerWidth - CONTEXT_MENU_WIDTH - CONTEXT_MENU_MARGIN,
+    ));
+    const y = Math.max(CONTEXT_MENU_MARGIN, Math.min(
+      event.clientY,
+      window.innerHeight - CONTEXT_MENU_HEIGHT - CONTEXT_MENU_MARGIN,
+    ));
+    setContext({ x, y, scope, label });
   };
+
+  const contextTagColor = context?.scope.kind === 'tag'
+    ? tagColors[tagColorKey(context.scope.value)]
+    : undefined;
+  const contextTagPickerColor = context?.scope.kind === 'tag'
+    ? contextTagColor ?? automaticTagColor(context.scope.value)
+    : undefined;
 
   const runContextAction = async (action: 'favoriteAll' | 'deleteNonFavorites' | 'deleteAll') => {
     if (!context) return;
@@ -175,7 +196,13 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
             onClick={() => void setTag(activeTag === tag ? null : tag)}
             onContextMenu={(event) => openContext(event, { kind: 'tag', value: tag }, `#${tag}`)}
           >
-            <Tag className={tagColorClass(tag)} size={17} fill="currentColor" aria-hidden />
+            <Tag
+              className={tagColorClass(tag)}
+              style={{ color: tagColors[tagColorKey(tag)] }}
+              size={17}
+              fill="currentColor"
+              aria-hidden
+            />
           </button>
         ))}
         {sources.slice(0, MAX_RAIL_SOURCES).map((source) => {
@@ -257,7 +284,7 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
       >
         <PanelLeftClose size={17} aria-hidden />
       </button>
-      {context && (
+      {context && createPortal(
         <div
           className="sidebar-context-menu"
           role="menu"
@@ -265,10 +292,32 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
           style={{ left: context.x, top: context.y }}
           onPointerDown={(event) => event.stopPropagation()}
         >
+          <div className="sidebar-context-title">{context.label}</div>
+          {context.scope.kind === 'tag' && (
+            <div className="sidebar-context-color">
+              <label htmlFor="sidebar-tag-color">Custom color</label>
+              <input
+                id="sidebar-tag-color"
+                type="color"
+                aria-label={`Custom color for ${context.label}`}
+                value={contextTagPickerColor}
+                onChange={(event) => setTagColor(context.scope.value, event.target.value)}
+              />
+              <button
+                type="button"
+                className="sidebar-color-reset"
+                disabled={!contextTagColor}
+                onClick={() => setTagColor(context.scope.value, null)}
+              >
+                Auto
+              </button>
+            </div>
+          )}
           <button type="button" role="menuitem" onClick={() => void runContextAction('favoriteAll')}>Star all</button>
           <button type="button" role="menuitem" onClick={() => void runContextAction('deleteNonFavorites')}>Delete non-favorites</button>
           <button type="button" role="menuitem" className="is-danger" onClick={() => void runContextAction('deleteAll')}>Delete all</button>
-        </div>
+        </div>,
+        document.body,
       )}
     </nav>
   );
@@ -279,4 +328,11 @@ function platformIcon(platform: PlatformKind): SidebarIcon {
   if (platform === 'android') return Smartphone;
   if (platform === 'linux') return Terminal;
   return Monitor;
+}
+
+function automaticTagColor(tag: string): string {
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue(`--tag-${tagColorIndex(tag)}`)
+    .trim();
+  return /^#[0-9a-f]{6}$/i.test(value) ? value : '#46a6ed';
 }

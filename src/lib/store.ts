@@ -1,11 +1,13 @@
 // ** import types
 import type { BulkFilterAction, ClipItem, Counts, DeviceIdentity, FilterScope, ItemKind, ListQuery, Settings, SourceApp, SyncState, SystemAppearance } from './types';
+import type { TagColorMap } from './tag-color';
 
 // ** import lib
 import { create } from 'zustand';
 
 import { HISTORY_PAGE_SIZE, mergeUniquePage, pageMayHaveMore } from './paging';
 import { api, on } from './tauri';
+import { loadTagColors, saveTagColors, tagColorKey } from './tag-color';
 import { isDevBuild, resolveWindowMode, type WindowMode } from './window-mode';
 
 interface State {
@@ -20,6 +22,7 @@ interface State {
   activeDeviceId: string | null;
   tags: string[];
   activeTag: string | null;
+  tagColors: TagColorMap;
   sources: SourceApp[];
   activeSourceExe: string | null;
   sidebarOpen: boolean;
@@ -83,6 +86,7 @@ interface Actions {
   setDevice: (deviceId: string | null) => Promise<void>;
   loadKnownTags: () => Promise<void>;
   setTag: (tag: string | null) => Promise<void>;
+  setTagColor: (tag: string, color: string | null) => void;
   loadKnownSources: () => Promise<void>;
   setSource: (sourceExe: string | null) => Promise<void>;
   applyFilterAction: (scope: FilterScope, action: BulkFilterAction) => Promise<void>;
@@ -139,6 +143,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   activeDeviceId: null,
   tags: [],
   activeTag: null,
+  tagColors: loadTagColors(),
   sources: [],
   activeSourceExe: null,
   sidebarOpen: false,
@@ -341,6 +346,17 @@ export const useStore = create<State & Actions>((set, get) => ({
   setTag: async (tag) => {
     set({ activeTag: tag });
     await get().refresh(false);
+  },
+
+  setTagColor: (tag, color) => {
+    set((state) => {
+      const key = tagColorKey(tag);
+      const tagColors = { ...state.tagColors };
+      if (color && /^#[0-9a-f]{6}$/i.test(color)) tagColors[key] = color;
+      else delete tagColors[key];
+      saveTagColors(tagColors);
+      return { tagColors };
+    });
   },
 
   loadKnownSources: async () => {

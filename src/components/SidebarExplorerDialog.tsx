@@ -8,13 +8,14 @@ import { Apple, AppWindow, Globe2, Monitor, Smartphone, Tag, Terminal, X } from 
 
 import { useStore } from '../lib/store';
 import { fileSrc } from '../lib/tauri';
-import { tagColorClass } from '../lib/tag-color';
+import { tagColorClass, tagColorKey } from '../lib/tag-color';
 
 type ExplorerIcon = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
 
 export function SidebarExplorerDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const tags = useStore((state) => state.tags);
   const activeTag = useStore((state) => state.activeTag);
+  const tagColors = useStore((state) => state.tagColors);
   const devices = useStore((state) => state.devices);
   const activeDeviceId = useStore((state) => state.activeDeviceId);
   const setTag = useStore((state) => state.setTag);
@@ -67,7 +68,7 @@ export function SidebarExplorerDialog({ open, onClose }: { open: boolean; onClos
                   className={`explorer-option ${activeTag === tag ? 'is-active' : ''}`}
                   onClick={() => { void setTag(tag); onClose(); }}
                 >
-                  <Tag className={tagColorClass(tag)} size={16} fill="currentColor" aria-hidden /> #{tag}
+                  <Tag className={tagColorClass(tag)} style={{ color: tagColors[tagColorKey(tag)] }} size={16} fill="currentColor" aria-hidden /> #{tag}
                 </button>
               ))}
             </div>
