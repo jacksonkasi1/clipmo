@@ -13,6 +13,8 @@
 #[cfg(not(test))]
 pub mod appearance;
 #[cfg(not(test))]
+#[allow(dead_code)]
+// Legacy extractor retained for source compatibility; icon::extract is console-free.
 pub mod apps;
 #[cfg(not(test))]
 pub mod backdrop;
