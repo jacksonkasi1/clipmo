@@ -9,6 +9,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Pin,
+  Plus,
   Search,
   Settings2,
   SquareTerminal,
@@ -22,7 +23,7 @@ import { api } from '../lib/tauri';
 import { toast } from '../lib/toast';
 import { getPlatform, getShortcutLabel } from '../lib/platform';
 
-export function SearchBar() {
+export function SearchBar({ onAddDevice }: { onAddDevice?: () => void }) {
   const mode = useStore((s) => s.mode);
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
@@ -208,6 +209,11 @@ export function SearchBar() {
           ? `${hasMore ? 'At least ' : ''}${visibleCount} search ${visibleCount === 1 ? 'result' : 'results'}`
           : `${hasMore ? 'At least ' : ''}${visibleCount} clipboard ${visibleCount === 1 ? 'item' : 'items'} visible`}
       </span>
+      {mode === 'full' && onAddDevice && (
+        <IconButton label="Pair another device" onClick={onAddDevice}>
+          <Plus size={17} aria-hidden />
+        </IconButton>
+      )}
       {actions.map(renderAction)}
     </header>
   );

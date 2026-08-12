@@ -18,6 +18,8 @@ interface State {
   favoritesOnly: boolean;
   devices: DeviceIdentity[];
   activeDeviceId: string | null;
+  tags: string[];
+  activeTag: string | null;
   sidebarOpen: boolean;
   counts: Counts;
   settings: Settings | null;
@@ -77,6 +79,8 @@ interface Actions {
   toggleFavoritesOnly: () => Promise<void>;
   loadKnownDevices: () => Promise<void>;
   setDevice: (deviceId: string | null) => Promise<void>;
+  loadKnownTags: () => Promise<void>;
+  setTag: (tag: string | null) => Promise<void>;
   toggleSidebar: () => void;
   select: (id: number | null) => void;
   selectOnly: (id: number) => void;
@@ -93,6 +97,8 @@ interface Actions {
   loadSettings: () => Promise<void>;
   loadSyncState: () => Promise<void>;
   saveSettings: (settings: Settings) => Promise<Settings>;
+  setLaunchAtLogin: (enabled: boolean) => Promise<Settings>;
+  setIgnoredApps: (ignoredApps: Settings['ignoredApps']) => Promise<Settings>;
   regeneratePairingCode: () => Promise<void>;
   changeStorageLocation: (path: string) => Promise<Settings>;
   setShowPreview: (show: boolean) => Promise<void>;
@@ -125,6 +131,8 @@ export const useStore = create<State & Actions>((set, get) => ({
   favoritesOnly: false,
   devices: [],
   activeDeviceId: null,
+  tags: [],
+  activeTag: null,
   sidebarOpen: false,
   counts: {
     total: 0,
@@ -309,6 +317,21 @@ export const useStore = create<State & Actions>((set, get) => ({
     await get().refresh();
   },
 
+  loadKnownTags: async () => {
+    const tags = await api.knownTags();
+    set((state) => ({
+      tags,
+      activeTag: state.activeTag !== null && tags.includes(state.activeTag)
+        ? state.activeTag
+        : null,
+    }));
+  },
+
+  setTag: async (tag) => {
+    set({ activeTag: tag });
+    await get().refresh();
+  },
+
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
 
   select: (id) => {
@@ -395,6 +418,7 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   setItemTags: async (id, tags) => {
     await api.setItemTags(id, tags);
+    await get().loadKnownTags();
     await get().refresh();
   },
 
@@ -487,6 +511,18 @@ export const useStore = create<State & Actions>((set, get) => ({
     return next;
   },
 
+  setLaunchAtLogin: async (enabled) => {
+    const next = await api.setLaunchAtLogin(enabled);
+    set({ settings: next });
+    return next;
+  },
+
+  setIgnoredApps: async (ignoredApps) => {
+    const next = await api.setIgnoredApps(ignoredApps);
+    set({ settings: next });
+    return next;
+  },
+
   regeneratePairingCode: async () => {
     const next = await api.regeneratePairingCode();
     set({ settings: next });
@@ -538,6 +574,7 @@ function buildQuery(s: State, offset: number): ListQuery {
     kinds: s.activeKinds,
     favoritesOnly: s.favoritesOnly,
     deviceIds: s.activeDeviceId ? [s.activeDeviceId] : [],
+    tags: s.activeTag ? [s.activeTag] : [],
     limit: HISTORY_PAGE_SIZE,
     offset,
   };
@@ -557,6 +594,7 @@ export async function bootStore() {
     on<ClipItem>('clip-updated', () => {
       void refresh();
       void useStore.getState().loadKnownDevices();
+      void useStore.getState().loadKnownTags();
     }),
     on<string>('clip-touched', () => void refresh()),
     on<Settings>('settings-updated', (settings) => {
@@ -603,6 +641,7 @@ export async function bootStore() {
     useStore.getState().loadSettings(),
     useStore.getState().loadSyncState(),
     useStore.getState().loadKnownDevices(),
+    useStore.getState().loadKnownTags(),
     syncAppearance(),
   ]);
   const loadFailure = loadResults.find(

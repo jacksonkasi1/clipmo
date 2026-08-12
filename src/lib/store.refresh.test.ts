@@ -190,6 +190,7 @@ describe('refresh race resolution', () => {
       activeKinds: ['files'],
       favoritesOnly: true,
       activeDeviceId: 'android-1',
+      activeTag: 'work',
     });
     await useStore.getState().refresh();
 
@@ -200,5 +201,6 @@ describe('refresh race resolution', () => {
     expect(query.kinds).toEqual(['files']);
     expect(query.favoritesOnly).toBe(true);
     expect(query.deviceIds).toEqual(['android-1']);
+    expect(query.tags).toEqual(['work']);
   });
 });

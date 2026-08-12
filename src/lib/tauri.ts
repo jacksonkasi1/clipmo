@@ -52,9 +52,14 @@ export const api = {
     invoke<void>('clear_category', { kind, includeFavorites }),
   counts: () => invoke<Counts>('counts'),
   knownDevices: () => invoke<DeviceIdentity[]>('known_devices'),
+  knownTags: () => invoke<string[]>('known_tags'),
   loadSettings: () => invoke<Settings>('load_settings'),
   saveSettings: (settings: Settings) =>
     invoke<Settings>('save_settings', { settings }),
+  setLaunchAtLogin: (enabled: boolean) =>
+    invoke<Settings>('set_launch_at_login', { enabled }),
+  setIgnoredApps: (ignoredApps: IgnoredApp[]) =>
+    invoke<Settings>('set_ignored_apps', { ignoredApps }),
   changeStorageLocation: (path: string) =>
     invoke<Settings>('change_storage_location', { path }),
   pruneNow: () => invoke<void>('prune_now'),

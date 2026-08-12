@@ -21,8 +21,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::models::{
-    now_ms, ClipItem, DeviceIdentity, ImageMeta, ItemKind, NewItem, Settings, StoredFile,
-    StoredFileStatus, SyncPeer, SyncState, SyncStatus,
+    now_ms, ClipItem, DeviceIdentity, ImageMeta, ItemKind, ListQuery, NewItem, Settings,
+    StoredFile, StoredFileStatus, SyncPeer, SyncState, SyncStatus,
 };
 
 const PROTOCOL: &str = "clipmo-lan-v2";
@@ -37,6 +37,7 @@ const CHUNK_SIZE: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 256 * 1024;
 const MAX_IMAGE_BYTES: u64 = 512 * 1024;
 const HARD_MAX_MESSAGE_BYTES: u64 = 128 * 1024 * 1024;
+const HISTORY_BACKFILL_LIMIT: u32 = 500;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -236,6 +237,17 @@ impl SyncService {
         Ok(preferences)
     }
 
+    /// Drops connections authenticated with settings that are no longer
+    /// current. Discovery will repopulate this map with peers using the new
+    /// code, so the UI never reports an old device as live after re-pairing.
+    pub fn settings_changed(&self, previous: &Settings, current: &Settings) -> bool {
+        if !sync_identity_changed(previous, current) {
+            return false;
+        }
+        self.peers.write().clear();
+        true
+    }
+
     pub fn enqueue_item(&self, item: &ClipItem) {
         let Some(settings) = &self.settings else {
             return;
@@ -263,6 +275,26 @@ impl SyncService {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn enqueue_history_backfill(&self) {
+        let Some(db) = &self.db else {
+            return;
+        };
+        let query = ListQuery {
+            limit: Some(HISTORY_BACKFILL_LIMIT),
+            ..ListQuery::default()
+        };
+        let items = match db.list(&query) {
+            Ok(items) => items,
+            Err(error) => {
+                log::warn!("could not prepare sync history backfill: {error}");
+                return;
+            }
+        };
+        for item in items.into_iter().rev() {
+            self.enqueue_item(&item);
         }
     }
 
@@ -456,6 +488,14 @@ impl SyncService {
             .assets = true;
     }
 
+    fn suppress_tags(&self, id_hash: &str, fingerprint: String) {
+        self.suppressions
+            .lock()
+            .entry(id_hash.to_string())
+            .or_default()
+            .tags_fingerprint = Some(fingerprint);
+    }
+
     fn suppress_delete(&self, id_hash: &str) {
         self.suppressions
             .lock()
@@ -463,6 +503,12 @@ impl SyncService {
             .or_default()
             .deleted = true;
     }
+}
+
+fn sync_identity_changed(previous: &Settings, current: &Settings) -> bool {
+    previous.sync_enabled != current.sync_enabled
+        || previous.sync_pairing_code != current.sync_pairing_code
+        || previous.sync_device_id != current.sync_device_id
 }
 
 #[cfg(not(test))]
@@ -512,7 +558,11 @@ struct SyncEnvelope {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 enum SyncBody {
     ClipUpsert {
         clip: ClipSnapshot,
@@ -584,6 +634,8 @@ struct ClipSnapshot {
     content: String,
     content_hash: String,
     favorite: bool,
+    #[serde(default)]
+    tags: Vec<String>,
     copied_at: i64,
     version: SyncVersion,
 }
@@ -696,6 +748,7 @@ struct Suppression {
     edit_hash: Option<String>,
     favorite: Option<bool>,
     assets: bool,
+    tags_fingerprint: Option<String>,
     deleted: bool,
 }
 
@@ -756,14 +809,23 @@ fn listen_for_peers(socket: UdpSocket, service: SyncService, app: AppHandle) {
         {
             continue;
         }
+        let seen_at = now_ms();
+        let should_backfill = service
+            .peers
+            .read()
+            .get(&message.device.id)
+            .map_or(true, |peer| seen_at - peer.last_seen_at > 30_000);
         service.peers.write().insert(
             message.device.id.clone(),
             PeerRecord {
                 device: message.device,
                 address: SocketAddr::new(source.ip(), message.tcp_port),
-                last_seen_at: now_ms(),
+                last_seen_at: seen_at,
             },
         );
+        if should_backfill {
+            service.enqueue_history_backfill();
+        }
         let _ = app.emit("sync-peers-updated", ());
     }
 }
@@ -1047,9 +1109,11 @@ fn import_text(
         .id()
     };
     db.set_favorite(item_id, clip.favorite)?;
+    let tagged = db.set_tags(item_id, &clip.tags)?;
     store.attach(item_id, &clip.id_hash, &clip.version)?;
     service.suppress_edit(&clip.id_hash, &clip.content_hash);
     service.suppress_favorite(&clip.id_hash, clip.favorite);
+    service.suppress_tags(&clip.id_hash, tags_fingerprint(&tagged.tags));
     if let Some(item) = db.get(item_id)? {
         let _ = app.emit("clip-updated", &item);
     }
@@ -1106,8 +1170,10 @@ fn import_image(
         })?
         .id();
     db.set_favorite(item_id, clip.favorite)?;
+    let tagged = db.set_tags(item_id, &clip.tags)?;
     store.attach(item_id, &clip.id_hash, &clip.version)?;
     service.suppress_assets(&clip.id_hash);
+    service.suppress_tags(&clip.id_hash, tags_fingerprint(&tagged.tags));
     if let Some(item) = db.get(item_id)? {
         let _ = app.emit("clip-updated", &item);
     }
@@ -1169,8 +1235,10 @@ fn import_files(
         })?
         .id();
     db.set_favorite(item_id, clip.favorite)?;
+    let tagged = db.set_tags(item_id, &clip.tags)?;
     store.attach(item_id, &clip.id_hash, &clip.version)?;
     service.suppress_assets(&clip.id_hash);
+    service.suppress_tags(&clip.id_hash, tags_fingerprint(&tagged.tags));
     if let Some(item) = db.get(item_id)? {
         let _ = app.emit("clip-updated", &item);
     }
@@ -1333,6 +1401,15 @@ fn spawn_watcher(service: SyncService) -> io::Result<()> {
                             }
                         }
                     }
+                    if before.tags_fingerprint != row.tags_fingerprint
+                        && !consume_tag_suppression(&service, id_hash, &row.tags_fingerprint)
+                    {
+                        if let Some(db) = &service.db {
+                            if let Ok(Some(item)) = db.get(row.item_id) {
+                                service.enqueue_item(&item);
+                            }
+                        }
+                    }
                 }
 
                 for id_hash in previous.keys().filter(|key| !current.contains_key(*key)) {
@@ -1383,6 +1460,19 @@ fn consume_asset_suppression(service: &SyncService, id_hash: &str) -> bool {
     matched
 }
 
+fn consume_tag_suppression(service: &SyncService, id_hash: &str, tags_fingerprint: &str) -> bool {
+    let mut suppressions = service.suppressions.lock();
+    let Some(suppression) = suppressions.get_mut(id_hash) else {
+        return false;
+    };
+    let matched = suppression.tags_fingerprint.as_deref() == Some(tags_fingerprint);
+    // Clear mismatches too: a remote update that did not materially change
+    // normalized tags must not suppress a later local edit.
+    suppression.tags_fingerprint = None;
+    cleanup_suppression(&mut suppressions, id_hash);
+    matched
+}
+
 fn consume_delete_suppression(service: &SyncService, id_hash: &str) -> bool {
     let mut suppressions = service.suppressions.lock();
     let Some(suppression) = suppressions.get_mut(id_hash) else {
@@ -1396,7 +1486,11 @@ fn consume_delete_suppression(service: &SyncService, id_hash: &str) -> bool {
 
 fn cleanup_suppression(suppressions: &mut HashMap<String, Suppression>, id_hash: &str) {
     let remove = suppressions.get(id_hash).is_some_and(|value| {
-        value.edit_hash.is_none() && value.favorite.is_none() && !value.assets && !value.deleted
+        value.edit_hash.is_none()
+            && value.favorite.is_none()
+            && !value.assets
+            && value.tags_fingerprint.is_none()
+            && !value.deleted
     });
     if remove {
         suppressions.remove(id_hash);
@@ -1415,6 +1509,7 @@ fn build_upsert_job(
         content: item.content.clone(),
         content_hash: record.content_hash.clone(),
         favorite: item.favorite,
+        tags: item.tags.clone(),
         copied_at: item.last_copied_at,
         version: record.version.clone(),
     };
@@ -1634,6 +1729,7 @@ struct WatchRow {
     content_hash: String,
     favorite: bool,
     assets_fingerprint: String,
+    tags_fingerprint: String,
 }
 
 impl SyncStore {
@@ -1823,7 +1919,7 @@ impl SyncStore {
         let mut statement = conn.prepare(
             "SELECT i.id, s.id_hash, i.kind, i.content, i.hash, i.favorite,
                     COALESCE(i.file_assets, ''), COALESCE(i.image_path, ''),
-                    COALESCE(i.thumb_path, '')
+                    COALESCE(i.thumb_path, ''), COALESCE(i.tags, '[]')
                FROM items i
                JOIN item_sync s ON s.item_id = i.id",
         )?;
@@ -1840,6 +1936,7 @@ impl SyncStore {
                 content_hash: row.get(4)?,
                 favorite: row.get::<_, i32>(5)? != 0,
                 assets_fingerprint: format!("{file_assets}|{image_path}|{thumb_path}"),
+                tags_fingerprint: row.get(9)?,
             })
         })?;
         let mut output = HashMap::new();
@@ -1849,6 +1946,10 @@ impl SyncStore {
         }
         Ok(output)
     }
+}
+
+fn tags_fingerprint(tags: &[String]) -> String {
+    serde_json::to_string(tags).unwrap_or_else(|_| "[]".into())
 }
 
 fn query_record_by_id(conn: &Connection, item_id: i64) -> Result<Option<SyncRecord>> {
@@ -2065,6 +2166,7 @@ mod tests {
                     content: "hello".into(),
                     content_hash: "33333333333333333333333333333333".into(),
                     favorite: false,
+                    tags: Vec::new(),
                     copied_at: 1_700_000_000_001,
                     version: SyncVersion {
                         device_id: "windows-device".into(),
@@ -2086,5 +2188,21 @@ mod tests {
             value["body"]["clip"]["version"]["deviceId"],
             "windows-device"
         );
+    }
+
+    #[test]
+    fn mutation_variants_use_android_camel_case_fields() {
+        let json = r#"{
+          "type":"favoriteToggle",
+          "idHash":"83ca02fa047535c7a333939687b6df9f",
+          "favorite":true,
+          "version":{"deviceId":"android-device","lamport":43,"wallMs":1700000000002}
+        }"#;
+        let body: SyncBody = serde_json::from_str(json).expect("Android mutation wire JSON");
+        let value = serde_json::to_value(body).expect("Rust mutation wire JSON");
+        assert_eq!(value["type"], "favoriteToggle");
+        assert_eq!(value["idHash"], "83ca02fa047535c7a333939687b6df9f");
+        assert!(value.get("id_hash").is_none());
+        assert_eq!(value["version"]["deviceId"], "android-device");
     }
 }

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath } from 'node:url'
@@ -8,6 +8,10 @@ const DEV_PORT = 1420
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+
+  test: {
+    include: ['src/**/*.test.{ts,tsx}'],
+  },
 
   resolve: {
     alias: {

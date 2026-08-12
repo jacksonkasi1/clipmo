@@ -9,8 +9,10 @@ import { ClipboardSidebar } from './components/ClipboardSidebar';
 import { DetailsTable } from './components/DetailsTable';
 import { Footer } from './components/Footer';
 import { ItemList } from './components/ItemList';
+import { PairDeviceDialog } from './components/PairDeviceDialog';
 import { PreviewPane } from './components/PreviewPane';
 import { SearchBar } from './components/SearchBar';
+import { SidebarExplorerDialog } from './components/SidebarExplorerDialog';
 import { getListKeyboardAction } from './lib/list-navigation';
 import { FILTER_SHORTCUTS, matchesShortcut, resolvedFilterShortcuts } from './lib/filter-shortcuts';
 import { useStore } from './lib/store';
@@ -48,6 +50,8 @@ export default function App() {
   const setDevice = useStore((s) => s.setDevice);
   const readinessSignaled = useRef(false);
   const [quickEntering, setQuickEntering] = useState(false);
+  const [pairDeviceOpen, setPairDeviceOpen] = useState(false);
+  const [filterExplorerOpen, setFilterExplorerOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.mode = mode;
@@ -315,9 +319,12 @@ export default function App() {
         className={`history-pane ${sidebarOpen ? 'sidebar-is-open' : ''}`}
         aria-label="Clipboard history"
       >
-        <ClipboardSidebar />
+        <ClipboardSidebar
+          onAddDevice={mode === 'full' ? () => setPairDeviceOpen(true) : undefined}
+          onExploreFilters={mode === 'full' ? () => setFilterExplorerOpen(true) : undefined}
+        />
         <div className="history-content">
-          <SearchBar />
+          <SearchBar onAddDevice={mode === 'full' ? () => setPairDeviceOpen(true) : undefined} />
           <ItemList />
           <Footer />
         </div>
@@ -346,6 +353,12 @@ export default function App() {
         </div>
       ) : clipboardLayout}
       {mode === 'full' && <CommandPalette />}
+      {mode === 'full' && (
+        <PairDeviceDialog open={pairDeviceOpen} onClose={() => setPairDeviceOpen(false)} />
+      )}
+      {mode === 'full' && (
+        <SidebarExplorerDialog open={filterExplorerOpen} onClose={() => setFilterExplorerOpen(false)} />
+      )}
       <ToastSurface />
     </div>
   );

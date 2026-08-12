@@ -357,6 +357,18 @@ CREATE TABLE IF NOT EXISTS settings (
             }
         }
 
+        if !query.tags.is_empty() {
+            let placeholders = std::iter::repeat_n("?", query.tags.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            sql.push_str(&format!(
+                " AND EXISTS (SELECT 1 FROM json_each(items.tags) AS item_tag WHERE item_tag.value IN ({placeholders}))"
+            ));
+            for tag in &query.tags {
+                binds.push(Box::new(tag.trim().to_lowercase()));
+            }
+        }
+
         if query.favorites_only {
             sql.push_str(" AND favorite = 1");
         }
@@ -395,6 +407,21 @@ CREATE TABLE IF NOT EXISTS settings (
                 color: row.get(3)?,
             })
         })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Error::from)
+    }
+
+    /// Returns normalized tags ordered by most recent use, then frequency.
+    pub fn known_tags(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock();
+        let mut statement = conn.prepare_cached(
+            "SELECT item_tag.value, COUNT(*) AS uses, MAX(items.last_copied_at) AS most_recent
+             FROM items, json_each(items.tags) AS item_tag
+             WHERE json_valid(items.tags) AND typeof(item_tag.value) = 'text'
+             GROUP BY item_tag.value
+             ORDER BY most_recent DESC, uses DESC, item_tag.value ASC",
+        )?;
+        let rows = statement.query_map([], |row| row.get(0))?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(Error::from)
     }
@@ -1269,6 +1296,16 @@ mod tests {
             .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, id);
+
+        let filtered = db
+            .list(&ListQuery {
+                tags: vec!["work".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, id);
+        assert_eq!(db.known_tags().unwrap(), vec!["urgent", "work"]);
     }
 
     #[test]

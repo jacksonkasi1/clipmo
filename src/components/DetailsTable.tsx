@@ -5,6 +5,7 @@ import { AppWindow, Plus, Tag, X } from 'lucide-react';
 import { DeviceBadge } from './DeviceBadge';
 import { formatBytes } from '../lib/formatting';
 import { useStore } from '../lib/store';
+import { tagColorClass } from '../lib/tag-color';
 
 const KIND_LABEL: Record<string, string> = {
   text: 'Plain text',
@@ -66,8 +67,8 @@ function TagEditor({ itemId, tags, onSave }: { itemId: number; tags: string[]; o
     <div className="tag-editor">
       <div className="tag-list">
         {tags.map((tag) => (
-          <button key={tag} type="button" className="tag-chip" title={`Remove #${tag}`} onClick={() => void onSave(itemId, tags.filter((value) => value !== tag))}>
-            <Tag size={12} aria-hidden /> {tag} <X size={11} aria-hidden />
+          <button key={tag} type="button" className={`tag-chip ${tagColorClass(tag)}`} title={`Remove #${tag}`} onClick={() => void onSave(itemId, tags.filter((value) => value !== tag))}>
+            <Tag size={12} fill="currentColor" aria-hidden /> {tag} <X size={11} aria-hidden />
           </button>
         ))}
       </div>

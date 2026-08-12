@@ -313,6 +313,9 @@ pub struct ListQuery {
     /// Empty = all devices. The special local id is stored as `local`.
     #[serde(default)]
     pub device_ids: Vec<String>,
+    /// Restrict results to entries carrying any of these normalized tags.
+    #[serde(default)]
+    pub tags: Vec<String>,
     /// Only return starred entries.
     #[serde(default)]
     pub favorites_only: bool,

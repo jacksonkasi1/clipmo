@@ -94,6 +94,7 @@ export interface ListQuery {
   search?: string | null;
   kinds?: ItemKind[];
   deviceIds?: string[];
+  tags?: string[];
   favoritesOnly?: boolean;
   limit?: number;
   offset?: number;

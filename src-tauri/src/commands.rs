@@ -16,8 +16,9 @@ use crate::clipboard::listener::{self, CaptureSink, ClipEvent};
 use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::models::{
-    ClipItem, Counts, DeviceIdentity, ImageCompression, ImageFormat, ImageMeta, ItemKind,
-    ListQuery, PasteFlavor, Settings, StoredFile, StoredFileStatus, SyncState, SystemAppearance,
+    ClipItem, Counts, DeviceIdentity, IgnoredApp, ImageCompression, ImageFormat, ImageMeta,
+    ItemKind, ListQuery, PasteFlavor, Settings, StoredFile, StoredFileStatus, SyncState,
+    SystemAppearance,
 };
 use crate::win::paste;
 use crate::AppState;
@@ -247,6 +248,11 @@ pub async fn known_devices(state: tauri::State<'_, AppState>) -> Result<Vec<Devi
 }
 
 #[tauri::command]
+pub async fn known_tags(state: tauri::State<'_, AppState>) -> Result<Vec<String>> {
+    state.db.known_tags()
+}
+
+#[tauri::command]
 pub async fn load_settings(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<Settings> {
     let registered = autostart_enabled(&app)?;
     let mut settings = state.settings.read().clone();
@@ -255,6 +261,45 @@ pub async fn load_settings(app: AppHandle, state: tauri::State<'_, AppState>) ->
         state.db.save_settings(&settings)?;
         *state.settings.write() = settings.clone();
     }
+    Ok(settings)
+}
+
+#[tauri::command]
+pub async fn set_launch_at_login(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<Settings> {
+    let previous = autostart_enabled(&app)?;
+    if enabled != previous {
+        set_autostart_enabled(&app, enabled)?;
+    }
+
+    let mut settings = state.settings.read().clone();
+    settings.launch_at_login = enabled;
+    if let Err(error) = state.db.save_settings(&settings) {
+        if enabled != previous {
+            let _ = set_autostart_enabled(&app, previous);
+        }
+        return Err(error);
+    }
+
+    *state.settings.write() = settings.clone();
+    let _ = app.emit("settings-updated", &settings);
+    Ok(settings)
+}
+
+#[tauri::command]
+pub async fn set_ignored_apps(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    ignored_apps: Vec<IgnoredApp>,
+) -> Result<Settings> {
+    let mut settings = state.settings.read().clone();
+    settings.ignored_apps = crate::capture_policy::normalize_ignored_apps(&ignored_apps);
+    state.db.save_settings(&settings)?;
+    *state.settings.write() = settings.clone();
+    let _ = app.emit("settings-updated", &settings);
     Ok(settings)
 }
 
@@ -312,9 +357,13 @@ pub async fn save_settings(
         let mut current = state.settings.write();
         *current = settings.clone();
     }
+    let sync_settings_changed = state.sync.settings_changed(&previous, &settings);
     apply_runtime_settings(&app, &settings)?;
     enforce_history_policy(&state)?;
     let _ = app.emit("settings-updated", &settings);
+    if sync_settings_changed {
+        let _ = app.emit("sync-peers-updated", ());
+    }
     Ok(settings)
 }
 
@@ -683,13 +732,15 @@ pub async fn regenerate_pairing_code(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Settings> {
-    let mut next = state.settings.read().clone();
+    let previous = state.settings.read().clone();
+    let mut next = previous.clone();
     next.sync_pairing_code = format!(
         "{:06}",
         (crate::models::now_ms().unsigned_abs() ^ u64::from(std::process::id())) % 1_000_000
     );
     state.db.save_settings(&next)?;
     *state.settings.write() = next.clone();
+    state.sync.settings_changed(&previous, &next);
     apply_runtime_settings(&app, &next)?;
     let _ = app.emit("settings-updated", &next);
     let _ = app.emit("sync-peers-updated", ());
@@ -1228,7 +1279,15 @@ fn set_autostart_enabled(app: &AppHandle, enabled: bool) -> Result<()> {
         Error::Other(format!(
             "Windows launch-at-login could not be updated: {error}"
         ))
-    })
+    })?;
+
+    let registered = autostart_enabled(app)?;
+    if registered != enabled {
+        return Err(Error::Other(
+            "Windows did not keep the requested launch-at-login setting".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_filter_shortcuts(settings: &Settings) -> Result<()> {
