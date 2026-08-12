@@ -70,6 +70,8 @@ export const SHORTCUT_RECORDER_DESCRIPTION =
 export default function Settings() {
   const settings = useStore((state) => state.settings);
   const saveSettings = useStore((state) => state.saveSettings);
+  const setLaunchAtLogin = useStore((state) => state.setLaunchAtLogin);
+  const setIgnoredApps = useStore((state) => state.setIgnoredApps);
   const appearance = useStore((state) => state.appearance);
   const counts = useStore((state) => state.counts);
   const sync = useStore((state) => state.sync);
@@ -83,6 +85,8 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [storageBusy, setStorageBusy] = useState(false);
+  const [launchAtLoginBusy, setLaunchAtLoginBusy] = useState(false);
+  const [ignoredAppsBusy, setIgnoredAppsBusy] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -166,6 +170,36 @@ export default function Settings() {
       setMutationError(mutationErrorMessage('Storage location could not be changed.', error));
     } finally {
       setStorageBusy(false);
+    }
+  };
+
+  const updateLaunchAtLogin = async (enabled: boolean) => {
+    setMutationError(null);
+    setSaved(false);
+    setLaunchAtLoginBusy(true);
+    try {
+      const next = await setLaunchAtLogin(enabled);
+      setLocal((current) => current ? { ...current, launchAtLogin: next.launchAtLogin } : current);
+      if (!dirtyRef.current) setSaved(true);
+    } catch (error) {
+      setMutationError(mutationErrorMessage('Launch at login could not be updated.', error));
+    } finally {
+      setLaunchAtLoginBusy(false);
+    }
+  };
+
+  const updateIgnoredApps = async (ignoredApps: IgnoredApp[]) => {
+    setMutationError(null);
+    setSaved(false);
+    setIgnoredAppsBusy(true);
+    try {
+      const next = await setIgnoredApps(ignoredApps);
+      setLocal((current) => current ? { ...current, ignoredApps: next.ignoredApps } : current);
+      if (!dirtyRef.current) setSaved(true);
+    } catch (error) {
+      setMutationError(mutationErrorMessage('Ignored applications could not be updated.', error));
+    } finally {
+      setIgnoredAppsBusy(false);
     }
   };
 
@@ -336,11 +370,11 @@ export default function Settings() {
         )}
 
         {activeCategory === 'history' && (
-        <Section title="History and storage" description="Review usage and remove only what you choose." icon={<Archive size={18} />}>
+        <Section title="History and storage" icon={<Archive size={18} />}>
           <Row
             id="storage-location"
             label="Managed storage location"
-            description="Changing it copies, verifies, switches, then removes only old Clipmo-managed copies."
+            description="Choose where Clipmo keeps copied images and files."
           >
             <div className="storage-location-actions">
               <StorageLocationButton
@@ -490,13 +524,14 @@ export default function Settings() {
 
         {activeCategory === 'advanced' && (
           <Section title="Advanced" description="Startup and application-level behavior." icon={<Settings2 size={18} />}>
-            <Row id="launch-at-login" label="Launch at login" description="Start minimized and monitor the clipboard after sign-in.">
-              <Toggle checked={local.launchAtLogin} onChange={(value) => update('launchAtLogin', value)} />
+            <Row id="launch-at-login" label="Launch at login" description="Run quietly in the tray and monitor the clipboard after sign-in.">
+              <Toggle checked={local.launchAtLogin} disabled={launchAtLoginBusy} onChange={(value) => void updateLaunchAtLogin(value)} />
             </Row>
             <Row id="ignored-apps" label="Ignored applications" description="Choose installed applications whose clipboard content Clipmo should never save.">
               <IgnoredApplications
                 value={local.ignoredApps}
-                onChange={(value) => update('ignoredApps', value)}
+                busy={ignoredAppsBusy}
+                onChange={(value) => void updateIgnoredApps(value)}
               />
             </Row>
           </Section>
@@ -567,7 +602,7 @@ function Section({
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   icon: ReactNode;
   children: ReactNode;
 }) {
@@ -577,7 +612,7 @@ function Section({
         <span>{icon}</span>
         <div>
           <h2>{title}</h2>
-          <p>{description}</p>
+          {description && <p>{description}</p>}
         </div>
       </header>
       <div className="settings-section-body">{children}</div>
@@ -661,7 +696,7 @@ function StorageLocationButton({
   );
 }
 
-export function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boolean) => void }) {
+export function Toggle({ checked, disabled = false, onChange }: { checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
   const aria = useRowAria();
   return (
     <button
@@ -670,6 +705,7 @@ export function Toggle({ checked, onChange }: { checked: boolean; onChange: (val
       aria-checked={checked}
       aria-labelledby={aria.labelledBy}
       aria-describedby={aria.describedBy}
+      disabled={disabled}
       className={`toggle ${checked ? 'is-on' : ''}`}
       onClick={() => onChange(!checked)}
     >
@@ -800,7 +836,7 @@ export function normaliseExtensions(value: string): string[] {
   return [...new Set(value.split(/[\s,;]+/).map((extension) => extension.trim().toLowerCase()).filter(Boolean).map((extension) => extension.startsWith('.') ? extension : `.${extension}`))];
 }
 
-function IgnoredApplications({ value, onChange }: { value: IgnoredApp[]; onChange: (value: IgnoredApp[]) => void }) {
+function IgnoredApplications({ value, busy, onChange }: { value: IgnoredApp[]; busy: boolean; onChange: (value: IgnoredApp[]) => void }) {
   const aria = useRowAria();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -815,13 +851,13 @@ function IgnoredApplications({ value, onChange }: { value: IgnoredApp[]; onChang
           <span className="ignored-app-chip" key={identityKey(app)} title={app.executablePath}>
             <ApplicationIcon app={app} />
             <span>{app.displayName}</span>
-            <button type="button" aria-label={`Remove ${app.displayName}`} onClick={() => onChange(value.filter((item) => identityKey(item) !== identityKey(app)))}>
+            <button type="button" disabled={busy} aria-label={`Remove ${app.displayName}`} onClick={() => onChange(value.filter((item) => identityKey(item) !== identityKey(app)))}>
               <X size={12} aria-hidden />
             </button>
           </span>
         ))}
       </div>
-      <button ref={triggerRef} type="button" className="secondary-button" onClick={() => setOpen(true)}><AppWindow size={15} aria-hidden /> Choose applications</button>
+      <button ref={triggerRef} type="button" className="secondary-button" disabled={busy} onClick={() => setOpen(true)}><AppWindow size={15} aria-hidden /> {busy ? 'Updating…' : 'Choose applications'}</button>
       {open && <ApplicationPicker selected={value} onClose={close} onConfirm={(apps) => { onChange(apps); close(); }} />}
     </div>
   );
@@ -833,7 +869,6 @@ let applicationRequest: Promise<ApplicationInfo[]> | null = null;
 export function clearApplicationDiscoveryCache() {
   applicationCache = null;
   applicationRequest = null;
-  iconCache.clear();
 }
 
 export function dedupeApplications(apps: ApplicationInfo[]): ApplicationInfo[] {
@@ -1004,20 +1039,8 @@ function PickerState({ icon, title, detail, children }: { icon: ReactNode; title
   return <div className="picker-state">{icon}<strong>{title}</strong><span>{detail}</span>{children}</div>;
 }
 
-const iconCache = new Map<string, string | null>();
-
 function ApplicationIcon({ app }: { app: Pick<IgnoredApp, 'displayName' | 'iconPath' | 'executablePath'> }) {
-  const [icon, setIcon] = useState<string | null>(app.iconPath ?? iconCache.get(app.executablePath) ?? null);
-  useEffect(() => {
-    if (app.iconPath || iconCache.has(app.executablePath)) return;
-    let active = true;
-    void api.extractApplicationIcon(app.executablePath).then((path) => {
-      iconCache.set(app.executablePath, path);
-      if (active) setIcon(path);
-    }).catch(() => { iconCache.set(app.executablePath, null); });
-    return () => { active = false; };
-  }, [app.executablePath, app.iconPath]);
-  return <span className="application-icon">{icon ? <img src={fileSrc(icon)} alt="" /> : <AppWindow size={17} aria-hidden />}<span className="sr-only">{app.displayName}</span></span>;
+  return <span className="application-icon">{app.iconPath ? <img src={fileSrc(app.iconPath)} alt="" /> : <AppWindow size={17} aria-hidden />}<span className="sr-only">{app.displayName}</span></span>;
 }
 
 function identityKey(app: Pick<IgnoredApp, 'id' | 'packageFamilyName' | 'appUserModelId' | 'executablePath'>): string {

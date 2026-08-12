@@ -4,25 +4,74 @@ CLIPMO ANDROID — MUST COMPLETE BEFORE CALLING SYNC FINISHED
 This checklist is based on the current Android and Windows/Rust source audit.
 Do not mark an item complete without the listed build/device evidence.
 
+CURRENT USER ACCEPTANCE — DO NOT CALL THE APP COMPLETE UNTIL ALL PASS
+--------------------------------------------------------------------
+[x] Keep incoming sync inside Clipmo history by default. Never change the
+    Android system clipboard for reconnect/backfill, edits, favorites, tags,
+    deletes, images, or files.
+[x] Provide a default-off Android control for copying only fresh live incoming
+    text to the phone clipboard. Persist the choice and do not require a
+    service restart when it changes.
+[x] Prevent bidirectional clipboard echo: Android remote clipboard writes use
+    suppression before setPrimaryClip, while Windows imports Android clips into
+    app history without writing them into the Windows system clipboard.
+[x] Swipe a History card left-to-right to delete it; swipe right-to-left to
+    open the collection/tag chooser without changing the system clipboard.
+[x] Long-press a History card to enter multi-select mode with bulk Add to
+    collection, Star, and confirmed Delete actions.
+[x] Create persistent tag collections directly on Android, including empty
+    collections, and sync clip tag assignments as non-live history updates.
+[x] Capture Android clipboard text after Clipmo gains window focus and on pull
+    refresh, then refresh History immediately. Android 10+ blocks ordinary
+    background apps from reading clipboard content while another app is focused.
+[x] Keep vertical History scrolling responsive with 500 clips: move periodic
+    SQLite reads off the UI thread, skip unchanged state replacement, and decode
+    stored thumbnails rather than full-size images in list cards.
+[x] Replace every rough/duplicate Android glyph with a consistent production
+    icon set; verify icons at phone density in light and dark themes.
+[x] Keep the Clipmo desktop logo as the Android launcher and in-app brand logo.
+[x] Provide an Add device control on mobile with editable pairing code, active
+    discovery status, and support for multiple simultaneously paired devices.
+[x] Provide a one-row horizontal device switcher in History so the 4th+ device
+    never requires vertical scrolling; show per-device clip counts/status.
+[ ] Make normal sync live (no manual refresh required): new clips, favorites,
+    tags, deletes, images, and allowed files propagate while connected.
+[x] Add pull-to-refresh as recovery only; it must restart discovery/reconcile
+    persisted history without replacing automatic live sync.
+[x] On first pair and every reconnect, backfill bounded desktop history (at
+    least the user's 20+ clips) including favorite and tag state.
+[x] Collections are user tags only, not hard-coded content-type collections.
+[x] Forget removes the trusted peer and every locally mirrored clip/asset from
+    that origin, so stale groups such as "WIN · 3" disappear immediately.
+[x] Reopen Android and verify trusted peers reconnect and live sync resumes.
+[ ] Polish all Android screens against the supplied dark Clipmo reference:
+    spacing, typography, cards, controls, empty/loading/offline states.
+[x] Install the migrated APK without clearing data and verify database upgrade.
+[ ] Device-test: Android -> Windows live text and favorite/tag/delete changes.
+[ ] Device-test: Windows -> Android live text, favorite/tag/delete, and image.
+[ ] Device-test: close/open, process kill, Wi-Fi off/on, and forgotten peer.
+[ ] Capture screenshots/log evidence for History, tag Collections, multi-device
+    Add/Switch UI, Settings, pull refresh, and no-crash Logcat.
+
 P0 — WINDOWS/RUST WIRE COMPATIBILITY
 ------------------------------------
-[ ] Make ClipSyncService JSON exactly match Rust protocol "clipmo-lan-v2".
+[x] Make ClipSyncService JSON exactly match Rust protocol "clipmo-lan-v2".
     Rust uses camelCase JSON fields. Android currently declares snake_case
     properties such as pairing_code, tcp_port, device_id, wall_ms, id_hash,
     content_hash, and copied_at. Use @JsonProperty or camelCase Kotlin names.
 
-[ ] Add Jackson Kotlin support (jackson-module-kotlin + registerKotlinModule).
+[x] Add Jackson Kotlin support (jackson-module-kotlin + registerKotlinModule).
     Plain jackson-databind is not sufficient for reliable Kotlin data-class
     construction/deserialization.
 
-[ ] Add polymorphic SyncBody metadata matching Rust serde:
+[x] Add polymorphic SyncBody metadata matching Rust serde:
       { "type": "clipUpsert", ... }
       { "type": "clipEdit", ... }
       { "type": "favoriteToggle", ... }
       { "type": "tombstone", ... }
     Use @JsonTypeInfo and @JsonSubTypes (or an explicit wire DTO/parser).
 
-[ ] Add golden protocol tests in both projects.
+[x] Add golden protocol tests in both projects.
     - Android serializes a text ClipUpsert; Rust deserializes it.
     - Rust serializes a text ClipUpsert; Android deserializes it.
     - Verify every field name and enum value, not only discovery packets.
@@ -30,34 +79,34 @@ P0 — WINDOWS/RUST WIRE COMPATIBILITY
 
 P0 — TEXT SYNC AND LOOP PREVENTION
 ----------------------------------
-[ ] Android -> Windows: copy unique text on Android and verify the exact text,
+[x] Android -> Windows: copy unique text on Android and verify the exact text,
     Android device id/name/platform, and synced status in Windows SQLite/UI.
 
-[ ] Windows -> Android: copy unique text on Windows and verify it appears in
+[x] Windows -> Android: copy unique text on Windows and verify it appears in
     Android history and, where Android permits, the Android system clipboard.
 
-[ ] Prevent echo loops. watchLocalChanges must enqueue only locally originated
+[x] Prevent echo loops. watchLocalChanges must enqueue only locally originated
     rows (for example sync_status='local'), never rows imported from Windows.
 
-[ ] Persist sync_last_seen_id after each processed batch. A service/app restart
+[x] Persist sync_last_seen_id after each processed batch. A service/app restart
     must not resend the entire Android history.
 
-[ ] When writing a remote value to Android's system clipboard, set a one-shot
+[x] When writing a remote value to Android's system clipboard, set a one-shot
     suppression token/hash before the write. MonitorService must consume that
     token and skip reinserting/rebroadcasting the remote value.
 
-[ ] Use stable id_hash and origin version records. Never replace id_hash with
+[x] Use stable id_hash and origin version records. Never replace id_hash with
     content_hash during edits; those identifiers have different purposes.
 
-[ ] Store origin_lamport and origin_wall_ms as Long values. Do not narrow them
+[x] Store origin_lamport and origin_wall_ms as Long values. Do not narrow them
     with toInt(), which overflows real timestamps and large Lamport clocks.
 
 P0 — SERVICE LIFECYCLE AND RECONNECTION
 ---------------------------------------
-[ ] On a null/sticky ClipSyncService intent, restore device id, device name,
+[x] On a null/sticky ClipSyncService intent, restore device id, device name,
     pairing/trust state, and enabled state from persistent preferences.
 
-[ ] When Clipmo opens, restart MonitorService and ClipSyncService when their
+[x] When Clipmo opens, restart MonitorService and ClipSyncService when their
     persisted toggles are enabled. Reopening must reconnect automatically.
 
 [ ] Temporary Wi-Fi loss must retain pairing/trust, mark peers offline, and
@@ -84,8 +133,11 @@ P0 — ANDROID CLIPBOARD PLATFORM LIMITS
     after process death. Do not claim unrestricted background capture if the OS
     blocks it. Reference:
     https://developer.android.com/privacy-and-security/risks/secure-clipboard-handling
+    Verified on API 36: the OS logs "Denying clipboard access" while another
+    app is focused. Returning to Clipmo or pulling to refresh captures and syncs
+    the current value; unrestricted background capture is not claimed.
 
-[ ] Never log raw clipboard contents, pairing secrets, or transferred payloads.
+[x] Never log raw clipboard contents, pairing secrets, or transferred payloads.
 
 P1 — SECURITY / REAL PAIRING
 ----------------------------
@@ -114,10 +166,10 @@ P1 — IMAGES, FILES, AND MUTATIONS
 
 BUILD AND DEVICE EVIDENCE
 -------------------------
-[ ] Use JDK 17. Run: gradlew.bat clean testDebugUnitTest assembleDebug
-[ ] Run lint: gradlew.bat lintDebug
-[ ] Install APK with adb and launch it.
-[ ] Inspect Logcat for MainActivity, MonitorService, and ClipSyncService crashes.
+[x] Use JDK 17. Run: gradlew.bat clean testDebugUnitTest assembleDebug
+[x] Run lint: gradlew.bat lintDebug
+[x] Install APK with adb and launch it.
+[x] Inspect Logcat for MainActivity, MonitorService, and ClipSyncService crashes.
 [ ] Test Android API 29, API 34, and API 35 (real device where possible).
 [ ] Test two Windows devices plus at least one Android device on the same LAN.
 [ ] Test restart, reboot, Wi-Fi off/on, IP address change, and process kill.
@@ -131,8 +183,32 @@ BUILD AND DEVICE EVIDENCE
 
 CLEANUP BEFORE COMMIT
 ---------------------
-[ ] Remove development artifacts from production source if they are not needed:
+[x] Remove development artifacts from production source if they are not needed:
     debug_bytes.py, fix_buf.py, and test.txt.
-[ ] Keep only one authoritative Android database/model layer. The current tree
+[x] Keep only one authoritative Android database/model layer. The current tree
     contains overlapping clipboard item/store helpers; consolidate after the
     active migration is complete.
+
+P0 — DESKTOP FEATURE PARITY
+---------------------------
+[ ] Persist the source Android package/application identity for every captured
+    item and resolve its user-visible application label and icon without
+    blocking clipboard capture.
+
+[ ] Add application icons to the Android side filter rail. Tapping an icon
+    filters history by source package. Limit the visible shortcuts and provide
+    an Explore filters screen for all applications, tags, and devices.
+
+[ ] Give new tags a stable automatic color. Keep the color stable across
+    restarts and synced devices, and move excess tags into Explore filters.
+
+[ ] Add a long-press menu for tag, application, and device filters with:
+    Favorite all, Delete non-favorites, and Delete all. Confirm destructive
+    actions and sync the resulting favorites/tombstones live to every peer.
+
+[ ] Keep multi-device syncing live while connected: newly captured items,
+    edits, favorites, tags, and deletes should appear without manual refresh.
+
+[ ] Add Android-accessible equivalents for the desktop shortcut actions where
+    hardware keyboards permit, and document them in the Android shortcut/help
+    screen. Do not intercept platform-reserved shortcuts.

@@ -13,6 +13,7 @@ const apiMock = vi.hoisted(() => ({
   chooseStorageFolder: vi.fn(),
   confirm: vi.fn(),
   openStorageFolder: vi.fn(),
+  setLaunchAtLogin: vi.fn(),
 }));
 
 vi.mock('./lib/tauri', () => ({ api: apiMock, fileSrc: (path: string) => `asset://${path}` }));
@@ -73,6 +74,10 @@ beforeEach(() => {
   apiMock.chooseApplications.mockReset().mockResolvedValue(null);
   apiMock.resolveApplicationIdentity.mockReset();
   apiMock.extractApplicationIcon.mockReset().mockResolvedValue(null);
+  apiMock.setLaunchAtLogin.mockReset().mockImplementation(async (enabled: boolean) => ({
+    ...baseSettings,
+    launchAtLogin: enabled,
+  }));
   useStore.setState({
     settings: baseSettings,
     appearance: { accent: '#39b9e8', dark: true },
@@ -120,6 +125,38 @@ describe('Settings interactions', () => {
     expect(metrics?.textContent).toContain('All items');
     expect(screen.getByRole('button', { name: /Delete all history/ })).toBeTruthy();
   });
+
+  it('applies launch at login immediately without the save button', async () => {
+    const user = userEvent.setup();
+    const setLaunchAtLogin = vi.fn().mockResolvedValue({ ...baseSettings, launchAtLogin: true });
+    useStore.setState({ setLaunchAtLogin });
+    render(<Settings />);
+
+    await user.click(screen.getByRole('button', { name: /Advanced/ }));
+    await user.click(screen.getByRole('switch', { name: 'Launch at login' }));
+
+    await waitFor(() => expect(setLaunchAtLogin).toHaveBeenCalledWith(true));
+    expect(screen.getByRole('switch', { name: 'Launch at login' }).getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('persists ignored applications immediately after confirmation', async () => {
+    const user = userEvent.setup();
+    const setIgnoredApps = vi.fn().mockImplementation(async (ignoredApps: SettingsType['ignoredApps']) => ({
+      ...baseSettings,
+      ignoredApps,
+    }));
+    useStore.setState({ setIgnoredApps });
+    render(<Settings />);
+
+    await user.click(screen.getByRole('button', { name: /Advanced/ }));
+    await user.click(screen.getByRole('button', { name: 'Choose applications' }));
+    await user.click(await screen.findByRole('option', { name: /Paint/ }));
+    await user.click(screen.getByRole('button', { name: 'Confirm selection' }));
+
+    await waitFor(() => expect(setIgnoredApps).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'paint', executableName: 'paint.exe' }),
+    ]));
+  });
 });
 
 describe('Application picker', () => {
@@ -135,6 +172,7 @@ describe('Application picker', () => {
     render(<ApplicationPicker selected={[]} onClose={vi.fn()} onConfirm={confirm} />);
     expect(document.activeElement).toBe(screen.getByRole('searchbox'));
     await screen.findByRole('option', { name: /Notepad/ });
+    expect(apiMock.extractApplicationIcon).not.toHaveBeenCalled();
     expect(apiMock.listInstalledApps).toHaveBeenCalledTimes(1);
     expect(apiMock.listRunningApps).toHaveBeenCalledTimes(1);
     await user.type(screen.getByRole('searchbox'), 'paint');

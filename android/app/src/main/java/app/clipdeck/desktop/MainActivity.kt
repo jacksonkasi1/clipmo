@@ -1,371 +1,355 @@
 package app.clipdeck.desktop
 
-import android.app.ActivityManager
-import android.app.AlertDialog
-import android.app.Notification
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
 import android.content.ClipData
-import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.IBinder
-import android.text.Editable
-import android.text.TextWatcher
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
-import android.widget.ImageButton
-import android.widget.TextView
+import android.os.Handler
+import android.os.Looper
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.floatingactionbutton.FloatingActionButton
-import com.google.android.material.switchmaterial.SwitchMaterial
-import com.google.android.material.textfield.TextInputEditText
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
+import androidx.lifecycle.lifecycleScope
+import app.clipdeck.desktop.data.ClipRecord
+import app.clipdeck.desktop.data.ClipboardStore
+import app.clipdeck.desktop.data.TrustedDeviceRecord
+import app.clipdeck.desktop.ui.ClipmoApp
+import app.clipdeck.desktop.ui.ClipmoUiState
+import app.clipdeck.desktop.ui.theme.ClipmoThemeMode
+import java.util.UUID
+import java.security.MessageDigest
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-// ============================================================
-// DATA MODEL
-// ============================================================
-enum class ContentType { TEXT, URL, IMAGE, FILE }
+class MainActivity : ComponentActivity() {
+    private lateinit var store: ClipboardStore
+    private val preferences by lazy { getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE) }
 
-data class ClipboardItem(
- val id: Long = 0,
- val content: String,
- val contentType: ContentType,
- val timestamp: Long,
- val sourceApp: String? = null,
- val isFavorite: Boolean = false,
- val sizeBytes: Int = 0
-)
+    private var clips by mutableStateOf<List<ClipRecord>>(emptyList())
+    private var monitorEnabled by mutableStateOf(false)
+    private var syncEnabled by mutableStateOf(false)
+    private var copyLiveSyncToClipboard by mutableStateOf(false)
+    private var pairingCode by mutableStateOf("")
+    private var pairingModeActive by mutableStateOf(false)
+    private var themeMode by mutableStateOf(ClipmoThemeMode.SYSTEM)
+    private var trustedDevices by mutableStateOf<List<TrustedDeviceRecord>>(emptyList())
+    private var collections by mutableStateOf<List<String>>(emptyList())
+    private val refreshHandler = Handler(Looper.getMainLooper())
+    private val refreshTask = object : Runnable {
+        override fun run() {
+            if (::store.isInitialized) refreshAsync()
+            refreshHandler.postDelayed(this, DEVICE_REFRESH_MS)
+        }
+    }
 
-// ============================================================
-// DATABASE
-// ============================================================
-class DbHelper(private val ctx: Context) :
- android.database.sqlite.SQLiteOpenHelper(ctx, "clipdeck.db", null, 1) {
+    private val notificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
 
- override fun onCreate(db: android.database.sqlite.SQLiteDatabase) {
- db.execSQL("CREATE TABLE items(id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT, type TEXT, ts INTEGER, source TEXT, fav INTEGER)")
- db.execSQL("CREATE INDEX idx_ts ON items(ts DESC)")
- }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        store = ClipboardStore(this)
+        loadPreferences()
+        createNotificationChannel()
+        requestNotificationPermissionIfNeeded()
+        restartEnabledServices()
+        setContent {
+            val systemDark = isSystemInDarkTheme()
+            val isDark = when (themeMode) {
+                ClipmoThemeMode.SYSTEM -> systemDark
+                ClipmoThemeMode.LIGHT -> false
+                ClipmoThemeMode.DARK -> true
+            }
+            SideEffect {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !isDark
+                    isAppearanceLightNavigationBars = !isDark
+                }
+            }
+            ClipmoApp(
+                state = ClipmoUiState(
+                    clips = clips,
+                    monitorEnabled = monitorEnabled,
+                    syncEnabled = syncEnabled,
+                    copyLiveSyncToClipboard = copyLiveSyncToClipboard,
+                    pairingCode = pairingCode,
+                    pairingModeActive = pairingModeActive,
+                    localDeviceName = getOrCreateDeviceName(),
+                    localDeviceId = getOrCreateDeviceId(),
+                    themeMode = themeMode,
+                    trustedDevices = trustedDevices,
+                    collections = collections,
+                ),
+                onCopy = ::copyToClipboard,
+                onFavorite = { store.toggleFavorite(it.id); refresh() },
+                onDelete = { store.delete(it.id); refresh() },
+                onFavoriteMany = { store.favorite(it); refresh() },
+                onDeleteMany = { store.delete(it); refresh() },
+                onCreateCollection = { store.createCollection(it); refresh() },
+                onAddToCollection = { ids, collection -> store.addToCollection(ids, collection); refresh() },
+                onClear = { store.clear(); refresh() },
+                onMonitorChanged = ::handleMonitorChanged,
+                onSyncChanged = ::handleSyncChanged,
+                onCopyLiveSyncChanged = ::handleCopyLiveSyncChanged,
+                onPairingCodeChanged = ::handlePairingCodeChanged,
+                onThemeChanged = ::handleThemeChanged,
+                onForgetDevice = ::forgetDevice,
+                onStartPairing = ::startPairing,
+                onRefresh = ::refreshSync,
+            )
+        }
+    }
 
- override fun onUpgrade(db: android.database.sqlite.SQLiteDatabase, old: Int, new: Int) {
- db.execSQL("DROP TABLE IF EXISTS items")
- onCreate(db)
- }
+    override fun onResume() {
+        super.onResume()
+        if (::store.isInitialized) refreshAsync()
+        refreshHandler.removeCallbacks(refreshTask)
+        refreshHandler.postDelayed(refreshTask, DEVICE_REFRESH_MS)
+    }
 
- fun insert(content: String, type: String, ts: Long, source: String?): Long {
- val v = android.content.ContentValues()
- v.put("content", content)
- v.put("type", type)
- v.put("ts", ts)
- v.put("source", source)
- v.put("fav", 0)
- return writableDatabase.insert("items", null, v)
- }
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            // Android 10+ permits ordinary apps to read the clipboard only while
+            // focused. Waiting for window focus avoids the onResume race where
+            // the system still considers the previous application foreground.
+            refreshHandler.postDelayed({
+                captureClipboardWhileForeground()
+                refreshAsync()
+            }, CLIPBOARD_FOCUS_DELAY_MS)
+        }
+    }
 
- fun getAll(): List<ClipboardItem> {
- val out = mutableListOf<ClipboardItem>()
- val c = readableDatabase.query("items", null, null, null, null, null, "ts DESC")
- c.use { while (it.moveToNext()) { out.add(row(it)) } }
- return out
- }
+    override fun onPause() {
+        refreshHandler.removeCallbacks(refreshTask)
+        super.onPause()
+    }
 
- fun getCursor() = readableDatabase.query("items", null, null, null, null, null, "ts DESC")
+    override fun onDestroy() {
+        if (::store.isInitialized) store.close()
+        super.onDestroy()
+    }
 
- fun search(q: String): List<ClipboardItem> {
- val out = mutableListOf<ClipboardItem>()
- val c = readableDatabase.query("items", null, "content LIKE ?", arrayOf("%$q%"), null, null, "ts DESC")
- c.use { while (it.moveToNext()) { out.add(row(it)) } }
- return out
- }
+    private fun refresh() {
+        val updatedClips = store.all()
+        val updatedCollections = store.collections()
+        val updatedDevices = store.trustedDevices()
+        if (updatedClips != clips) clips = updatedClips
+        if (updatedCollections != collections) collections = updatedCollections
+        if (updatedDevices != trustedDevices) trustedDevices = updatedDevices
+        pairingModeActive = preferences.getLong(KEY_PAIRING_UNTIL, 0L) > System.currentTimeMillis()
+    }
 
- fun getFavs(): List<ClipboardItem> {
- val out = mutableListOf<ClipboardItem>()
- val c = readableDatabase.rawQuery("SELECT * FROM items WHERE fav=1 ORDER BY ts DESC", null)
- c.use { while (it.moveToNext()) { out.add(row(it)) } }
- return out
- }
+    private fun refreshAsync() {
+        lifecycleScope.launch {
+            val snapshot = withContext(Dispatchers.IO) {
+                Triple(store.all(), store.collections(), store.trustedDevices())
+            }
+            val (updatedClips, updatedCollections, updatedDevices) = snapshot
+            if (updatedClips != clips) clips = updatedClips
+            if (updatedCollections != collections) collections = updatedCollections
+            if (updatedDevices != trustedDevices) trustedDevices = updatedDevices
+            pairingModeActive = preferences.getLong(KEY_PAIRING_UNTIL, 0L) > System.currentTimeMillis()
+        }
+    }
 
- fun delete(id: Long) = writableDatabase.delete("items", "id=?", arrayOf(id.toString()))
- fun deleteAll() = writableDatabase.delete("items", null, null)
- fun count(): Int {
- val c = readableDatabase.rawQuery("SELECT COUNT(*) FROM items", null)
- c.use { return if (it.moveToFirst()) it.getInt(0) else 0 }
- }
+    private fun forgetDevice(device: TrustedDeviceRecord) {
+        store.forgetDevice(device.id)
+        if (syncEnabled) {
+            stopService(Intent(this, ClipSyncService::class.java))
+            startSyncService()
+        }
+        refresh()
+    }
 
- fun toggleFav(id: Long) {
- val cur = readableDatabase.rawQuery("SELECT fav FROM items WHERE id=?", arrayOf(id.toString()))
- cur.use {
- if (it.moveToFirst()) {
- val nv = if (it.getInt(0) == 0) 1 else 0
- writableDatabase.execSQL("UPDATE items SET fav=$nv WHERE id=$id")
- }
- }
- }
+    private fun refreshSync() {
+        captureClipboardWhileForeground()
+        refresh()
+        if (syncEnabled) {
+            // The service continuously broadcasts and listens. Re-delivering its
+            // start intent recovers a stopped service without tearing down a live
+            // TCP listener (which previously caused the port to hop on refresh).
+            startSyncService()
+        }
+    }
 
- private fun row(c: android.database.Cursor): ClipboardItem {
- val typeStr = c.getString(c.getColumnIndexOrThrow("type"))
- val ct = try { ContentType.valueOf(typeStr) } catch (e: Exception) { ContentType.TEXT }
- return ClipboardItem(
- id = c.getLong(c.getColumnIndexOrThrow("id")),
- content = c.getString(c.getColumnIndexOrThrow("content")),
- contentType = ct,
- timestamp = c.getLong(c.getColumnIndexOrThrow("ts")),
- sourceApp = c.getString(c.getColumnIndexOrThrow("source")),
- isFavorite = c.getInt(c.getColumnIndexOrThrow("fav")) == 1
- )
- }
-}
+    private fun startPairing() {
+        if (pairingCode.isBlank()) {
+            Toast.makeText(this, "Enter a pairing code first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        preferences.edit().putLong(KEY_PAIRING_UNTIL, System.currentTimeMillis() + PAIRING_WINDOW_MS).apply()
+        pairingModeActive = true
+        if (!syncEnabled) handleSyncChanged(true) else refreshSync()
+        Toast.makeText(this, "Pairing open for 2 minutes", Toast.LENGTH_SHORT).show()
+    }
 
-// ============================================================
-// ADAPTER
-// ============================================================
-class ClipboardAdapter(
- private var items: List<ClipboardItem>,
- private val onCopy: (ClipboardItem) -> Unit,
- private val onFav: (ClipboardItem) -> Unit,
- private val onDel: (ClipboardItem) -> Unit
-) : RecyclerView.Adapter<ClipboardAdapter.VH>() {
+    private fun copyToClipboard(clip: ClipRecord) {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val asset = clip.assetPaths?.lineSequence()?.firstOrNull()?.let(::File)?.takeIf(File::isFile)
+        if (asset != null && clip.kind in setOf(app.clipdeck.desktop.data.ClipKind.IMAGE, app.clipdeck.desktop.data.ClipKind.FILE)) {
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", asset)
+            preferences.edit().putString(KEY_CLIPBOARD_SUPPRESSION_URI, uri.toString()).apply()
+            clipboard.setPrimaryClip(ClipData.newUri(contentResolver, "Clipmo", uri))
+        } else {
+            clipboard.setPrimaryClip(ClipData.newPlainText("Clipmo", clip.content))
+        }
+        Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show()
+    }
 
- inner class VH(v: View) : RecyclerView.ViewHolder(v) {
- val content: TextView = v.findViewById(R.id.tvContent)
- val meta: TextView = v.findViewById(R.id.tvMeta)
- val btnFav: ImageButton = v.findViewById(R.id.btnFav)
- val btnCopy: ImageButton = v.findViewById(R.id.btnCopy)
- val btnDel: ImageButton = v.findViewById(R.id.btnDel)
- }
+    private fun captureClipboardWhileForeground(): Boolean {
+        if (!::store.isInitialized || !monitorEnabled || !hasWindowFocus()) return false
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val item = runCatching {
+            clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)
+        }.getOrNull() ?: return false
+        if (item.uri != null) {
+            startForegroundService(
+                Intent(this, MonitorService::class.java).setAction(MonitorService.ACTION_CAPTURE_CURRENT),
+            )
+            return false
+        }
+        val content = item.coerceToText(this)?.toString()?.takeIf(String::isNotBlank) ?: return false
+        val hash = MessageDigest.getInstance("SHA-256")
+            .digest(content.toByteArray(Charsets.UTF_8))
+            .take(16).joinToString("") { "%02x".format(it) }
+        val suppression = preferences.getString(KEY_CLIPBOARD_SUPPRESSION_HASH, null)
+        if (suppression == hash) {
+            preferences.edit().remove(KEY_CLIPBOARD_SUPPRESSION_HASH).apply()
+            return false
+        }
+        return store.captureText(content, getOrCreateDeviceId())
+    }
 
- override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
- val v = LayoutInflater.from(parent.context).inflate(R.layout.item_clipboard, parent, false)
- return VH(v)
- }
+    private fun handleMonitorChanged(enabled: Boolean) {
+        monitorEnabled = enabled
+        preferences.edit().putBoolean(KEY_MONITOR_ENABLED, enabled).apply()
+        val intent = Intent(this, MonitorService::class.java)
+        if (enabled) startForegroundService(intent) else stopService(intent)
+    }
 
- override fun onBindViewHolder(h: VH, pos: Int) {
- val item = items[pos]
- h.content.text = item.content
- val color = when (item.contentType) {
- ContentType.URL -> 0xFF1A73E8.toInt()
- ContentType.IMAGE -> 0xFFE91E63.toInt()
- ContentType.FILE -> 0xFF4CAF50.toInt()
- else -> 0xFF212121.toInt()
- }
- h.content.setTextColor(color)
- val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
- val src = item.sourceApp?.substringAfterLast('.')?.replaceFirstChar { it.uppercase() } ?: "Unknown"
- val typeLabel = when (item.contentType) {
- ContentType.URL -> "Link"
- ContentType.IMAGE -> "Image"
- ContentType.FILE -> "File"
- else -> "Text"
- }
- h.meta.text = "$src · ${fmt.format(Date(item.timestamp))} · $typeLabel"
- h.btnFav.setImageResource(if (item.isFavorite) R.drawable.ic_star_filled else R.drawable.ic_star_outline)
- h.content.setOnClickListener { onCopy(item) }
- h.btnFav.setOnClickListener { onFav(item) }
- h.btnCopy.setOnClickListener { onCopy(item) }
- h.btnDel.setOnClickListener { onDel(item) }
- }
+    private fun handleSyncChanged(enabled: Boolean) {
+        if (enabled && pairingCode.isBlank()) {
+            Toast.makeText(this, "Enter a pairing code first", Toast.LENGTH_SHORT).show()
+            syncEnabled = false
+            return
+        }
+        syncEnabled = enabled
+        preferences.edit().putBoolean(KEY_SYNC_ENABLED, enabled).apply()
+        if (enabled) startSyncService() else stopService(Intent(this, ClipSyncService::class.java))
+    }
 
- override fun getItemCount() = items.size
- fun update(newItems: List<ClipboardItem>) {
- items = newItems
- notifyDataSetChanged()
- }
-}
+    private fun handleCopyLiveSyncChanged(enabled: Boolean) {
+        copyLiveSyncToClipboard = enabled
+        preferences.edit().putBoolean(KEY_COPY_LIVE_SYNC_TO_CLIPBOARD, enabled).apply()
+    }
 
-// ============================================================
-// FOREGROUND SERVICE
-// ============================================================
-class MonitorService : Service() {
- private val binder = LocalBinder()
- private var cm: ClipboardManager? = null
- private var listener: ClipboardManager.OnPrimaryClipChangedListener? = null
- private var lastHash = 0
- private val db by lazy { DbHelper(this) }
+    private fun handlePairingCodeChanged(code: String) {
+        pairingCode = code.filter { it.isLetterOrDigit() }.take(MAX_PAIRING_CODE_LENGTH)
+        preferences.edit().putString(KEY_PAIRING_CODE, pairingCode).apply()
+        if (syncEnabled) {
+            stopService(Intent(this, ClipSyncService::class.java))
+            startSyncService()
+        }
+    }
 
- inner class LocalBinder : android.os.Binder() {
- fun getService() = this@MonitorService
- }
+    private fun handleThemeChanged(mode: ClipmoThemeMode) {
+        themeMode = mode
+        preferences.edit().putString(KEY_THEME_MODE, mode.name).apply()
+    }
 
- override fun onCreate() {
- super.onCreate()
- cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
- }
+    private fun startSyncService() {
+        startForegroundService(
+            Intent(this, ClipSyncService::class.java).apply {
+                putExtra("device_id", getOrCreateDeviceId())
+                putExtra("device_name", getOrCreateDeviceName())
+                putExtra("pairing_code", pairingCode)
+            },
+        )
+    }
 
- override fun onStartCommand(i: Intent?, f: Int, s: Int): Int {
- startForeground(NOTIF_ID, makeNotif())
- startListening()
- return START_STICKY
- }
+    private fun restartEnabledServices() {
+        if (monitorEnabled) startForegroundService(Intent(this, MonitorService::class.java))
+        if (syncEnabled && pairingCode.isNotBlank()) startSyncService()
+    }
 
- override fun onBind(i: Intent): IBinder = binder
+    private fun loadPreferences() {
+        monitorEnabled = preferences.getBoolean(KEY_MONITOR_ENABLED, false)
+        syncEnabled = preferences.getBoolean(KEY_SYNC_ENABLED, false)
+        copyLiveSyncToClipboard = preferences.getBoolean(KEY_COPY_LIVE_SYNC_TO_CLIPBOARD, false)
+        pairingCode = preferences.getString(KEY_PAIRING_CODE, "").orEmpty()
+        themeMode = runCatching {
+            ClipmoThemeMode.valueOf(preferences.getString(KEY_THEME_MODE, ClipmoThemeMode.SYSTEM.name).orEmpty())
+        }.getOrDefault(ClipmoThemeMode.SYSTEM)
+    }
 
- override fun onDestroy() {
- stopListening()
- super.onDestroy()
- }
+    private fun getOrCreateDeviceId(): String =
+        preferences.getString(KEY_DEVICE_ID, null) ?: UUID.randomUUID().toString().also {
+            preferences.edit().putString(KEY_DEVICE_ID, it).apply()
+        }
 
- fun startListening() {
- if (listener != null) return
- listener = ClipboardManager.OnPrimaryClipChangedListener {
- val clip = cm?.primaryClip ?: return@OnPrimaryClipChangedListener
- if (clip.itemCount == 0) return@OnPrimaryClipChangedListener
- val text = clip.getItemAt(0).coerceToText(this).toString()
- val hash = text.hashCode()
- if (hash == lastHash || text.isBlank()) return@OnPrimaryClipChangedListener
- lastHash = hash
- val isUrl = text.trim().startsWith("http://") || text.trim().startsWith("https://")
- val type = if (isUrl) ContentType.URL else ContentType.TEXT
- val src = try {
- val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
- am.runningAppProcesses?.firstOrNull { it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND }
- ?.processName
- } catch (e: Exception) { null }
- db.insert(text, type.name, System.currentTimeMillis(), src)
- }
- cm?.addPrimaryClipChangedListener(listener!!)
- }
+    private fun getOrCreateDeviceName(): String =
+        preferences.getString(KEY_DEVICE_NAME, null) ?: "${Build.MANUFACTURER} ${Build.MODEL}".trim().also {
+            preferences.edit().putString(KEY_DEVICE_NAME, it).apply()
+        }
 
- fun stopListening() {
- listener?.let { cm?.removePrimaryClipChangedListener(it) }
- listener = null
- }
+    private fun createNotificationChannel() {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.createNotificationChannel(
+            NotificationChannel(
+                MonitorService.CHANNEL_ID,
+                "Clipmo clipboard",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "Clipboard monitoring status"
+                setShowBadge(false)
+            },
+        )
+    }
 
- fun clearHistory() {
- db.deleteAll()
- lastHash = 0
- }
+    private fun requestNotificationPermissionIfNeeded() {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
- private fun makeNotif(): Notification {
- val pi = PendingIntent.getActivity(
- this, 0, Intent(this, MainActivity::class.java),
- PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
- )
- return androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
- .setContentTitle("Clipmo")
- .setContentText("Clipboard monitoring active")
- .setSmallIcon(R.mipmap.ic_launcher)
- .setContentIntent(pi)
- .setOngoing(true)
- .build()
- }
-
- companion object {
- const val CHANNEL_ID = "clipmo_channel"
- const val NOTIF_ID = 1
- }
-}
-
-// ============================================================
-// MAIN ACTIVITY
-// ============================================================
-class MainActivity : AppCompatActivity() {
- private lateinit var db: DbHelper
- private lateinit var adapter: ClipboardAdapter
- private var searchQuery: String = ""
-
- override fun onCreate(savedInstanceState: Bundle?) {
- super.onCreate(savedInstanceState)
- setContentView(R.layout.activity_main)
- db = DbHelper(this)
- adapter = ClipboardAdapter(
- emptyList(),
- { copyToClipboard(it) },
- { db.toggleFav(it.id); refresh() },
- { confirmDelete(it) }
- )
- val rv = findViewById<RecyclerView>(R.id.recyclerView)
- rv.layoutManager = LinearLayoutManager(this)
- rv.adapter = adapter
- val search = findViewById<TextInputEditText>(R.id.searchField)
- search.addTextChangedListener(object : TextWatcher {
- override fun afterTextChanged(s: Editable?) {
- searchQuery = s?.toString() ?: ""
- refresh()
- }
- override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
- override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
- })
- findViewById<SwitchMaterial>(R.id.toggleMonitor).setOnCheckedChangeListener { _, on ->
- if (on) startService() else stopService()
- }
- findViewById<FloatingActionButton>(R.id.btnClear).setOnClickListener { confirmClearAll() }
- requestPerms()
- }
-
- override fun onResume() {
- super.onResume()
- refresh()
- }
-
- private fun refresh() {
- val list = if (searchQuery.isBlank()) db.getAll() else db.search(searchQuery)
- adapter.update(list)
- }
-
- private fun startService() {
- val i = Intent(this, MonitorService::class.java)
- if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(i) else startService(i)
- }
-
- private fun stopService() {
- stopService(Intent(this, MonitorService::class.java))
- }
-
- private fun copyToClipboard(item: ClipboardItem) {
- val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
- cm.setPrimaryClip(ClipData.newPlainText("Clipmo", item.content))
- Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show()
- }
-
- private fun confirmDelete(item: ClipboardItem) {
- AlertDialog.Builder(this)
- .setTitle("Delete?")
- .setMessage(item.content.take(100))
- .setPositiveButton("Delete") { _, _ -> db.delete(item.id); refresh() }
- .setNegativeButton("Cancel", null)
- .show()
- }
-
- private fun confirmClearAll() {
- if (db.count() == 0) return
- AlertDialog.Builder(this)
- .setTitle("Clear all history?")
- .setMessage("This cannot be undone.")
- .setPositiveButton("Clear") { _, _ -> db.deleteAll(); refresh() }
- .setNegativeButton("Cancel", null)
- .show()
- }
-
- private fun requestPerms() {
- val perms = mutableListOf<String>()
- if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
- if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
- != PackageManager.PERMISSION_GRANTED) {
- perms.add(android.Manifest.permission.POST_NOTIFICATIONS)
- }
- }
- if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
- !android.provider.Settings.canDrawOverlays(this)) {
- startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
- android.net.Uri.parse("package:$packageName")))
- }
- if (perms.isNotEmpty()) {
- ActivityCompat.requestPermissions(this, perms.toTypedArray(), 100)
- }
- }
+    private companion object {
+        const val PREFERENCES_NAME = "clipmo_sync"
+        const val KEY_DEVICE_ID = "device_id"
+        const val KEY_DEVICE_NAME = "device_name"
+        const val KEY_PAIRING_CODE = "pairing_code"
+        const val KEY_SYNC_ENABLED = "sync_enabled"
+        const val KEY_MONITOR_ENABLED = "monitor_enabled"
+        const val KEY_COPY_LIVE_SYNC_TO_CLIPBOARD = "copy_live_sync_to_clipboard"
+        const val KEY_THEME_MODE = "theme_mode"
+        const val KEY_PAIRING_UNTIL = "pairing_until"
+        const val KEY_CLIPBOARD_SUPPRESSION_HASH = "clipboard_suppression_hash"
+        const val KEY_CLIPBOARD_SUPPRESSION_URI = "clipboard_suppression_uri"
+        const val MAX_PAIRING_CODE_LENGTH = 12
+        const val DEVICE_REFRESH_MS = 3_000L
+        const val PAIRING_WINDOW_MS = 120_000L
+        const val CLIPBOARD_FOCUS_DELAY_MS = 250L
+    }
 }
