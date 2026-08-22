@@ -115,3 +115,35 @@ Share sheet:
   off still saved the item.
 - The photo-access prompt is now only requested when monitoring is on and the
   screenshot toggle is on.
+
+## 2026-08-22 — History scroll work, clip detail with edit, lean swipe rows
+
+Scroll investigation on 1.9k-item history (same CPH2781):
+
+- Bisected fling jank with `dumpsys gfxinfo` over identical 8-fling runs and
+  `atrace` captures. Two dominant costs found: thumbnails were decoded
+  synchronously during composition, and `maxLines`-bounded text layout hit a
+  very slow path on the ColorOS font stack (bare rows with unbounded text
+  rendered 403 frames at 10.9% jank vs 40 frames at ~88% for `maxLines=2`).
+- Fixes shipped: thumbnails decode on Dispatchers.IO behind a shared 16 MiB
+  LruCache with the kind icon as placeholder; previews truncate the string
+  (~90 chars + ellipsis character) instead of `maxLines`; device grouping is
+  memoized; the 3-second refresh diff runs off the main thread; per-row time
+  formatting is remembered; swipe rows use a plain horizontal drag (affordance
+  composes only while dragged) instead of Material's per-row anchored
+  draggable; repeated row icon buttons drop their ripple indication.
+- Full-UI fling measurement: jank 80.0% -> 68.8%, p50 65 ms -> 46 ms. The
+  remaining cost is per-row composition and is deferred to the planned UI
+  overhaul.
+
+Clip detail and edit:
+
+- Tapping a card opens a detail overlay with the full content; Copy, Edit,
+  Delete, and Close actions (Edit | Copy on top, Close | Delete at bottom).
+- Edit switches to a multiline field; Save persists through
+  `ClipboardStore.editContent` and enqueues an `edit` outbox mutation that the
+  sync service sends as a `clipEdit` frame for text-like items (field-parity
+  with the Rust sender verified against sync.rs).
+- Verified on device: typed `EDITMARK7` appeared in the SQLite file after
+  force-stop; right-swipe deleted a row; left-swipe opened the collection
+  picker; card tap opened the detail overlay with full multi-KB text.

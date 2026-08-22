@@ -178,6 +178,39 @@ class ClipboardStore(context: Context) :
         }
     }
 
+    fun editContent(id: Long, content: String): Boolean {
+        val trimmed = content.trim()
+        if (trimmed.isEmpty()) return false
+        var idHash: String? = null
+        var changed = false
+        writableDatabase.beginTransaction()
+        try {
+            writableDatabase.rawQuery("SELECT content, id_hash FROM items WHERE id=?", arrayOf(id.toString())).use { cursor ->
+                if (cursor.moveToFirst()) {
+                    changed = trimmed != cursor.getString(0)
+                    idHash = cursor.getString(1)
+                }
+            }
+            val hash = idHash
+            if (hash != null && changed) {
+                writableDatabase.update(
+                    "items",
+                    ContentValues().apply {
+                        put("content", trimmed)
+                        put("ts", System.currentTimeMillis())
+                    },
+                    "id=?",
+                    arrayOf(id.toString()),
+                )
+                enqueueMutation(writableDatabase, "edit", hash, null)
+            }
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+        return changed
+    }
+
     fun captureText(content: String, deviceId: String, source: String = "clipboard"): Boolean {
         if (content.isBlank()) return false
         val now = System.currentTimeMillis()

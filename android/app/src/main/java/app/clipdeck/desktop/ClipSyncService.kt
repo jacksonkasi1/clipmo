@@ -617,6 +617,32 @@ class ClipSyncService : Service() {
 						version = version,
 					)
 					"tombstone" -> SyncBody.Tombstone(id_hash = idHash, version = version)
+					"edit" -> {
+						var kind = ItemKind.text
+						var content: String? = null
+						db.rawQuery("SELECT type, content FROM items WHERE id_hash=?", arrayOf(idHash)).use { item ->
+							if (item.moveToFirst()) {
+								kind = when (item.getString(0)) {
+									"URL" -> ItemKind.link
+									"IMAGE" -> ItemKind.image
+									"FILE" -> ItemKind.files
+									else -> ItemKind.text
+								}
+								content = item.getString(1)
+							}
+						}
+					// Edits sync only for text-like kinds, mirroring the desktop.
+					val text = content
+					if (text != null && (kind == ItemKind.text || kind == ItemKind.link)) {
+						SyncBody.ClipEdit(
+							id_hash = idHash,
+							kind = kind,
+							content = text,
+							content_hash = app.clipdeck.desktop.ClipCapture.shortHash(text, 32),
+							version = version,
+						)
+					} else null
+					}
 					"upsert" -> {
 						var itemId: Long? = null
 						var kind = ItemKind.text

@@ -120,6 +120,12 @@ class MainActivity : ComponentActivity() {
                 onDeleteMany = { store.delete(it); refresh() },
                 onCreateCollection = { store.createCollection(it); refresh() },
                 onAddToCollection = { ids, collection -> store.addToCollection(ids, collection); refresh() },
+                onEditClip = { id, content ->
+                    if (store.editContent(id, content)) {
+                        Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
+                    }
+                    refresh()
+                },
                 onClear = { store.clear(); refresh() },
                 onMonitorChanged = ::handleMonitorChanged,
                 onScreenshotCaptureChanged = ::handleScreenshotCaptureChanged,
@@ -170,28 +176,44 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private fun refresh() {
-        val updatedClips = store.all()
-        val updatedCollections = store.collections()
-        val updatedDevices = store.trustedDevices()
-        if (updatedClips != clips) clips = updatedClips
-        if (updatedCollections != collections) collections = updatedCollections
-        if (updatedDevices != trustedDevices) trustedDevices = updatedDevices
-        pairingModeActive = preferences.getLong(KEY_PAIRING_UNTIL, 0L) > System.currentTimeMillis()
-    }
+    private fun refresh() = refreshAsync()
 
     private fun refreshAsync() {
+        // Capture the current lists on the main thread, then diff on IO:
+        // comparing ~2k records every refresh pulse on the main thread was
+        // causing jank spikes during fast scrolling.
+        val currentClips = clips
+        val currentCollections = collections
+        val currentDevices = trustedDevices
         lifecycleScope.launch {
             val snapshot = withContext(Dispatchers.IO) {
-                Triple(store.all(), store.collections(), store.trustedDevices())
+                val updatedClips = store.all()
+                val updatedCollections = store.collections()
+                val updatedDevices = store.trustedDevices()
+                RefreshSnapshot(
+                    clips = updatedClips,
+                    collections = updatedCollections,
+                    devices = updatedDevices,
+                    clipsChanged = updatedClips != currentClips,
+                    collectionsChanged = updatedCollections != currentCollections,
+                    devicesChanged = updatedDevices != currentDevices,
+                )
             }
-            val (updatedClips, updatedCollections, updatedDevices) = snapshot
-            if (updatedClips != clips) clips = updatedClips
-            if (updatedCollections != collections) collections = updatedCollections
-            if (updatedDevices != trustedDevices) trustedDevices = updatedDevices
+            if (snapshot.clipsChanged) clips = snapshot.clips
+            if (snapshot.collectionsChanged) collections = snapshot.collections
+            if (snapshot.devicesChanged) trustedDevices = snapshot.devices
             pairingModeActive = preferences.getLong(KEY_PAIRING_UNTIL, 0L) > System.currentTimeMillis()
         }
     }
+
+    private class RefreshSnapshot(
+        val clips: List<ClipRecord>,
+        val collections: List<String>,
+        val devices: List<TrustedDeviceRecord>,
+        val clipsChanged: Boolean,
+        val collectionsChanged: Boolean,
+        val devicesChanged: Boolean,
+    )
 
     private fun forgetDevice(device: TrustedDeviceRecord) {
         store.forgetDevice(device.id)
