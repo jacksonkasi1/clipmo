@@ -158,6 +158,14 @@ class MonitorService : Service() {
 		ContextCompat.checkSelfPermission(this, imageReadPermission()) == PackageManager.PERMISSION_GRANTED
 
 	private suspend fun scanForNewScreenshots() = withContext(Dispatchers.IO) {
+		if (!getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+				.getBoolean("screenshot_capture_enabled", true)
+		) {
+			// Feature is off: keep the window moving so screenshots taken in
+			// the meantime are not backfilled when it is turned on again.
+			screenshotsBaselineSeconds = System.currentTimeMillis() / 1000
+			return@withContext
+		}
 		if (!hasImageReadPermission()) return@withContext
 		try {
 			val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)

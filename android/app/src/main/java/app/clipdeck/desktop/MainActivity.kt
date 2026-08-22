@@ -48,6 +48,7 @@ class MainActivity : ComponentActivity() {
 
     private var clips by mutableStateOf<List<ClipRecord>>(emptyList())
     private var monitorEnabled by mutableStateOf(false)
+    private var screenshotCaptureEnabled by mutableStateOf(true)
     private var syncEnabled by mutableStateOf(false)
     private var copyLiveSyncToClipboard by mutableStateOf(false)
     private var pairingCode by mutableStateOf("")
@@ -101,6 +102,7 @@ class MainActivity : ComponentActivity() {
                 state = ClipmoUiState(
                     clips = clips,
                     monitorEnabled = monitorEnabled,
+                    screenshotCaptureEnabled = screenshotCaptureEnabled,
                     syncEnabled = syncEnabled,
                     copyLiveSyncToClipboard = copyLiveSyncToClipboard,
                     pairingCode = pairingCode,
@@ -120,6 +122,7 @@ class MainActivity : ComponentActivity() {
                 onAddToCollection = { ids, collection -> store.addToCollection(ids, collection); refresh() },
                 onClear = { store.clear(); refresh() },
                 onMonitorChanged = ::handleMonitorChanged,
+                onScreenshotCaptureChanged = ::handleScreenshotCaptureChanged,
                 onSyncChanged = ::handleSyncChanged,
                 onCopyLiveSyncChanged = ::handleCopyLiveSyncChanged,
                 onPairingCodeChanged = ::handlePairingCodeChanged,
@@ -270,6 +273,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun handleScreenshotCaptureChanged(enabled: Boolean) {
+        screenshotCaptureEnabled = enabled
+        preferences.edit().putBoolean(KEY_SCREENSHOT_CAPTURE_ENABLED, enabled).apply()
+        // The service reads the preference on every scan, so no restart is
+        // needed; only the photo-access prompt depends on the toggle.
+        if (enabled && monitorEnabled) requestMediaPermissionIfNeeded()
+    }
+
     private fun handleSyncChanged(enabled: Boolean) {
         if (enabled && pairingCode.isBlank()) {
             Toast.makeText(this, "Enter a pairing code first", Toast.LENGTH_SHORT).show()
@@ -317,6 +328,7 @@ class MainActivity : ComponentActivity() {
 
     private fun loadPreferences() {
         monitorEnabled = preferences.getBoolean(KEY_MONITOR_ENABLED, false)
+        screenshotCaptureEnabled = preferences.getBoolean(KEY_SCREENSHOT_CAPTURE_ENABLED, true)
         syncEnabled = preferences.getBoolean(KEY_SYNC_ENABLED, false)
         copyLiveSyncToClipboard = preferences.getBoolean(KEY_COPY_LIVE_SYNC_TO_CLIPBOARD, false)
         pairingCode = preferences.getString(KEY_PAIRING_CODE, "").orEmpty()
@@ -374,7 +386,7 @@ class MainActivity : ComponentActivity() {
         ContextCompat.checkSelfPermission(this, requiredImagePermission()) == PackageManager.PERMISSION_GRANTED
 
     private fun requestMediaPermissionIfNeeded() {
-        if (!monitorEnabled || hasImagePermission()) return
+        if (!monitorEnabled || !screenshotCaptureEnabled || hasImagePermission()) return
         mediaPermission.launch(requiredImagePermission())
     }
 
@@ -436,6 +448,7 @@ class MainActivity : ComponentActivity() {
         const val KEY_PAIRING_CODE = "pairing_code"
         const val KEY_SYNC_ENABLED = "sync_enabled"
         const val KEY_MONITOR_ENABLED = "monitor_enabled"
+        const val KEY_SCREENSHOT_CAPTURE_ENABLED = "screenshot_capture_enabled"
         const val KEY_COPY_LIVE_SYNC_TO_CLIPBOARD = "copy_live_sync_to_clipboard"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_PAIRING_UNTIL = "pairing_until"

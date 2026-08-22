@@ -103,3 +103,15 @@ Share sheet:
 - Shared images are stored under `files/local_assets/<hash>/` with
   `thumb.jpg`, capped at 8 MiB locally; the 512 KiB LAN image budget is
   unchanged, so oversized captures simply stay device-local.
+
+## 2026-08-22 — Screenshot capture setting
+
+- Settings now has a "Screenshot capture" toggle (default on, persisted in
+  `clipmo_sync`). Turning it off: a new system screenshot (19:40:33) appeared
+  in MediaStore but not in Clipmo's database or asset store; re-enabling and
+  taking another screenshot captured it again. Screenshots taken while off are
+  not backfilled.
+- Share targets are intentionally not gated: sharing text while the toggle was
+  off still saved the item.
+- The photo-access prompt is now only requested when monitoring is on and the
+  screenshot toggle is on.

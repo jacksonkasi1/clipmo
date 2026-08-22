@@ -90,6 +90,7 @@ private enum class ClipFilter(val label: String) { ALL("All"), TEXT("Text"), LIN
 data class ClipmoUiState(
     val clips: List<ClipRecord>,
     val monitorEnabled: Boolean,
+    val screenshotCaptureEnabled: Boolean,
     val syncEnabled: Boolean,
     val copyLiveSyncToClipboard: Boolean,
     val pairingCode: String,
@@ -113,6 +114,7 @@ fun ClipmoApp(
     onAddToCollection: (Set<Long>, String) -> Unit,
     onClear: () -> Unit,
     onMonitorChanged: (Boolean) -> Unit,
+    onScreenshotCaptureChanged: (Boolean) -> Unit,
     onSyncChanged: (Boolean) -> Unit,
     onCopyLiveSyncChanged: (Boolean) -> Unit,
     onPairingCodeChanged: (String) -> Unit,
@@ -146,6 +148,7 @@ fun ClipmoApp(
                         ClipmoScreen.SETTINGS -> SettingsScreen(
                             state = state,
                             onMonitorChanged = onMonitorChanged,
+                            onScreenshotCaptureChanged = onScreenshotCaptureChanged,
                             onSyncChanged = onSyncChanged,
                             onCopyLiveSyncChanged = onCopyLiveSyncChanged,
                             onPairingCodeChanged = onPairingCodeChanged,
@@ -478,6 +481,7 @@ private fun DevicesScreen(
 private fun SettingsScreen(
     state: ClipmoUiState,
     onMonitorChanged: (Boolean) -> Unit,
+    onScreenshotCaptureChanged: (Boolean) -> Unit,
     onSyncChanged: (Boolean) -> Unit,
     onCopyLiveSyncChanged: (Boolean) -> Unit,
     onPairingCodeChanged: (String) -> Unit,
@@ -489,7 +493,9 @@ private fun SettingsScreen(
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = space.md, vertical = space.sm)) {
         item {
             ClipmoSettingsGroup("Clipboard") {
-                ClipmoSettingsToggle("Clipboard monitoring", "Capture clipboard changes and new screenshots while Clipmo is allowed to run.", state.monitorEnabled, onMonitorChanged)
+                ClipmoSettingsToggle("Clipboard monitoring", "Capture clipboard changes while Clipmo is allowed to run.", state.monitorEnabled, onMonitorChanged)
+                Spacer(Modifier.height(space.md))
+                ClipmoSettingsToggle("Screenshot capture", "Automatically save new screenshots to history while monitoring runs. Needs photo access only when enabled.", state.screenshotCaptureEnabled, onScreenshotCaptureChanged)
             }
             Spacer(Modifier.height(space.lg))
             ClipmoSettingsGroup("Local sync") {
