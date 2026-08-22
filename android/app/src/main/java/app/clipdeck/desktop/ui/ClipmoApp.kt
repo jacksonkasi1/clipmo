@@ -3,6 +3,7 @@
 package app.clipdeck.desktop.ui
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -10,6 +11,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
@@ -46,6 +49,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -54,7 +58,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -65,7 +71,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
@@ -73,7 +81,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import app.clipdeck.desktop.data.ClipKind
 import app.clipdeck.desktop.data.ClipRecord
 import app.clipdeck.desktop.data.TrustedDeviceRecord
@@ -82,14 +92,37 @@ import app.clipdeck.desktop.ui.theme.ClipmoTheme
 import app.clipdeck.desktop.ui.theme.ClipmoThemeMode
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private enum class ClipmoScreen { HISTORY, COLLECTIONS, DEVICES, SETTINGS }
 private enum class ClipFilter(val label: String) { ALL("All"), TEXT("Text"), LINKS("Links"), IMAGES("Images"), FILES("Files"), STARRED("Starred") }
 
+/**
+ * Decoded thumbnail cache shared across history, collections, and re-scrolls.
+ * Bitmaps are only ever touched from the main thread after being produced on
+ * Dispatchers.IO, so the plain LruCache needs no synchronization.
+ */
+private object ClipmoThumbCache {
+    private val cache = object : android.util.LruCache<String, android.graphics.Bitmap>(16 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: android.graphics.Bitmap): Int = value.allocationByteCount
+    }
+
+    operator fun get(key: String): android.graphics.Bitmap? = cache.get(key)
+
+    operator fun set(key: String, value: android.graphics.Bitmap) { cache.put(key, value) }
+}
+
+private object ClipmoTimeFormat {
+    val short: DateFormat = DateFormat.getTimeInstance(DateFormat.SHORT)
+}
+
 data class ClipmoUiState(
     val clips: List<ClipRecord>,
     val monitorEnabled: Boolean,
+    val screenshotCaptureEnabled: Boolean,
     val syncEnabled: Boolean,
     val copyLiveSyncToClipboard: Boolean,
     val pairingCode: String,
@@ -111,8 +144,10 @@ fun ClipmoApp(
     onDeleteMany: (Set<Long>) -> Unit,
     onCreateCollection: (String) -> Unit,
     onAddToCollection: (Set<Long>, String) -> Unit,
+    onEditClip: (id: Long, content: String) -> Unit,
     onClear: () -> Unit,
     onMonitorChanged: (Boolean) -> Unit,
+    onScreenshotCaptureChanged: (Boolean) -> Unit,
     onSyncChanged: (Boolean) -> Unit,
     onCopyLiveSyncChanged: (Boolean) -> Unit,
     onPairingCodeChanged: (String) -> Unit,
@@ -140,12 +175,13 @@ fun ClipmoApp(
                 )
                 Box(Modifier.weight(1f)) {
                     when (screen) {
-                        ClipmoScreen.HISTORY -> HistoryScreen(state, onCopy, onFavorite, onDelete, onFavoriteMany, onDeleteMany, onAddToCollection, onRefresh)
+                        ClipmoScreen.HISTORY -> HistoryScreen(state, onCopy, onFavorite, onDelete, onFavoriteMany, onDeleteMany, onAddToCollection, onEditClip, onRefresh)
                         ClipmoScreen.COLLECTIONS -> CollectionsScreen(state, onCopy, onFavorite, { pendingDelete = it }, onCreateCollection)
                         ClipmoScreen.DEVICES -> DevicesScreen(state, onForgetDevice, onPairingCodeChanged, onSyncChanged, onStartPairing, onRefresh)
                         ClipmoScreen.SETTINGS -> SettingsScreen(
                             state = state,
                             onMonitorChanged = onMonitorChanged,
+                            onScreenshotCaptureChanged = onScreenshotCaptureChanged,
                             onSyncChanged = onSyncChanged,
                             onCopyLiveSyncChanged = onCopyLiveSyncChanged,
                             onPairingCodeChanged = onPairingCodeChanged,
@@ -222,6 +258,7 @@ private fun HistoryScreen(
     onFavoriteMany: (Set<Long>) -> Unit,
     onDeleteMany: (Set<Long>) -> Unit,
     onAddToCollection: (Set<Long>, String) -> Unit,
+    onEditClip: (id: Long, content: String) -> Unit,
     onRefresh: () -> Unit,
 ) {
     val clips = state.clips
@@ -232,6 +269,7 @@ private fun HistoryScreen(
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var pendingBulkDelete by remember { mutableStateOf<Set<Long>?>(null) }
     var collectionPickerIds by remember { mutableStateOf<Set<Long>?>(null) }
+    var detailClip by remember { mutableStateOf<ClipRecord?>(null) }
     val devices = remember(clips, state.trustedDevices, state.localDeviceId) {
         listOf(Triple("all", "All devices", clips.size), Triple(state.localDeviceId, "This phone", clips.count { it.isLocalTo(state.localDeviceId) })) +
             state.trustedDevices.map { device -> Triple(device.id, device.name, clips.count { it.originDevice == device.id }) }
@@ -262,12 +300,16 @@ private fun HistoryScreen(
             }
         }
     }
-    val trustedNames = state.trustedDevices.associate { it.id to it.name }
-    val grouped = shown.groupBy { clip ->
-        when {
-            clip.isLocalTo(state.localDeviceId) -> "This Android phone"
-            !clip.originDevice.isNullOrBlank() -> trustedNames[clip.originDevice] ?: sourceLabel(clip.source)
-            else -> sourceLabel(clip.source)
+    // Grouping ~2k clips ran on every recomposition (search keystrokes,
+    // selection changes); memoizing keeps it to actual data changes.
+    val grouped = remember(shown, state.trustedDevices, state.localDeviceId) {
+        val trustedNames = state.trustedDevices.associate { it.id to it.name }
+        shown.groupBy { clip ->
+            when {
+                clip.isLocalTo(state.localDeviceId) -> "This Android phone"
+                !clip.originDevice.isNullOrBlank() -> trustedNames[clip.originDevice] ?: sourceLabel(clip.source)
+                else -> sourceLabel(clip.source)
+            }
         }
     }
     val pullState = rememberPullRefreshState(refreshing, { refreshing = true })
@@ -308,7 +350,7 @@ private fun HistoryScreen(
         } else {
             grouped.forEach { (device, deviceClips) ->
                 item { ClipmoDeviceHeader(device, deviceClips.size) }
-                items(deviceClips, key = { it.id }) { clip ->
+                items(deviceClips, key = { it.id }, contentType = { "clip" }) { clip ->
                     ClipmoSwipeToDelete(
                         clip = clip,
                         enabled = selectedIds.isEmpty(),
@@ -325,6 +367,7 @@ private fun HistoryScreen(
                             onSelect = {
                                 selectedIds = if (clip.id in selectedIds) selectedIds - clip.id else selectedIds + clip.id
                             },
+                            onOpen = { detailClip = clip },
                         )
                     }
                 }
@@ -356,6 +399,21 @@ private fun HistoryScreen(
                   selectedIds = emptySet()
                   collectionPickerIds = null
               },
+          )
+      }
+      detailClip?.let { clip ->
+          ClipmoDetailOverlay(
+              clip = clip,
+              onCopy = onCopy,
+              onDelete = {
+                  onDelete(clip)
+                  detailClip = null
+              },
+              onEdit = { content ->
+                  onEditClip(clip.id, content)
+                  detailClip = null
+              },
+              onDismiss = { detailClip = null },
           )
       }
     }
@@ -478,6 +536,7 @@ private fun DevicesScreen(
 private fun SettingsScreen(
     state: ClipmoUiState,
     onMonitorChanged: (Boolean) -> Unit,
+    onScreenshotCaptureChanged: (Boolean) -> Unit,
     onSyncChanged: (Boolean) -> Unit,
     onCopyLiveSyncChanged: (Boolean) -> Unit,
     onPairingCodeChanged: (String) -> Unit,
@@ -489,7 +548,9 @@ private fun SettingsScreen(
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = space.md, vertical = space.sm)) {
         item {
             ClipmoSettingsGroup("Clipboard") {
-                ClipmoSettingsToggle("Clipboard monitoring", "Capture clipboard changes and new screenshots while Clipmo is allowed to run.", state.monitorEnabled, onMonitorChanged)
+                ClipmoSettingsToggle("Clipboard monitoring", "Capture clipboard changes while Clipmo is allowed to run.", state.monitorEnabled, onMonitorChanged)
+                Spacer(Modifier.height(space.md))
+                ClipmoSettingsToggle("Screenshot capture", "Automatically save new screenshots to history while monitoring runs. Needs photo access only when enabled.", state.screenshotCaptureEnabled, onScreenshotCaptureChanged)
             }
             Spacer(Modifier.height(space.lg))
             ClipmoSettingsGroup("Local sync") {
@@ -630,7 +691,7 @@ private fun ClipmoSelectionBar(
     }
 }
 
-@OptIn(ExperimentalMaterialApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ClipmoSwipeToDelete(
     clip: ClipRecord,
@@ -640,22 +701,21 @@ private fun ClipmoSwipeToDelete(
     content: @Composable () -> Unit,
 ) {
     val colors = ClipmoTheme.colors
-    val dismissState = rememberDismissState(
-        confirmStateChange = { value ->
-            if (value == DismissValue.DismissedToEnd) onDelete(clip)
-            if (value == DismissValue.DismissedToStart) onChooseCollection(clip)
-            value == DismissValue.DismissedToEnd
-        },
-    )
-    SwipeToDismiss(
-        state = dismissState,
-        directions = if (enabled) setOf(DismissDirection.StartToEnd, DismissDirection.EndToStart) else emptySet(),
-        background = {
-            val movingToCollection = dismissState.dismissDirection == DismissDirection.EndToStart
+    var offsetX by remember { mutableStateOf(0f) }
+    val scope = rememberCoroutineScope()
+    val threshold = with(LocalDensity.current) { 96.dp.toPx() }
+
+    // Material's SwipeToDismiss kept an anchored-draggable state machine and a
+    // composed background alive on every row, which dominated fling cost in
+    // ~2k-item history; this plain drag keeps the same gestures for a fraction
+    // of the per-row work. The affordance composes only while dragged.
+    Box(Modifier.fillMaxWidth()) {
+        if (offsetX != 0f) {
+            val movingToCollection = offsetX < 0
             Box(
                 Modifier
+                    .matchParentSize()
                     .padding(horizontal = ClipmoTheme.spacing.md, vertical = ClipmoTheme.spacing.xxs)
-                    .fillMaxSize()
                     .clip(RoundedCornerShape(ClipmoTheme.shapes.card))
                     .background(if (movingToCollection) colors.accent else colors.danger)
                     .padding(horizontal = ClipmoTheme.spacing.md),
@@ -670,9 +730,35 @@ private fun ClipmoSwipeToDelete(
                     )
                 }
             }
-        },
-        dismissContent = { content() },
-    )
+        }
+        Box(
+            Modifier
+                .offset { IntOffset(offsetX.roundToInt(), 0) }
+                .pointerInput(enabled) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetX = (offsetX + dragAmount).coerceIn(-threshold * 2f, threshold * 2f)
+                        },
+                        onDragEnd = {
+                            when {
+                                offsetX > threshold -> {
+                                    onDelete(clip)
+                                    offsetX = 0f
+                                }
+                                offsetX < -threshold -> {
+                                    onChooseCollection(clip)
+                                    scope.launch { animate(offsetX, 0f) { value, _ -> offsetX = value } }
+                                }
+                                else -> scope.launch { animate(offsetX, 0f) { value, _ -> offsetX = value } }
+                            }
+                        },
+                    )
+                },
+        ) {
+            content()
+        }
+    }
 }
 
 @Composable
@@ -684,16 +770,33 @@ private fun ClipmoClipboardCard(
     selected: Boolean = false,
     selectionMode: Boolean = false,
     onSelect: (() -> Unit)? = null,
+    onOpen: ((ClipRecord) -> Unit)? = null,
 ) {
     val colors = ClipmoTheme.colors
-    val imageBitmap = remember(clip.assetPaths, clip.kind) {
+    val previewPath = remember(clip.assetPaths, clip.kind) {
         if (clip.kind == ClipKind.IMAGE) {
             val assets = clip.assetPaths?.lineSequence()?.filter(String::isNotBlank)?.toList().orEmpty()
-            val preview = assets.firstOrNull { it.endsWith("thumb.jpg", ignoreCase = true) }
-                ?: assets.firstOrNull()
-            preview?.let(android.graphics.BitmapFactory::decodeFile)?.asImageBitmap()
+            assets.firstOrNull { it.endsWith("thumb.jpg", ignoreCase = true) } ?: assets.firstOrNull()
         } else null
     }
+    // Decoding used to run inline during composition, which stalled frames
+    // while flinging through image-heavy history; it now happens on IO with a
+    // shared LruCache, and the kind icon acts as the placeholder until ready.
+    val imageBitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, previewPath) {
+        val path = previewPath ?: return@produceState
+        ClipmoThumbCache[path]?.let {
+            value = it.asImageBitmap()
+            return@produceState
+        }
+        val decoded = withContext(Dispatchers.IO) {
+            runCatching { android.graphics.BitmapFactory.decodeFile(path) }.getOrNull()
+        }
+        if (decoded != null) {
+            ClipmoThumbCache[path] = decoded
+            value = decoded.asImageBitmap()
+        }
+    }
+    val timeLabel = remember(clip.timestamp) { ClipmoTimeFormat.short.format(Date(clip.timestamp)) }
     Row(
         Modifier
             .padding(horizontal = ClipmoTheme.spacing.md, vertical = ClipmoTheme.spacing.xxs)
@@ -708,7 +811,7 @@ private fun ClipmoClipboardCard(
             )
             .combinedClickable(
                 onClick = {
-                    if (selectionMode && onSelect != null) onSelect() else onCopy(clip)
+                    if (selectionMode && onSelect != null) onSelect() else onOpen?.invoke(clip) ?: onCopy(clip)
                 },
                 onLongClick = onSelect ?: { onDelete(clip) },
             )
@@ -722,21 +825,20 @@ private fun ClipmoClipboardCard(
                 .background(colors.surface),
             contentAlignment = Alignment.Center,
         ) {
-            if (selectionMode) {
-                ClipmoIcon(
+            val bitmap = imageBitmap
+            when {
+                selectionMode -> ClipmoIcon(
                     ClipmoIconKind.CHECK,
                     if (selected) colors.accent else colors.textMuted,
                     Modifier.size(18.dp),
                 )
-            } else if (imageBitmap != null) {
-                Image(
-                    bitmap = imageBitmap,
+                bitmap != null -> Image(
+                    bitmap = bitmap,
                     contentDescription = "Image preview",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-            } else {
-                ClipmoIcon(iconFor(clip.kind), if (clip.kind == ClipKind.URL) colors.accent else colors.textSecondary, Modifier.size(17.dp))
+                else -> ClipmoIcon(iconFor(clip.kind), if (clip.kind == ClipKind.URL) colors.accent else colors.textSecondary, Modifier.size(17.dp))
             }
         }
         Spacer(Modifier.width(ClipmoTheme.spacing.sm))
@@ -744,14 +846,11 @@ private fun ClipmoClipboardCard(
             androidx.compose.foundation.text.BasicText(
                 clipPreview(clip),
                 style = ClipmoTheme.typography.body.copy(color = colors.textPrimary),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(ClipmoTheme.spacing.xxs))
             androidx.compose.foundation.text.BasicText(
-                "${kindLabel(clip.kind)}  ·  ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(clip.timestamp))}",
+                "${kindLabel(clip.kind)}  ·  $timeLabel",
                 style = ClipmoTheme.typography.metadata.copy(color = colors.textMuted),
-                maxLines = 1,
             )
         }
         if (!selectionMode) {
@@ -895,11 +994,14 @@ private fun ClipmoBottomBar(selected: ClipmoScreen, onSelected: (ClipmoScreen) -
 
 @Composable
 private fun ClipmoIconButton(kind: ClipmoIconKind, description: String, onClick: () -> Unit, tint: Color = ClipmoTheme.colors.textSecondary) {
+    // No ripple indication: these repeat on every row and the extra
+    // indication nodes showed up in fling profiling.
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Box(
         Modifier
             .requiredSize(ClipmoTheme.dimensions.touch)
             .clip(RoundedCornerShape(ClipmoTheme.shapes.pill))
-            .combinedClickable(onClick = onClick)
+            .combinedClickable(interactionSource = interaction, indication = null, onClick = onClick)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) { ClipmoIcon(kind, tint, Modifier.size(ClipmoTheme.dimensions.icon)) }
@@ -1012,6 +1114,115 @@ private fun ClipmoCollectionPickerOverlay(
 }
 
 @Composable
+private fun ClipmoDetailOverlay(
+    clip: ClipRecord,
+    onCopy: (ClipRecord) -> Unit,
+    onDelete: (ClipRecord) -> Unit,
+    onEdit: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    val editable = clip.kind == ClipKind.TEXT || clip.kind == ClipKind.URL
+    var editing by remember { mutableStateOf(false) }
+    var draft by remember(clip.id) { mutableStateOf(clip.content) }
+    Box(Modifier.fillMaxSize().background(colors.scrim).combinedClickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier
+                .widthIn(max = 360.dp)
+                .padding(ClipmoTheme.spacing.xl)
+                .clip(RoundedCornerShape(ClipmoTheme.shapes.panel))
+                .background(colors.surfaceRaised)
+                .border(1.dp, colors.border, RoundedCornerShape(ClipmoTheme.shapes.panel))
+                .combinedClickable(onClick = {})
+                .padding(ClipmoTheme.spacing.lg),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                ClipmoIcon(iconFor(clip.kind), if (clip.kind == ClipKind.URL) colors.accent else colors.textSecondary, Modifier.size(18.dp))
+                Spacer(Modifier.width(ClipmoTheme.spacing.sm))
+                androidx.compose.foundation.text.BasicText(kindLabel(clip.kind), style = ClipmoTheme.typography.title.copy(color = colors.textPrimary))
+                Spacer(Modifier.weight(1f))
+                if (clip.favorite) ClipmoIcon(ClipmoIconKind.STAR, colors.accent, Modifier.size(16.dp))
+            }
+            Spacer(Modifier.height(ClipmoTheme.spacing.sm))
+            if (editing) {
+                BasicTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    textStyle = ClipmoTheme.typography.body.copy(color = colors.textPrimary),
+                    cursorBrush = SolidColor(colors.accent),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp, max = 320.dp)
+                        .clip(RoundedCornerShape(ClipmoTheme.shapes.search))
+                        .background(colors.surface)
+                        .padding(ClipmoTheme.spacing.md)
+                        .verticalScroll(rememberScrollState()),
+                )
+            } else {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    androidx.compose.foundation.text.BasicText(
+                        clip.content,
+                        style = ClipmoTheme.typography.body.copy(color = colors.textSecondary),
+                    )
+                }
+            }
+            Spacer(Modifier.height(ClipmoTheme.spacing.md))
+            androidx.compose.foundation.text.BasicText(
+                "${kindLabel(clip.kind)}  ·  ${ClipmoTimeFormat.short.format(Date(clip.timestamp))}",
+                style = ClipmoTheme.typography.metadata.copy(color = colors.textMuted),
+            )
+            Spacer(Modifier.height(ClipmoTheme.spacing.lg))
+            if (editing) {
+                Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
+                    ClipmoPill("Cancel", false, Modifier.weight(1f)) { editing = false; draft = clip.content }
+                    Box(
+                        Modifier.weight(1f).height(ClipmoTheme.dimensions.chipHeight)
+                            .clip(RoundedCornerShape(ClipmoTheme.shapes.pill)).background(colors.accent)
+                            .combinedClickable(onClick = { onEdit(draft.trim()) }),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        androidx.compose.foundation.text.BasicText("Save", style = ClipmoTheme.typography.label.copy(color = Color(0xFF06130A)))
+                    }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
+                    if (editable) {
+                        ClipmoPill("Edit", false, Modifier.weight(1f)) { editing = true }
+                    } else {
+                        Box(Modifier.weight(1f))
+                    }
+                    Box(
+                        Modifier.weight(1f).height(ClipmoTheme.dimensions.chipHeight)
+                            .clip(RoundedCornerShape(ClipmoTheme.shapes.pill)).background(colors.accent)
+                            .combinedClickable(onClick = { onCopy(clip) }),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        androidx.compose.foundation.text.BasicText("Copy", style = ClipmoTheme.typography.label.copy(color = Color(0xFF06130A)))
+                    }
+                }
+                Spacer(Modifier.height(ClipmoTheme.spacing.sm))
+                Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
+                    ClipmoPill("Close", false, Modifier.weight(1f), onDismiss)
+                    Box(
+                        Modifier.weight(1f).height(ClipmoTheme.dimensions.chipHeight)
+                            .clip(RoundedCornerShape(ClipmoTheme.shapes.pill)).background(colors.danger)
+                            .combinedClickable(onClick = { onDelete(clip) }),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        androidx.compose.foundation.text.BasicText("Delete", style = ClipmoTheme.typography.label.copy(color = Color.White))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ClipmoConfirmOverlay(
     title: String,
     message: String,
@@ -1048,4 +1259,13 @@ private fun iconFor(kind: ClipKind): ClipmoIconKind = when (kind) { ClipKind.TEX
 private fun ClipRecord.isLocalTo(localDeviceId: String): Boolean =
     if (!originDevice.isNullOrBlank()) originDevice == localDeviceId
     else source.isNullOrBlank() || source == "clipboard"
-private fun clipPreview(clip: ClipRecord): String = when (clip.kind) { ClipKind.IMAGE -> "Image"; ClipKind.FILE -> clip.content.substringAfterLast('/'); else -> clip.content.trim() }
+// Line-count-constrained text (maxLines) hits a very slow layout path on
+// several OEM font stacks, freezing flings in long lists; previews are
+// truncated in the string instead and the full text opens in the detail view.
+private const val CLIP_PREVIEW_MAX_CHARS = 90
+
+private fun clipPreview(clip: ClipRecord): String = when (clip.kind) {
+    ClipKind.IMAGE -> "Image"
+    ClipKind.FILE -> clip.content.substringAfterLast('/')
+    else -> clip.content.trim().let { if (it.length > CLIP_PREVIEW_MAX_CHARS) it.take(CLIP_PREVIEW_MAX_CHARS).trimEnd() + "…" else it }
+}
