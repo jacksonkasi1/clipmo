@@ -165,6 +165,7 @@ class ClipSyncService : Service() {
 		const val CHANNEL_ID = "clipmo_sync_channel"
 		const val NOTIF_ID = 2
 		const val CONNECT_TIMEOUT_MS = 900L
+		const val PROBE_TICK_MS = 10_000L
 	}
 
 	private val binder = LocalBinder()
@@ -257,6 +258,7 @@ class ClipSyncService : Service() {
 			launch { listenForPeers(pairingCode, deviceId) }
 			launch { drainSendQueue(deviceId, deviceName, pairingCode) }
 			launch { watchLocalChanges(deviceId) }
+			launch { probePeers() }
 		}
 
 		Log.i("ClipSyncService", "started on port=$listenPort deviceId=$deviceId")
@@ -527,6 +529,7 @@ class ClipSyncService : Service() {
 				if (peer.address.address.isAnyLocalAddress) continue
 				if (sendToPeer(peer.address, envelope, job.blobs)) {
 					targets.remove(peerId)
+					touchDeviceSeen(peerId)
 					Log.i(
 						"ClipSyncService",
 						"sent ${job.body.javaClass.simpleName} version=${job.body.version().lamport} to ${peer.device.platform}",
@@ -1079,8 +1082,36 @@ class ClipSyncService : Service() {
 	private fun validIdHash(value: String): Boolean =
 		value.length in 16..128 && value.all { it.isLetterOrDigit() || it == '-' || it == '_' }
 
-	private fun rememberTrustedDevice(device: DeviceIdentity, address: InetSocketAddress) {
-		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
+	// "Online" used to depend solely on inbound traffic (UDP broadcasts or TCP
+	// frames), so a reachable-but-quiet peer — Windows NICs often ship
+	// broadcasts the phone never receives — showed as offline. Probing the
+	// same TCP channel sync uses makes the badge mean "reachable right now".
+	private suspend fun probePeers() = withContext(Dispatchers.IO) {
+		val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+		while (running) {
+			delay(PROBE_TICK_MS)
+			if (!prefs.getBoolean("sync_enabled", false)) continue
+			peers.values.toList().forEach { peer ->
+				val reachable = runCatching {
+					Socket().use { sock -> sock.connect(peer.address, CONNECT_TIMEOUT_MS.toInt()) }
+				}.isSuccess
+				if (reachable) touchDeviceSeen(peer.device.id)
+			}
+		}
+	}
+
+	private fun touchDeviceSeen(deviceId: String) {
+		runCatching {
+			val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
+			db.execSQL(
+				"UPDATE trusted_devices SET last_seen_ms=? WHERE device_id=? AND revoked=0",
+				arrayOf(System.currentTimeMillis(), deviceId),
+			)
+			db.close()
+		}
+	}
+
+	private fun rememberTrustedDevice(device: DeviceIdentity, address: InetSocketAddress) {		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
 		val now = System.currentTimeMillis()
 		db.execSQL(
 			"""

@@ -2,21 +2,26 @@
 
 package app.clipdeck.desktop.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -37,23 +42,14 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.ExperimentalMaterialApi
-import androidx.compose.material.DismissDirection
-import androidx.compose.material.DismissValue
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
-import androidx.compose.material.SwipeToDismiss
-import androidx.compose.material.rememberDismissState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -66,23 +62,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.ime
 import kotlin.math.roundToInt
 import app.clipdeck.desktop.data.ClipKind
 import app.clipdeck.desktop.data.ClipRecord
@@ -160,6 +156,15 @@ fun ClipmoApp(
         var screen by rememberSaveable { mutableStateOf(ClipmoScreen.HISTORY) }
         var pendingDelete by remember { mutableStateOf<ClipRecord?>(null) }
         var pendingClear by remember { mutableStateOf(false) }
+        // Copy is the app's peak action; every tab funnels through this wrapper
+        // so one animated confirmation pill covers cards, sheets, and dialogs.
+        var copyPulse by remember { mutableStateOf(0) }
+        val copyWithFeedback: (ClipRecord) -> Unit = remember(onCopy) {
+            { clip ->
+                onCopy(clip)
+                copyPulse++
+            }
+        }
         val colors = ClipmoTheme.colors
         Box(
             Modifier
@@ -175,8 +180,8 @@ fun ClipmoApp(
                 )
                 Box(Modifier.weight(1f)) {
                     when (screen) {
-                        ClipmoScreen.HISTORY -> HistoryScreen(state, onCopy, onFavorite, onDelete, onFavoriteMany, onDeleteMany, onAddToCollection, onEditClip, onRefresh)
-                        ClipmoScreen.COLLECTIONS -> CollectionsScreen(state, onCopy, onFavorite, { pendingDelete = it }, onCreateCollection)
+                        ClipmoScreen.HISTORY -> HistoryScreen(state, copyWithFeedback, onFavorite, onDelete, onFavoriteMany, onDeleteMany, onAddToCollection, onEditClip, onRefresh)
+                        ClipmoScreen.COLLECTIONS -> CollectionsScreen(state, copyWithFeedback, onFavorite, { pendingDelete = it }, onCreateCollection)
                         ClipmoScreen.DEVICES -> DevicesScreen(state, onForgetDevice, onPairingCodeChanged, onSyncChanged, onStartPairing, onRefresh)
                         ClipmoScreen.SETTINGS -> SettingsScreen(
                             state = state,
@@ -212,6 +217,7 @@ fun ClipmoApp(
                     onConfirm = { onClear(); pendingClear = false },
                 )
             }
+            ClipmoCopiedPill(copyPulse, Modifier.align(Alignment.BottomCenter))
         }
     }
 }
@@ -270,6 +276,14 @@ private fun HistoryScreen(
     var pendingBulkDelete by remember { mutableStateOf<Set<Long>?>(null) }
     var collectionPickerIds by remember { mutableStateOf<Set<Long>?>(null) }
     var detailClip by remember { mutableStateOf<ClipRecord?>(null) }
+    // lastDetail keeps the clip composed while the sheet slides out after
+    // detailClip is cleared; sheetOpen drives both slide/fade animations.
+    var sheetOpen by remember { mutableStateOf(false) }
+    var lastDetail by remember { mutableStateOf<ClipRecord?>(null) }
+    LaunchedEffect(detailClip) {
+        detailClip?.let { lastDetail = it }
+        sheetOpen = detailClip != null
+    }
     val devices = remember(clips, state.trustedDevices, state.localDeviceId) {
         listOf(Triple("all", "All devices", clips.size), Triple(state.localDeviceId, "This phone", clips.count { it.isLocalTo(state.localDeviceId) })) +
             state.trustedDevices.map { device -> Triple(device.id, device.name, clips.count { it.originDevice == device.id }) }
@@ -401,20 +415,36 @@ private fun HistoryScreen(
               },
           )
       }
-      detailClip?.let { clip ->
-          ClipmoDetailOverlay(
-              clip = clip,
-              onCopy = onCopy,
-              onDelete = {
-                  onDelete(clip)
-                  detailClip = null
-              },
-              onEdit = { content ->
-                  onEditClip(clip.id, content)
-                  detailClip = null
-              },
-              onDismiss = { detailClip = null },
+      // Scrim fades while the sheet itself slides; lastDetail keeps content
+      // alive for the exit animation after detailClip is cleared.
+      AnimatedVisibility(sheetOpen, enter = fadeIn(tween(160)), exit = fadeOut(tween(160))) {
+          Box(
+              Modifier
+                  .fillMaxSize()
+                  .background(ClipmoTheme.colors.scrim)
+                  .combinedClickable(onClick = { detailClip = null }),
           )
+      }
+      AnimatedVisibility(
+          sheetOpen,
+          enter = slideInVertically(tween(240)) { it },
+          exit = slideOutVertically(tween(200)) { it },
+      ) {
+          lastDetail?.let { clip ->
+              ClipmoDetailSheet(
+                  clip = clip,
+                  onCopy = onCopy,
+                  onDelete = {
+                      onDelete(clip)
+                      detailClip = null
+                  },
+                  onEdit = { content ->
+                      onEditClip(clip.id, content)
+                      detailClip = null
+                  },
+                  onDismiss = { detailClip = null },
+              )
+          }
       }
     }
 }
@@ -490,17 +520,22 @@ private fun DevicesScreen(
                 ClipmoSearchBar(state.pairingCode, "Pairing code", onPairingCodeChanged, searchIcon = false)
                 Spacer(Modifier.height(space.sm))
                 Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
-                    ClipmoPill(if (state.pairingModeActive) "Pairing…" else "Add another device", state.pairingModeActive, Modifier.weight(1f)) {
+                    ClipmoButton(
+                        if (state.pairingModeActive) "Pairing…" else "Add another device",
+                        if (state.pairingModeActive) ClipmoButtonStyle.SECONDARY else ClipmoButtonStyle.PRIMARY,
+                        Modifier.weight(1f),
+                        icon = ClipmoIconKind.PLUS,
+                    ) {
                         if (!state.syncEnabled) onSyncChanged(true)
                         onStartPairing()
                     }
-                    ClipmoPill("Refresh", false, Modifier.weight(1f), onRefresh)
+                    ClipmoButton("Refresh", ClipmoButtonStyle.GHOST, Modifier.weight(1f), icon = ClipmoIconKind.REFRESH, onClick = onRefresh)
                 }
             }
             Spacer(Modifier.height(space.xl))
             androidx.compose.foundation.text.BasicText("This device", style = ClipmoTheme.typography.section.copy(color = colors.textSecondary))
             Spacer(Modifier.height(space.sm))
-            ClipmoDeviceCard(state.localDeviceName, "Android · Ready", true)
+            ClipmoDeviceCard(state.localDeviceName, "This phone", "Ready", true)
             Spacer(Modifier.height(space.xl))
             androidx.compose.foundation.text.BasicText("Paired devices", style = ClipmoTheme.typography.section.copy(color = colors.textSecondary))
             Spacer(Modifier.height(space.sm))
@@ -510,21 +545,17 @@ private fun DevicesScreen(
                     if (state.syncEnabled) "Paired devices will appear independently as they reconnect on your LAN." else "Enable sync in Settings to discover and pair multiple devices.",
                 )
             } else {
-                state.trustedDevices.chunked(2).forEach { rowDevices ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(space.sm)) {
-                        rowDevices.forEach { device ->
-                            Box(Modifier.weight(1f)) {
-                                ClipmoDeviceCard(
-                                    name = device.name,
-                                    subtitle = "${device.platform.replaceFirstChar(Char::uppercase)} · ${if (device.online) "Connected" else "Offline"}",
-                                    online = device.online,
-                                    action = "Forget",
-                                    onAction = { onForgetDevice(device) },
-                                )
-                            }
-                        }
-                        if (rowDevices.size == 1) Spacer(Modifier.weight(1f))
-                    }
+                // Single full-width rows: two-up grid cramped real device names
+                // against the Forget action and overflowed on narrow screens.
+                state.trustedDevices.forEach { device ->
+                    ClipmoDeviceCard(
+                        name = device.name,
+                        platformLabel = device.platform.replaceFirstChar(Char::uppercase),
+                        statusLabel = if (device.online) "Connected" else "Seen ${relativeSeen(device.lastSeenMs)}",
+                        online = device.online,
+                        action = "Forget",
+                        onAction = { onForgetDevice(device) },
+                    )
                     Spacer(Modifier.height(space.sm))
                 }
             }
@@ -631,18 +662,107 @@ private fun ClipmoFilterRow(selected: ClipFilter, onSelected: (ClipFilter) -> Un
 @Composable
 private fun ClipmoPill(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val colors = ClipmoTheme.colors
-    val background by animateColorAsState(if (selected) colors.textPrimary else colors.surface, tween(150), label = "pill")
-    val foreground = if (selected) colors.background else colors.textSecondary
+    val background by animateColorAsState(if (selected) colors.accent else colors.surface, tween(150), label = "pill")
+    val foreground by animateColorAsState(if (selected) colors.onAccent else colors.textSecondary, tween(150), label = "pillText")
     Box(
         modifier
             .height(ClipmoTheme.dimensions.chipHeight)
             .clip(RoundedCornerShape(ClipmoTheme.shapes.pill))
             .background(background)
-            .border(1.dp, if (selected) background else colors.border, RoundedCornerShape(ClipmoTheme.shapes.pill))
+            .border(1.dp, if (selected) Color.Transparent else colors.border, RoundedCornerShape(ClipmoTheme.shapes.pill))
+            .combinedClickable(onClick = onClick)
+            .padding(horizontal = ClipmoTheme.spacing.lg),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.foundation.text.BasicText(
+            label,
+            style = ClipmoTheme.typography.label.copy(fontWeight = FontWeight.SemiBold, color = foreground),
+        )
+    }
+}
+
+private enum class ClipmoButtonStyle { PRIMARY, SECONDARY, DANGER, GHOST }
+
+/** 48dp-tall action button used by sheets and dialogs; the accent variants
+ *  carry the brand color, GHOST stays neutral (optionally danger-tinted). */
+@Composable
+private fun ClipmoButton(
+    label: String,
+    style: ClipmoButtonStyle,
+    modifier: Modifier = Modifier,
+    icon: ClipmoIconKind? = null,
+    tint: Color? = null,
+    onClick: () -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    val background = when (style) {
+        ClipmoButtonStyle.PRIMARY -> colors.accent
+        ClipmoButtonStyle.SECONDARY -> colors.accentMuted
+        ClipmoButtonStyle.DANGER -> colors.danger
+        ClipmoButtonStyle.GHOST -> Color.Transparent
+    }
+    val content = tint ?: when (style) {
+        ClipmoButtonStyle.PRIMARY -> colors.onAccent
+        ClipmoButtonStyle.SECONDARY -> colors.accent
+        ClipmoButtonStyle.DANGER -> Color.White
+        ClipmoButtonStyle.GHOST -> colors.textSecondary
+    }
+    Row(
+        modifier
+            .height(ClipmoTheme.dimensions.actionHeight)
+            .clip(RoundedCornerShape(ClipmoTheme.shapes.search))
+            .background(background)
+            .border(1.dp, if (style == ClipmoButtonStyle.GHOST) colors.border else Color.Transparent, RoundedCornerShape(ClipmoTheme.shapes.search))
             .combinedClickable(onClick = onClick)
             .padding(horizontal = ClipmoTheme.spacing.md),
-        contentAlignment = Alignment.Center,
-    ) { androidx.compose.foundation.text.BasicText(label, style = ClipmoTheme.typography.metadata.copy(color = foreground)) }
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) {
+            ClipmoIcon(icon, content, Modifier.size(18.dp))
+            Spacer(Modifier.width(ClipmoTheme.spacing.xs))
+        }
+        androidx.compose.foundation.text.BasicText(
+            label,
+            style = ClipmoTheme.typography.label.copy(fontWeight = FontWeight.SemiBold, color = content),
+        )
+    }
+}
+
+/** Floating confirmation shown after any copy; decorative only, taps pass through. */
+@Composable
+private fun ClipmoCopiedPill(copyPulse: Int, modifier: Modifier = Modifier) {
+    val colors = ClipmoTheme.colors
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(copyPulse) {
+        if (copyPulse > 0) {
+            visible = true
+            delay(1400)
+            visible = false
+        }
+    }
+    AnimatedVisibility(
+        visible,
+        modifier.padding(bottom = 80.dp),
+        enter = fadeIn(tween(120)) + scaleIn(initialScale = 0.9f, animationSpec = tween(160)),
+        exit = fadeOut(tween(200)) + scaleOut(targetScale = 0.95f, animationSpec = tween(160)),
+    ) {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(ClipmoTheme.shapes.pill))
+                .background(colors.surfaceRaised)
+                .border(1.dp, colors.border, RoundedCornerShape(ClipmoTheme.shapes.pill))
+                .padding(horizontal = ClipmoTheme.spacing.lg, vertical = ClipmoTheme.spacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ClipmoIcon(ClipmoIconKind.CHECK, colors.accent, Modifier.size(16.dp))
+            Spacer(Modifier.width(ClipmoTheme.spacing.xs))
+            androidx.compose.foundation.text.BasicText(
+                "Copied",
+                style = ClipmoTheme.typography.label.copy(fontWeight = FontWeight.SemiBold, color = colors.textPrimary),
+            )
+        }
+    }
 }
 
 @Composable
@@ -821,7 +941,7 @@ private fun ClipmoClipboardCard(
         Box(
             Modifier
                 .size(ClipmoTheme.dimensions.thumbnail)
-                .clip(RoundedCornerShape(7.dp))
+                .clip(RoundedCornerShape(10.dp))
                 .background(colors.surface),
             contentAlignment = Alignment.Center,
         ) {
@@ -888,7 +1008,8 @@ private fun ClipmoCollectionCard(name: String, icon: ClipmoIconKind, count: Int,
 @Composable
 private fun ClipmoDeviceCard(
     name: String,
-    subtitle: String,
+    platformLabel: String,
+    statusLabel: String,
     online: Boolean,
     action: String? = null,
     onAction: (() -> Unit)? = null,
@@ -898,15 +1019,29 @@ private fun ClipmoDeviceCard(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(ClipmoTheme.shapes.card)).background(colors.surfaceRaised).padding(ClipmoTheme.spacing.md),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(colors.surface), contentAlignment = Alignment.Center) {
-            ClipmoIcon(ClipmoIconKind.DEVICE, colors.textSecondary, Modifier.size(18.dp))
+        Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(colors.surface), contentAlignment = Alignment.Center) {
+            ClipmoIcon(ClipmoIconKind.DEVICE, if (online) colors.accent else colors.textMuted, Modifier.size(22.dp))
         }
-        Spacer(Modifier.width(ClipmoTheme.spacing.sm))
+        Spacer(Modifier.width(ClipmoTheme.spacing.md))
         Column(Modifier.weight(1f)) {
-            androidx.compose.foundation.text.BasicText(name, style = ClipmoTheme.typography.body.copy(color = colors.textPrimary))
-            androidx.compose.foundation.text.BasicText(subtitle, style = ClipmoTheme.typography.metadata.copy(color = colors.textMuted))
+            androidx.compose.foundation.text.BasicText(
+                name,
+                style = ClipmoTheme.typography.body.copy(color = colors.textPrimary),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(ClipmoTheme.spacing.xxs))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(if (online) colors.accent else colors.textMuted))
+                Spacer(Modifier.width(ClipmoTheme.spacing.xs))
+                androidx.compose.foundation.text.BasicText(
+                    "$platformLabel · $statusLabel",
+                    style = ClipmoTheme.typography.metadata.copy(color = if (online) colors.textSecondary else colors.textMuted),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
-        Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(if (online) colors.accent else colors.textMuted))
         if (action != null && onAction != null) {
             Spacer(Modifier.width(ClipmoTheme.spacing.sm))
             ClipmoPill(action, false, onClick = onAction)
@@ -924,7 +1059,7 @@ private fun ClipmoSettingsGroup(title: String, content: @Composable () -> Unit) 
 
 @Composable
 private fun ClipmoSettingsToggle(title: String, subtitle: String, checked: Boolean, onChanged: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             androidx.compose.foundation.text.BasicText(title, style = ClipmoTheme.typography.body.copy(color = ClipmoTheme.colors.textPrimary))
             Spacer(Modifier.height(ClipmoTheme.spacing.xxs))
@@ -939,17 +1074,17 @@ private fun ClipmoSettingsToggle(title: String, subtitle: String, checked: Boole
 private fun ClipmoToggle(checked: Boolean, onChanged: (Boolean) -> Unit) {
     val colors = ClipmoTheme.colors
     val track by animateColorAsState(if (checked) colors.accent else colors.surfacePressed, tween(150), label = "toggle")
-    val position by animateFloatAsState(if (checked) 20f else 2f, tween(150), label = "thumb")
+    val position by animateFloatAsState(if (checked) 24f else 4f, tween(150), label = "thumb")
     Box(
         Modifier
-            .width(42.dp)
-            .height(24.dp)
+            .width(52.dp)
+            .height(32.dp)
             .clip(RoundedCornerShape(50))
             .background(track)
             .semantics { role = Role.Switch; contentDescription = if (checked) "On" else "Off" }
             .combinedClickable(onClick = { onChanged(!checked) }),
     ) {
-        Box(Modifier.padding(start = position.dp, top = 2.dp).size(20.dp).clip(RoundedCornerShape(50)).background(if (checked) Color(0xFF102607) else colors.textSecondary))
+        Box(Modifier.padding(start = position.dp, top = 4.dp).size(24.dp).clip(RoundedCornerShape(50)).background(if (checked) Color.White else colors.textSecondary))
     }
 }
 
@@ -969,7 +1104,7 @@ private fun ClipmoActionRow(title: String, subtitle: String, color: Color, onCli
 private fun ClipmoBottomBar(selected: ClipmoScreen, onSelected: (ClipmoScreen) -> Unit) {
     val colors = ClipmoTheme.colors
     Row(
-        Modifier.fillMaxWidth().height(54.dp).background(colors.background).border(1.dp, colors.border).padding(horizontal = ClipmoTheme.spacing.xl),
+        Modifier.fillMaxWidth().height(64.dp).background(colors.background).border(1.dp, colors.border).padding(horizontal = ClipmoTheme.spacing.sm),
         horizontalArrangement = Arrangement.SpaceAround,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -984,7 +1119,12 @@ private fun ClipmoBottomBar(selected: ClipmoScreen, onSelected: (ClipmoScreen) -
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                ClipmoIcon(icon, if (active) colors.accent else colors.textMuted, Modifier.size(17.dp))
+                Box(
+                    Modifier.size(width = 56.dp, height = 30.dp).clip(RoundedCornerShape(15.dp)).background(if (active) colors.accentMuted else Color.Transparent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    ClipmoIcon(icon, if (active) colors.accent else colors.textMuted, Modifier.size(18.dp))
+                }
                 Spacer(Modifier.height(2.dp))
                 androidx.compose.foundation.text.BasicText(label, style = ClipmoTheme.typography.metadata.copy(color = if (active) colors.textPrimary else colors.textMuted))
             }
@@ -1010,18 +1150,24 @@ private fun ClipmoIconButton(kind: ClipmoIconKind, description: String, onClick:
 @Composable
 private fun ClipmoEmptyState(title: String, message: String) {
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 44.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Image(
             painter = painterResource(R.drawable.clipmo_logo),
             contentDescription = null,
-            modifier = Modifier.size(46.dp).clip(RoundedCornerShape(12.dp)),
+            modifier = Modifier.size(56.dp).clip(RoundedCornerShape(14.dp)),
         )
         Spacer(Modifier.height(ClipmoTheme.spacing.md))
-        androidx.compose.foundation.text.BasicText(title, style = ClipmoTheme.typography.section.copy(color = ClipmoTheme.colors.textPrimary))
+        androidx.compose.foundation.text.BasicText(
+            title,
+            style = ClipmoTheme.typography.section.copy(fontWeight = FontWeight.SemiBold, color = ClipmoTheme.colors.textPrimary),
+        )
         Spacer(Modifier.height(ClipmoTheme.spacing.xs))
-        androidx.compose.foundation.text.BasicText(message, style = ClipmoTheme.typography.metadata.copy(color = ClipmoTheme.colors.textMuted))
+        androidx.compose.foundation.text.BasicText(
+            message,
+            style = ClipmoTheme.typography.body.copy(color = ClipmoTheme.colors.textMuted),
+        )
     }
 }
 
@@ -1048,8 +1194,8 @@ private fun ClipmoCreateCollectionOverlay(
             ClipmoSearchBar(name, "Collection name", { name = it.take(40) }, searchIcon = false)
             Spacer(Modifier.height(ClipmoTheme.spacing.lg))
             Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
-                ClipmoPill("Cancel", false, Modifier.weight(1f), onDismiss)
-                ClipmoPill("Create", true, Modifier.weight(1f)) {
+                ClipmoButton("Cancel", ClipmoButtonStyle.GHOST, Modifier.weight(1f), onClick = onDismiss)
+                ClipmoButton("Create", ClipmoButtonStyle.PRIMARY, Modifier.weight(1f), icon = ClipmoIconKind.PLUS) {
                     if (name.isNotBlank()) onCreate(name.trim())
                 }
             }
@@ -1108,13 +1254,13 @@ private fun ClipmoCollectionPickerOverlay(
                 }
             }
             Spacer(Modifier.height(ClipmoTheme.spacing.md))
-            ClipmoPill("Close", false, Modifier.fillMaxWidth(), onDismiss)
+            ClipmoButton("Close", ClipmoButtonStyle.GHOST, Modifier.fillMaxWidth(), onClick = onDismiss)
         }
     }
 }
 
 @Composable
-private fun ClipmoDetailOverlay(
+private fun ClipmoDetailSheet(
     clip: ClipRecord,
     onCopy: (ClipRecord) -> Unit,
     onDelete: (ClipRecord) -> Unit,
@@ -1125,96 +1271,138 @@ private fun ClipmoDetailOverlay(
     val editable = clip.kind == ClipKind.TEXT || clip.kind == ClipKind.URL
     var editing by remember { mutableStateOf(false) }
     var draft by remember(clip.id) { mutableStateOf(clip.content) }
-    Box(Modifier.fillMaxSize().background(colors.scrim).combinedClickable(onClick = onDismiss), contentAlignment = Alignment.Center) {
+    BackHandler {
+        if (editing) {
+            editing = false
+            draft = clip.content
+        } else onDismiss()
+    }
+    val previewPath = remember(clip.assetPaths, clip.kind) {
+        if (clip.kind == ClipKind.IMAGE) {
+            val assets = clip.assetPaths?.lineSequence()?.filter(String::isNotBlank)?.toList().orEmpty()
+            assets.firstOrNull { it.endsWith("thumb.jpg", ignoreCase = true) } ?: assets.firstOrNull()
+        } else null
+    }
+    val imageBitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, previewPath) {
+        val path = previewPath ?: return@produceState
+        ClipmoThumbCache[path]?.let {
+            value = it.asImageBitmap()
+            return@produceState
+        }
+        val decoded = withContext(Dispatchers.IO) {
+            runCatching { android.graphics.BitmapFactory.decodeFile(path) }.getOrNull()
+        }
+        if (decoded != null) {
+            ClipmoThumbCache[path] = decoded
+            value = decoded.asImageBitmap()
+        }
+    }
+    Box(Modifier.fillMaxSize().combinedClickable(onClick = onDismiss)) {
         Column(
             Modifier
-                .widthIn(max = 360.dp)
-                .padding(ClipmoTheme.spacing.xl)
-                .clip(RoundedCornerShape(ClipmoTheme.shapes.panel))
-                .background(colors.surfaceRaised)
-                .border(1.dp, colors.border, RoundedCornerShape(ClipmoTheme.shapes.panel))
-                .combinedClickable(onClick = {})
-                .padding(ClipmoTheme.spacing.lg),
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .fillMaxHeight(0.86f)
+                .clip(RoundedCornerShape(topStart = ClipmoTheme.shapes.sheet, topEnd = ClipmoTheme.shapes.sheet))
+                .background(colors.surface)
+                .combinedClickable(enabled = true, onClick = {}) // keep taps inside off the scrim
+                .windowInsetsPadding(WindowInsets.ime)
+                .padding(bottom = ClipmoTheme.spacing.sm),
         ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                ClipmoIcon(iconFor(clip.kind), if (clip.kind == ClipKind.URL) colors.accent else colors.textSecondary, Modifier.size(18.dp))
-                Spacer(Modifier.width(ClipmoTheme.spacing.sm))
-                androidx.compose.foundation.text.BasicText(kindLabel(clip.kind), style = ClipmoTheme.typography.title.copy(color = colors.textPrimary))
-                Spacer(Modifier.weight(1f))
-                if (clip.favorite) ClipmoIcon(ClipmoIconKind.STAR, colors.accent, Modifier.size(16.dp))
-            }
-            Spacer(Modifier.height(ClipmoTheme.spacing.sm))
-            if (editing) {
-                BasicTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    textStyle = ClipmoTheme.typography.body.copy(color = colors.textPrimary),
-                    cursorBrush = SolidColor(colors.accent),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 120.dp, max = 320.dp)
-                        .clip(RoundedCornerShape(ClipmoTheme.shapes.search))
-                        .background(colors.surface)
-                        .padding(ClipmoTheme.spacing.md)
-                        .verticalScroll(rememberScrollState()),
-                )
-            } else {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 320.dp)
-                        .verticalScroll(rememberScrollState()),
+            Box(
+                Modifier.align(Alignment.CenterHorizontally).padding(top = ClipmoTheme.spacing.xs)
+                    .size(width = 36.dp, height = 4.dp).clip(RoundedCornerShape(50)).background(colors.border),
+            )
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = ClipmoTheme.spacing.lg, vertical = ClipmoTheme.spacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier.size(40.dp).clip(RoundedCornerShape(14.dp)).background(colors.accentMuted),
+                    contentAlignment = Alignment.Center,
                 ) {
+                    ClipmoIcon(iconFor(clip.kind), colors.accent, Modifier.size(20.dp))
+                }
+                Spacer(Modifier.width(ClipmoTheme.spacing.md))
+                Column {
+                    androidx.compose.foundation.text.BasicText(kindLabel(clip.kind), style = ClipmoTheme.typography.title.copy(color = colors.textPrimary))
                     androidx.compose.foundation.text.BasicText(
-                        clip.content,
-                        style = ClipmoTheme.typography.body.copy(color = colors.textSecondary),
+                        ClipmoTimeFormat.short.format(Date(clip.timestamp)),
+                        style = ClipmoTheme.typography.metadata.copy(color = colors.textMuted),
                     )
                 }
+                Spacer(Modifier.weight(1f))
+                if (clip.favorite) ClipmoIcon(ClipmoIconKind.STAR, colors.accent, Modifier.size(20.dp))
             }
-            Spacer(Modifier.height(ClipmoTheme.spacing.md))
-            androidx.compose.foundation.text.BasicText(
-                "${kindLabel(clip.kind)}  ·  ${ClipmoTimeFormat.short.format(Date(clip.timestamp))}",
-                style = ClipmoTheme.typography.metadata.copy(color = colors.textMuted),
-            )
-            Spacer(Modifier.height(ClipmoTheme.spacing.lg))
-            if (editing) {
-                Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
-                    ClipmoPill("Cancel", false, Modifier.weight(1f)) { editing = false; draft = clip.content }
-                    Box(
-                        Modifier.weight(1f).height(ClipmoTheme.dimensions.chipHeight)
-                            .clip(RoundedCornerShape(ClipmoTheme.shapes.pill)).background(colors.accent)
-                            .combinedClickable(onClick = { onEdit(draft.trim()) }),
-                        contentAlignment = Alignment.Center,
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = ClipmoTheme.spacing.lg)
+                    .clip(RoundedCornerShape(ClipmoTheme.shapes.search))
+                    .background(colors.surfaceRaised),
+            ) {
+                if (editing) {
+                    BasicTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        textStyle = ClipmoTheme.typography.body.copy(color = colors.textPrimary),
+                        cursorBrush = SolidColor(colors.accent),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(ClipmoTheme.spacing.md)
+                            .verticalScroll(rememberScrollState()),
+                    )
+                } else {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(ClipmoTheme.spacing.md)
+                            .verticalScroll(rememberScrollState()),
                     ) {
-                        androidx.compose.foundation.text.BasicText("Save", style = ClipmoTheme.typography.label.copy(color = Color(0xFF06130A)))
+                        val bitmap = imageBitmap
+                        if (clip.kind == ClipKind.IMAGE && bitmap != null) {
+                            Image(
+                                bitmap = bitmap,
+                                contentDescription = "Image preview",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            androidx.compose.foundation.text.BasicText(
+                                clip.content,
+                                style = ClipmoTheme.typography.body.copy(color = colors.textSecondary),
+                            )
+                        }
                     }
                 }
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
-                    if (editable) {
-                        ClipmoPill("Edit", false, Modifier.weight(1f)) { editing = true }
-                    } else {
-                        Box(Modifier.weight(1f))
+            }
+            Column(Modifier.fillMaxWidth().padding(horizontal = ClipmoTheme.spacing.lg, vertical = ClipmoTheme.spacing.md)) {
+                if (editing) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
+                        ClipmoButton("Cancel", ClipmoButtonStyle.GHOST, Modifier.weight(1f)) {
+                            editing = false
+                            draft = clip.content
+                        }
+                        ClipmoButton(
+                            "Save",
+                            ClipmoButtonStyle.PRIMARY,
+                            Modifier.weight(1f),
+                            icon = ClipmoIconKind.CHECK,
+                        ) { onEdit(draft.trim()) }
                     }
-                    Box(
-                        Modifier.weight(1f).height(ClipmoTheme.dimensions.chipHeight)
-                            .clip(RoundedCornerShape(ClipmoTheme.shapes.pill)).background(colors.accent)
-                            .combinedClickable(onClick = { onCopy(clip) }),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        androidx.compose.foundation.text.BasicText("Copy", style = ClipmoTheme.typography.label.copy(color = Color(0xFF06130A)))
+                } else {
+                    // Primary actions live in the thumb zone; Copy leads.
+                    Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
+                        ClipmoButton("Copy", ClipmoButtonStyle.PRIMARY, Modifier.weight(if (editable) 1.5f else 1f), icon = ClipmoIconKind.COPY) { onCopy(clip) }
+                        if (editable) {
+                            ClipmoButton("Edit", ClipmoButtonStyle.SECONDARY, Modifier.weight(1f), icon = ClipmoIconKind.EDIT) { editing = true }
+                        }
                     }
-                }
-                Spacer(Modifier.height(ClipmoTheme.spacing.sm))
-                Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
-                    ClipmoPill("Close", false, Modifier.weight(1f), onDismiss)
-                    Box(
-                        Modifier.weight(1f).height(ClipmoTheme.dimensions.chipHeight)
-                            .clip(RoundedCornerShape(ClipmoTheme.shapes.pill)).background(colors.danger)
-                            .combinedClickable(onClick = { onDelete(clip) }),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        androidx.compose.foundation.text.BasicText("Delete", style = ClipmoTheme.typography.label.copy(color = Color.White))
+                    Spacer(Modifier.height(ClipmoTheme.spacing.sm))
+                    Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
+                        ClipmoButton("Delete", ClipmoButtonStyle.GHOST, Modifier.weight(1f), icon = ClipmoIconKind.DELETE, tint = colors.danger) { onDelete(clip) }
+                        ClipmoButton("Close", ClipmoButtonStyle.GHOST, Modifier.weight(1f), icon = ClipmoIconKind.CLOSE, onClick = onDismiss)
                     }
                 }
             }
@@ -1240,10 +1428,8 @@ private fun ClipmoConfirmOverlay(
             androidx.compose.foundation.text.BasicText(message, style = ClipmoTheme.typography.body.copy(color = colors.textSecondary), maxLines = 3, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(ClipmoTheme.spacing.lg))
             Row(horizontalArrangement = Arrangement.spacedBy(ClipmoTheme.spacing.sm)) {
-                ClipmoPill("Cancel", false, Modifier.weight(1f), onDismiss)
-                Box(Modifier.weight(1f).height(ClipmoTheme.dimensions.chipHeight).clip(RoundedCornerShape(ClipmoTheme.shapes.pill)).background(colors.danger).combinedClickable(onClick = onConfirm), contentAlignment = Alignment.Center) {
-                    androidx.compose.foundation.text.BasicText(confirmLabel, style = ClipmoTheme.typography.label.copy(color = Color.White))
-                }
+                ClipmoButton("Cancel", ClipmoButtonStyle.GHOST, Modifier.weight(1f), onClick = onDismiss)
+                ClipmoButton(confirmLabel, ClipmoButtonStyle.DANGER, Modifier.weight(1f), icon = ClipmoIconKind.DELETE, onClick = onConfirm)
             }
         }
     }
@@ -1252,6 +1438,15 @@ private fun ClipmoConfirmOverlay(
 private fun sourceLabel(source: String?): String = when {
     source.isNullOrBlank() || source == "clipboard" -> "This Android phone"
     else -> source.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+}
+private fun relativeSeen(ms: Long): String {
+    val diff = System.currentTimeMillis() - ms
+    return when {
+        diff < 60_000 -> "just now"
+        diff < 3_600_000 -> "${diff / 60_000}m ago"
+        diff < 86_400_000 -> "${diff / 3_600_000}h ago"
+        else -> "${diff / 86_400_000}d ago"
+    }
 }
 private fun kindLabel(kind: ClipKind): String = when (kind) { ClipKind.TEXT -> "Text"; ClipKind.URL -> "Link"; ClipKind.IMAGE -> "Image"; ClipKind.FILE -> "File" }
 private fun iconFor(kind: ClipKind): ClipmoIconKind = when (kind) { ClipKind.TEXT -> ClipmoIconKind.TEXT; ClipKind.URL -> ClipmoIconKind.LINK; ClipKind.IMAGE -> ClipmoIconKind.IMAGE; ClipKind.FILE -> ClipmoIconKind.FILE }

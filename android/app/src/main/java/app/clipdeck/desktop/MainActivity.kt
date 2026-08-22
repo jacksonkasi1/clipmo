@@ -256,7 +256,7 @@ class MainActivity : ComponentActivity() {
         } else {
             clipboard.setPrimaryClip(ClipData.newPlainText("Clipmo", clip.content))
         }
-        Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show()
+        // Copy confirmation is the in-app "Copied" pill shown by the UI layer.
     }
 
     private fun captureClipboardWhileForeground(): Boolean {

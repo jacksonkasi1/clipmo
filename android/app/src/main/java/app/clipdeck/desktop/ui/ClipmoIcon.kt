@@ -7,8 +7,10 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Devices
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Link
@@ -25,7 +27,7 @@ import androidx.compose.ui.graphics.Color
 
 enum class ClipmoIconKind {
     CLIPBOARD, SEARCH, SETTINGS, COPY, STAR, TEXT, LINK, IMAGE, FILE, DEVICE,
-    DESKTOP, COLLECTION, PLUS, BACK, DELETE, CHECK, REFRESH,
+    DESKTOP, COLLECTION, PLUS, BACK, DELETE, CHECK, REFRESH, EDIT, CLOSE,
 }
 
 @Composable
@@ -48,6 +50,8 @@ fun ClipmoIcon(kind: ClipmoIconKind, color: Color, modifier: Modifier = Modifier
         ClipmoIconKind.DELETE -> Icons.Outlined.DeleteOutline
         ClipmoIconKind.CHECK -> Icons.Outlined.Check
         ClipmoIconKind.REFRESH -> Icons.Outlined.Refresh
+        ClipmoIconKind.EDIT -> Icons.Outlined.Edit
+        ClipmoIconKind.CLOSE -> Icons.Outlined.Close
     }
     Icon(imageVector = image, contentDescription = null, tint = color, modifier = modifier)
 }
