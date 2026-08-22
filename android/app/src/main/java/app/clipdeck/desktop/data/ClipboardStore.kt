@@ -178,7 +178,7 @@ class ClipboardStore(context: Context) :
         }
     }
 
-    fun captureText(content: String, deviceId: String): Boolean {
+    fun captureText(content: String, deviceId: String, source: String = "clipboard"): Boolean {
         if (content.isBlank()) return false
         val now = System.currentTimeMillis()
         readableDatabase.rawQuery("SELECT id FROM items WHERE content=? LIMIT 1", arrayOf(content)).use { cursor ->
@@ -194,7 +194,7 @@ class ClipboardStore(context: Context) :
             put("content", content)
             put("type", if (content.startsWith("http://") || content.startsWith("https://")) "URL" else "TEXT")
             put("ts", now)
-            put("source", "clipboard")
+            put("source", source)
             put("id_hash", digest)
             put("origin_device", deviceId)
             put("origin_wall_ms", now)

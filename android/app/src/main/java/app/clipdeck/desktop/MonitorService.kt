@@ -4,38 +4,41 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.database.Cursor
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
-import android.provider.OpenableColumns
+import android.os.Looper
+import android.provider.MediaStore
 import android.util.Log
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
-import java.io.ByteArrayOutputStream
-import java.io.File
-import java.text.SimpleDateFormat
-import java.security.MessageDigest
-import java.util.*
 
 class MonitorService : Service() {
 	companion object {
 		const val CHANNEL_ID = "clipmo_monitor_channel"
 		const val NOTIF_ID = 1
-		const val MAX_IMAGE_BYTES = 512 * 1024
 		const val ACTION_CAPTURE_CURRENT = "app.clipdeck.desktop.CAPTURE_CURRENT"
+		// Clipboard-captured images keep the LAN sync budget so they remain
+		// shareable to the desktop; larger screenshots stay local instead.
+		private const val MAX_SYNC_IMAGE_BYTES = 512L * 1024
+		private const val SCREENSHOT_SCAN_DELAY_MS = 1_500L
 	}
 
 	private val binder = LocalBinder()
 	private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+	private val screenshotHandler = Handler(Looper.getMainLooper())
 	private var clipboardManager: ClipboardManager? = null
 	private var lastClipText: String? = null
 	private var listenerRegistered = false
+	private var screenshotObserverRegistered = false
+	private var screenshotsBaselineSeconds = 0L
+	private val clipCapture = ClipCapture(this)
 
 	inner class LocalBinder : android.os.Binder() {
 		fun getService() = this@MonitorService
@@ -78,6 +81,7 @@ class MonitorService : Service() {
 			clipboardManager?.addPrimaryClipChangedListener(clipListener)
 			listenerRegistered = true
 		}
+		registerScreenshotObserver()
 
 		Log.i("MonitorService", "started")
 		return START_STICKY
@@ -86,11 +90,15 @@ class MonitorService : Service() {
 	override fun onBind(intent: Intent): IBinder = binder
 
 	override fun onDestroy() {
-		super.onDestroy()
 		if (listenerRegistered) {
 			clipboardManager?.removePrimaryClipChangedListener(clipListener)
 			listenerRegistered = false
 		}
+		if (screenshotObserverRegistered) {
+			contentResolver.unregisterContentObserver(screenshotObserver)
+			screenshotObserverRegistered = false
+		}
+		screenshotHandler.removeCallbacks(pendingScreenshotScan)
 		serviceScope.cancel()
 		Log.i("MonitorService", "stopped")
 	}
@@ -113,13 +121,93 @@ class MonitorService : Service() {
 		}
 	}
 
+	private val screenshotObserver = object : ContentObserver(screenshotHandler) {
+		override fun onChange(selfChange: Boolean, uri: Uri?) {
+			// MediaStore notifies per-row while a screenshot is being written;
+			// debouncing collapses the burst into a single scan.
+			screenshotHandler.removeCallbacks(pendingScreenshotScan)
+			screenshotHandler.postDelayed(pendingScreenshotScan, SCREENSHOT_SCAN_DELAY_MS)
+		}
+	}
+
+	private val pendingScreenshotScan = Runnable {
+		serviceScope.launch { scanForNewScreenshots() }
+	}
+
+	private fun registerScreenshotObserver() {
+		if (screenshotObserverRegistered) return
+		// Baseline is "now" so screenshots taken before monitoring started are
+		// not backfilled into the history.
+		screenshotsBaselineSeconds = System.currentTimeMillis() / 1000
+		contentResolver.registerContentObserver(
+			MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+			true,
+			screenshotObserver,
+		)
+		screenshotObserverRegistered = true
+	}
+
+	private fun imageReadPermission(): String =
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+			android.Manifest.permission.READ_MEDIA_IMAGES
+		else
+			@Suppress("DEPRECATION")
+			android.Manifest.permission.READ_EXTERNAL_STORAGE
+
+	private fun hasImageReadPermission(): Boolean =
+		ContextCompat.checkSelfPermission(this, imageReadPermission()) == PackageManager.PERMISSION_GRANTED
+
+	private suspend fun scanForNewScreenshots() = withContext(Dispatchers.IO) {
+		if (!hasImageReadPermission()) return@withContext
+		try {
+			val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+			val projection = arrayOf(
+				MediaStore.Images.Media._ID,
+				MediaStore.Images.Media.DATE_ADDED,
+			)
+			// Screenshots land in Pictures/Screenshots on stock Android and
+			// DCIM/Screenshots on several OEMs; the display-name clause covers
+			// ROMs that use a different folder for "Screenshot_*" files.
+			val selection = "${MediaStore.Images.Media.DATE_ADDED} >= ?" +
+				" AND ${MediaStore.Images.Media.IS_PENDING} = 0" +
+				" AND (${MediaStore.Images.Media.RELATIVE_PATH} LIKE ? OR ${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?)"
+			val args = arrayOf(screenshotsBaselineSeconds.toString(), "%Screenshot%", "Screenshot%")
+			var newest = screenshotsBaselineSeconds
+			contentResolver.query(collection, projection, selection, args, "${MediaStore.Images.Media.DATE_ADDED} ASC")?.use { cursor ->
+				while (cursor.moveToNext()) {
+					val id = cursor.getLong(0)
+					val added = cursor.getLong(1)
+					if (added > newest) newest = added
+					val uri = android.content.ContentUris.withAppendedId(collection, id)
+					clipCapture.capture(
+						uri,
+						source = "screenshot",
+						maxImageBytes = ClipCapture.LOCAL_IMAGE_LIMIT_BYTES,
+						dedupeKey = "screenshot|$uri",
+					)
+				}
+			}
+			screenshotsBaselineSeconds = newest
+		} catch (e: Exception) {
+			Log.w("MonitorService", "screenshot scan failed", e)
+		}
+	}
+
 	private suspend fun processClipChange() = withContext(Dispatchers.IO) {
 		try {
 			val clip = clipboardManager?.primaryClip ?: return@withContext
 			if (clip.itemCount == 0) return@withContext
 			val item = clip.getItemAt(0)
 			val uri = item.uri
-			if (uri != null && captureUri(uri)) return@withContext
+			if (uri != null) {
+				val preferences = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+				if (preferences.getString("clipboard_suppression_uri", null) == uri.toString()) {
+					preferences.edit().remove("clipboard_suppression_uri").apply()
+				} else {
+					clipCapture.capture(uri, source = "clipboard", maxImageBytes = MAX_SYNC_IMAGE_BYTES)
+				}
+				return@withContext
+			}
 			val text = item.coerceToText(this@MonitorService)?.toString() ?: return@withContext
 			if (text.isEmpty()) return@withContext
 			if (text == lastClipText) return@withContext
@@ -156,8 +244,8 @@ class MonitorService : Service() {
 					cv.put("type", type)
 					cv.put("ts", now)
 					cv.put("source", "clipboard")
-					cv.put("id_hash", stableIdHash(text, now))
-					cv.put("origin_device", preferences.getString("device_id", "local"))
+					cv.put("id_hash", ClipCapture.shortHash("${deviceId()}|$now|$text"))
+					cv.put("origin_device", deviceId())
 					cv.put("origin_wall_ms", now)
 					cv.put("sync_status", "local")
 					db.insert("items", null, cv)
@@ -169,109 +257,9 @@ class MonitorService : Service() {
 		}
 	}
 
-	private fun captureUri(uri: Uri): Boolean {
-		val preferences = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
-		if (preferences.getString("clipboard_suppression_uri", null) == uri.toString()) {
-			preferences.edit().remove("clipboard_suppression_uri").apply()
-			return true
-		}
-		val mime = contentResolver.getType(uri).orEmpty()
-		val isImage = mime.startsWith("image/")
-		val limit = if (isImage) 420L * 1024 else 25L * 1024 * 1024
-		val bytes = try {
-			contentResolver.openInputStream(uri)?.use { readBounded(it, limit) }
-		} catch (_: Exception) { null } ?: return false
-		val now = System.currentTimeMillis()
-		val idHash = stableIdHash(uri.toString(), now)
-		val directory = File(filesDir, "local_assets/$idHash").apply { mkdirs() }
-		val name = safeFileName(displayName(uri) ?: if (isImage) "clipboard-image.png" else "clipboard-file")
-		val mainFile = File(directory, name)
-		if (!writeAtomic(mainFile, bytes)) return false
-		val assets = mutableListOf(mainFile.absolutePath)
-		if (isImage) {
-			val thumbnail = createThumbnail(bytes) ?: run { mainFile.delete(); return false }
-			if (bytes.size + thumbnail.size > MAX_IMAGE_BYTES) {
-				mainFile.delete()
-				return false
-			}
-			val thumbFile = File(directory, "thumb.jpg")
-			if (!writeAtomic(thumbFile, thumbnail)) return false
-			assets += thumbFile.absolutePath
-		}
-		val values = android.content.ContentValues().apply {
-			put("content", if (isImage) "Image" else name)
-			put("type", if (isImage) "IMAGE" else "FILE")
-			put("ts", now)
-			put("source", "clipboard")
-			put("id_hash", idHash)
-			put("origin_device", preferences.getString("device_id", "local"))
-			put("origin_wall_ms", now)
-			put("size_bytes", bytes.size.toLong())
-			put("asset_paths", assets.joinToString("\n"))
-			put("sync_status", "local")
-		}
-		openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null).use { db ->
-			db.insertOrThrow("items", null, values)
-		}
-		lastClipText = uri.toString()
-		return true
-	}
+	private fun deviceId(): String = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+		.getString("device_id", "local").orEmpty()
 
-	private fun readBounded(input: java.io.InputStream, limit: Long): ByteArray? {
-		val output = ByteArrayOutputStream()
-		val buffer = ByteArray(64 * 1024)
-		var total = 0L
-		while (true) {
-			val count = input.read(buffer)
-			if (count < 0) break
-			total += count
-			if (total > limit) return null
-			output.write(buffer, 0, count)
-		}
-		return output.toByteArray()
-	}
-
-	private fun createThumbnail(bytes: ByteArray): ByteArray? {
-		return try {
-			val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
-			val scale = minOf(1f, 160f / maxOf(bitmap.width, bitmap.height).coerceAtLeast(1))
-			val thumb = Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt().coerceAtLeast(1), (bitmap.height * scale).toInt().coerceAtLeast(1), true)
-			ByteArrayOutputStream().use { output ->
-				thumb.compress(Bitmap.CompressFormat.JPEG, 72, output)
-				if (thumb !== bitmap) thumb.recycle()
-				bitmap.recycle()
-				output.toByteArray()
-			}
-		} catch (_: Exception) { null }
-	}
-
-	private fun displayName(uri: Uri): String? = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-		if (cursor.moveToFirst()) cursor.getString(0) else null
-	}
-
-	private fun safeFileName(value: String): String {
-		val base = value.replace('\\', '/').substringAfterLast('/').take(180)
-		return base.map { if (it.isLetterOrDigit() || it in ".-_ ") it else '_' }.joinToString("").trim('.', ' ').ifBlank { "clipboard-file" }
-	}
-
-	private fun writeAtomic(target: File, bytes: ByteArray): Boolean = try {
-		val temporary = File(target.parentFile, "${target.name}.part")
-		temporary.outputStream().use { it.write(bytes) }
-		if (target.exists()) target.delete()
-		temporary.renameTo(target)
-	} catch (_: Exception) { false }
-
-	private fun contentHash(content: String): String {
-		val bytes = MessageDigest.getInstance("SHA-256").digest(content.toByteArray(Charsets.UTF_8))
-		return bytes.take(16).joinToString("") { "%02x".format(it) }
-	}
-
-	private fun stableIdHash(content: String, timestamp: Long): String {
-		val deviceId = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
-			.getString("device_id", "local").orEmpty()
-		val bytes = MessageDigest.getInstance("SHA-256")
-			.digest("$deviceId|$timestamp|$content".toByteArray(Charsets.UTF_8))
-		return bytes.take(20).joinToString("") { "%02x".format(it) }
-	}
+	private fun contentHash(content: String): String = ClipCapture.shortHash(content, 16)
 
 }
