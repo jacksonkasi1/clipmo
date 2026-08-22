@@ -5,6 +5,8 @@ Clipmo uses Android's public `ClipboardManager` listener. On Android 10 and newe
 Supported behavior:
 
 - Clipboard changes are captured while Clipmo is visible and Android grants clipboard access.
+- New screenshots are captured automatically while monitoring is enabled: Clipmo observes `MediaStore.Images` and snapshots any image saved into a `Screenshots` folder (or named `Screenshot_*`) shortly after it is written. This needs the "Photos and videos" permission, requested when monitoring is turned on. Screenshots larger than the 512 KiB LAN sync budget stay on the phone.
+- Clipmo appears in the system share sheet for text and images ("Save to Clipmo"). Shared content is stored directly in the history and never touches the system clipboard.
 - Previously captured history remains available after the app or service restarts.
 - LAN sync reconnects when the user opens Clipmo and the persisted sync toggle is enabled.
 - Remote text is written to the Android clipboard when Android permits it; a one-shot hash prevents that write from being captured and sent back as a new clip.

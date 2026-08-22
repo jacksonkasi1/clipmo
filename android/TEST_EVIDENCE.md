@@ -72,3 +72,34 @@ Android peer: `Android CPH2781`, device id `b6f9d5c2-b262-421c-b79e-70c970490574
 - Authenticated encryption/per-device cryptographic trust is not implemented; current pairing-code LAN frames remain plaintext.
 - API 29, API 34, API 35, two simultaneous Windows peers, reboot, Wi-Fi/IP change, and revoked-device reconnection were not available/proven in this run.
 - Desktop source and executable build successfully with the workspace-local GNU toolchain; the machine still has no Microsoft MSVC linker/Build Tools for the default Rust target.
+
+## 2026-08-22 — Screenshot auto-capture and share-sheet targets
+
+Device: same CPH2781, Android API 36. Build: `assembleDebug` (versionCode 3),
+`testDebugUnitTest` passed; installed in place with `adb install -r`.
+
+Screenshot auto-capture:
+
+- New `READ_MEDIA_IMAGES` permission requested on first launch with monitoring
+  enabled; granted via the system dialog ("Allow all" tapped through
+  `uiautomator` + `input tap`; `pm grant` is blocked on ColorOS).
+- Two real screenshots taken after monitoring started (system screenshot flow)
+  appeared in Clipmo history as image items with `thumb.jpg` previews; the
+  pre-monitoring screenshot from 18:07 was correctly not backfilled.
+- A `screencap`-written file dropped into `Pictures/Screenshots/` was also
+  captured through the same MediaStore observer path.
+- Re-scans do not duplicate rows (deterministic per-media id hash).
+
+Share sheet:
+
+- `Save to Clipmo` is listed as a share target for `text/plain` and `image/*`
+  in the Google Photos sheet, the ColorOS gallery sheet, and the plain system
+  chooser (the ColorOS chooser grid ellipsizes the label to `Save`; the full
+  label fits on the other surfaces).
+- Sharing text from the chooser saved `chooser resolution test` into history;
+  `am start` SEND text and SEND image (`content://media/.../34935`) both saved
+  with the expected toast, and `singleTask` + `onNewIntent` routing delivered
+  shares to the already-running instance.
+- Shared images are stored under `files/local_assets/<hash>/` with
+  `thumb.jpg`, capped at 8 MiB locally; the 512 KiB LAN image budget is
+  unchanged, so oversized captures simply stay device-local.

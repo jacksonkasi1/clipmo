@@ -489,7 +489,7 @@ private fun SettingsScreen(
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = space.md, vertical = space.sm)) {
         item {
             ClipmoSettingsGroup("Clipboard") {
-                ClipmoSettingsToggle("Clipboard monitoring", "Capture clipboard changes while Clipmo is allowed to run.", state.monitorEnabled, onMonitorChanged)
+                ClipmoSettingsToggle("Clipboard monitoring", "Capture clipboard changes and new screenshots while Clipmo is allowed to run.", state.monitorEnabled, onMonitorChanged)
             }
             Spacer(Modifier.height(space.lg))
             ClipmoSettingsGroup("Local sync") {

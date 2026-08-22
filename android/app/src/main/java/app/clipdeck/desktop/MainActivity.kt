@@ -8,6 +8,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -24,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.content.IntentCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import app.clipdeck.desktop.data.ClipRecord
@@ -41,6 +43,7 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private lateinit var store: ClipboardStore
+    private val clipCapture by lazy { ClipCapture(applicationContext) }
     private val preferences by lazy { getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE) }
 
     private var clips by mutableStateOf<List<ClipRecord>>(emptyList())
@@ -62,7 +65,15 @@ class MainActivity : ComponentActivity() {
 
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { }
+    ) { requestMediaPermissionIfNeeded() }
+
+    private val mediaPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) {
+            Toast.makeText(this, "Without photo access Clipmo cannot auto-capture screenshots", Toast.LENGTH_LONG).show()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,8 +81,9 @@ class MainActivity : ComponentActivity() {
         store = ClipboardStore(this)
         loadPreferences()
         createNotificationChannel()
-        requestNotificationPermissionIfNeeded()
+        requestRuntimePermissionsIfNeeded()
         restartEnabledServices()
+        handleSharedClip(intent)
         setContent {
             val systemDark = isSystemInDarkTheme()
             val isDark = when (themeMode) {
@@ -124,6 +136,12 @@ class MainActivity : ComponentActivity() {
         if (::store.isInitialized) refreshAsync()
         refreshHandler.removeCallbacks(refreshTask)
         refreshHandler.postDelayed(refreshTask, DEVICE_REFRESH_MS)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleSharedClip(intent)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -244,7 +262,12 @@ class MainActivity : ComponentActivity() {
         monitorEnabled = enabled
         preferences.edit().putBoolean(KEY_MONITOR_ENABLED, enabled).apply()
         val intent = Intent(this, MonitorService::class.java)
-        if (enabled) startForegroundService(intent) else stopService(intent)
+        if (enabled) {
+            startForegroundService(intent)
+            requestMediaPermissionIfNeeded()
+        } else {
+            stopService(intent)
+        }
     }
 
     private fun handleSyncChanged(enabled: Boolean) {
@@ -326,12 +349,83 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun requestNotificationPermissionIfNeeded() {
+    private fun requestRuntimePermissionsIfNeeded() {
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
+            // The completion callback chains the media permission request;
+            // launching both at once would drop one of the dialogs.
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            requestMediaPermissionIfNeeded()
+        }
+    }
+
+    private fun requiredImagePermission(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_IMAGES
+        } else {
+            @Suppress("DEPRECATION")
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+
+    private fun hasImagePermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, requiredImagePermission()) == PackageManager.PERMISSION_GRANTED
+
+    private fun requestMediaPermissionIfNeeded() {
+        if (!monitorEnabled || hasImagePermission()) return
+        mediaPermission.launch(requiredImagePermission())
+    }
+
+    private fun handleSharedClip(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        val mime = intent.type?.substringBefore(';').orEmpty()
+        when {
+            mime.startsWith("image/") -> handleSharedImage(intent, mime)
+            mime.startsWith("text/") -> handleSharedText(intent)
+            else -> Toast.makeText(this, "Clipmo can save shared text and images", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun handleSharedText(intent: Intent) {
+        val text = (
+            intent.getCharSequenceExtra(Intent.EXTRA_TEXT) ?: intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT)
+            )?.toString()?.trim().orEmpty()
+        if (text.isEmpty()) {
+            Toast.makeText(this, "Nothing to save", Toast.LENGTH_SHORT).show()
+            return
+        }
+        lifecycleScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                store.captureText(text, getOrCreateDeviceId(), source = "share")
+            }
+            Toast.makeText(this@MainActivity, if (saved) "Saved to Clipmo" else "Already in Clipmo", Toast.LENGTH_SHORT).show()
+            refreshAsync()
+        }
+    }
+
+    private fun handleSharedImage(intent: Intent, mime: String) {
+        // Grab the URI synchronously: share grants are only valid while the
+        // receiving task is alive, while the byte copy runs on IO.
+        val uri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+            ?: intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+        if (uri == null) {
+            Toast.makeText(this, "Could not read the shared image", Toast.LENGTH_SHORT).show()
+            return
+        }
+        lifecycleScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                clipCapture.capture(
+                    uri,
+                    source = "share",
+                    maxImageBytes = ClipCapture.LOCAL_IMAGE_LIMIT_BYTES,
+                    dedupeKey = "share|$uri",
+                    mimeHint = mime,
+                )
+            }
+            Toast.makeText(this@MainActivity, if (saved) "Saved to Clipmo" else "Could not save the shared image", Toast.LENGTH_SHORT).show()
+            refreshAsync()
         }
     }
 
