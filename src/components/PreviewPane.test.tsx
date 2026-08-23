@@ -343,3 +343,59 @@ describe('PreviewPane OverflowMenu', () => {
     expect(apiMock.deleteSelected).not.toHaveBeenCalled();
   });
 });
+
+describe('PreviewPane ImagePreview and Fullscreen Modal', () => {
+  it('renders image dimensions in caption and an expand button', () => {
+    selectItem(IMAGE_ITEM);
+    render(<PreviewPane />);
+    expect(screen.getByText('800 × 600 pixels')).toBeDefined();
+    expect(screen.getByLabelText('View full screen')).toBeDefined();
+    expect(screen.getByLabelText('Click image to view full screen')).toBeDefined();
+  });
+
+  it('opens fullscreen modal on canvas click and closes on Close button click', async () => {
+    selectItem(IMAGE_ITEM);
+    render(<PreviewPane />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    // Click on canvas
+    fireEvent.click(screen.getByLabelText('Click image to view full screen'));
+    expect(screen.getByRole('dialog')).toBeDefined();
+    expect(screen.getByText('800 × 600 px')).toBeDefined();
+
+    // Click on close button
+    fireEvent.click(screen.getByRole('button', { name: 'Close full screen' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+  });
+
+  it('closes fullscreen modal when Escape key is pressed', async () => {
+    selectItem(IMAGE_ITEM);
+    render(<PreviewPane />);
+
+    // Open fullscreen
+    fireEvent.click(screen.getByLabelText('View full screen'));
+    expect(screen.getByRole('dialog')).toBeDefined();
+
+    // Press Escape
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+  });
+
+  it('copies image from fullscreen modal toolbar', async () => {
+    selectItem(IMAGE_ITEM);
+    render(<PreviewPane />);
+
+    fireEvent.click(screen.getByLabelText('View full screen'));
+    const dialog = screen.getByRole('dialog');
+    const copyBtn = dialog.querySelector('button[aria-label*="Copy"]');
+    expect(copyBtn).not.toBeNull();
+    fireEvent.click(copyBtn!);
+    await waitFor(() => {
+      expect(apiMock.copyToClipboard).toHaveBeenCalledWith(IMAGE_ITEM.id, 'original');
+    });
+  });
+});

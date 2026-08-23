@@ -881,17 +881,23 @@ kbd {
 .preview-image-wrap {
   display: flex;
   flex-direction: column;
-  padding: 20px;
+  height: 100%;
+  min-height: 0;
+  padding: 16px 20px;
   gap: 10px;
+  box-sizing: border-box;
 }
 
 .image-canvas {
-  display: grid;
-  place-items: center;
-  flex: 1;
-  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
   padding: 14px;
   overflow: hidden;
+  position: relative;
   background-color: var(--checker-base);
   background-image:
     linear-gradient(45deg, var(--checker-tile) 25%, transparent 25%),
@@ -902,23 +908,166 @@ kbd {
   background-position: 0 0, 0 10px, 10px -10px, -10px 0;
   border: 1px solid var(--border);
   border-radius: 10px;
+  cursor: zoom-in;
+  user-select: none;
+  transition: border-color var(--dur-hover) var(--ease-standard);
+}
+
+.image-canvas:hover {
+  border-color: var(--accent);
 }
 
 .preview-image {
   display: block;
   max-width: 100%;
   max-height: 100%;
+  width: auto;
+  height: auto;
   object-fit: contain;
   border-radius: 5px;
   box-shadow: var(--shadow-preview);
+  transition: transform var(--dur-hover) var(--ease-standard);
+}
+
+.image-canvas:hover .preview-image {
+  transform: scale(1.01);
 }
 
 .preview-caption {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 7px;
   color: var(--text-muted);
   font-size: 12px;
+  flex-shrink: 0;
+}
+
+.preview-caption-info {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.preview-caption-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Fullscreen Image Lightbox Modal */
+.image-fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(12, 14, 18, 0.94);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+}
+
+.image-fullscreen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  z-index: 2;
+  gap: 16px;
+}
+
+.image-fullscreen-title-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.image-fullscreen-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-fullscreen-badge {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.image-fullscreen-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.image-fullscreen-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: auto;
+  position: relative;
+}
+
+.image-fullscreen-img-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  max-height: 100%;
+  background-color: var(--checker-base);
+  background-image:
+    linear-gradient(45deg, var(--checker-tile) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--checker-tile) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--checker-tile) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--checker-tile) 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  border-radius: 8px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+  padding: 6px;
+}
+
+.image-fullscreen-img {
+  max-width: calc(100vw - 80px);
+  max-height: calc(100vh - 140px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 4px;
+  display: block;
+}
+
+.image-fullscreen-close-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--dur-hover) var(--ease-standard);
+}
+
+.image-fullscreen-close-btn:hover {
+  background: var(--hover);
+  border-color: var(--text-muted);
 }
 
 .file-preview {
