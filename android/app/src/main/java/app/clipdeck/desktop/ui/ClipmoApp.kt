@@ -521,7 +521,7 @@ private fun DevicesScreen(
                 Spacer(Modifier.height(space.sm))
                 Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
                     ClipmoButton(
-                        if (state.pairingModeActive) "Pairing…" else "Add another device",
+                        if (state.pairingModeActive) "Pairing…" else "Add",
                         if (state.pairingModeActive) ClipmoButtonStyle.SECONDARY else ClipmoButtonStyle.PRIMARY,
                         Modifier.weight(1f),
                         icon = ClipmoIconKind.PLUS,
