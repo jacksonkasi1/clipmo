@@ -1177,7 +1177,10 @@ fn import_image(
                 height: image.height,
             }),
             size_bytes: image_bytes.len().min(i64::MAX as usize) as i64,
-            content_hash: clip.content_hash.clone(),
+            // Derive the binary hash from the bytes we actually received.
+            // This protects history deduplication from a buggy peer sending
+            // the same generic content hash for every screenshot.
+            content_hash: crate::clipboard::hash_image(image_bytes),
             device: Some(device.clone()),
             sync_status: SyncStatus::Synced,
             ..Default::default()

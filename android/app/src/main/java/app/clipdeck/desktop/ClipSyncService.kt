@@ -39,6 +39,19 @@ const val MAX_HEADER_BYTES = 256 * 1024
 // routinely larger than 512 KiB, so that old cap caused image clips to stay
 // local even though text sync continued to work.
 const val MAX_IMAGE_BYTES = 8L * 1024 * 1024
+
+internal fun contentHashForSync(kind: ItemKind, content: String, idHash: String): String {
+	// Image/file rows use a generic label (for example, every screenshot is
+	// stored as "Image"). Hashing that label makes unrelated binary items
+	// collide in the desktop database, so key binary history by its stable ID.
+	val hashInput = when (kind) {
+		ItemKind.image, ItemKind.files -> "$kind|$idHash"
+		else -> content
+	}
+	val bytes = MessageDigest.getInstance("SHA-256")
+		.digest(hashInput.toByteArray(Charsets.UTF_8))
+	return bytes.take(16).joinToString("") { "%02x".format(it) }
+}
 const val HARD_MAX_MESSAGE_BYTES = 128L * 1024 * 1024
 const val LIVE_CLIP_MAX_AGE_MS = 30_000L
 const val LIVE_CLIP_FUTURE_TOLERANCE_MS = 5_000L
@@ -337,12 +350,6 @@ class ClipSyncService : Service() {
 		db.close()
 	}
 
-	private fun contentHash(content: String): String {
-		val md = MessageDigest.getInstance("SHA-256")
-		val bytes = md.digest(content.toByteArray(Charsets.UTF_8))
-		return bytes.take(16).joinToString("") { "%02x".format(it) }
-	}
-
 	private fun generateIdHash(content: String, timestamp: Long): String {
 		val input = "$content|$timestamp"
 		val md = MessageDigest.getInstance("SHA-256")
@@ -474,7 +481,7 @@ class ClipSyncService : Service() {
 				}
 				db.update("items", values, "id=?", arrayOf(itemId.toString()))
 			}
-			val contentHash = contentHash(content)
+			val contentHash = contentHashForSync(kind, content, idHash)
 			val version = SyncVersion(
 				device_id = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
 					.getString("device_id", "local")!!,
