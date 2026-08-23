@@ -91,6 +91,7 @@ export const api = {
   setAlwaysOnTop: (value: boolean) => invoke<boolean>('set_always_on_top', { value }),
   setPreviewVisible: (value: boolean) => invoke<boolean>('set_preview_visible', { value }),
   syncState: () => invoke<SyncState>('sync_state'),
+  syncHistoryNow: () => invoke<number>('sync_history_now'),
   regeneratePairingCode: () => invoke<Settings>('regenerate_pairing_code'),
   quitApp: () => invoke<void>('quit_app'),
   listInstalledApps: (refresh = false) => invoke<ApplicationInfo[]>('list_installed_apps', { refresh }),

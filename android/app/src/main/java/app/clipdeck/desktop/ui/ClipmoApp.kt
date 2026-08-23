@@ -164,8 +164,8 @@ fun ClipmoApp(
     onThemeChanged: (ClipmoThemeMode) -> Unit,
     onForgetDevice: (TrustedDeviceRecord) -> Unit,
     onStartPairing: () -> Unit,
+    onSyncNow: () -> Unit = {},
     onRefresh: () -> Unit = {},
-    onSyncNow: () -> Unit = onRefresh,
 ) {
     ClipmoTheme(state.themeMode) {
         var screen by rememberSaveable { mutableStateOf(ClipmoScreen.HISTORY) }

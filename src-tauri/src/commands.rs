@@ -757,6 +757,13 @@ pub async fn sync_state(state: tauri::State<'_, AppState>) -> Result<SyncState> 
 }
 
 #[tauri::command]
+pub async fn sync_history_now(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<usize> {
+    let queued = state.sync.sync_history_now();
+    let _ = app.emit("sync-peers-updated", ());
+    Ok(queued)
+}
+
+#[tauri::command]
 pub async fn regenerate_pairing_code(
     app: AppHandle,
     state: tauri::State<'_, AppState>,

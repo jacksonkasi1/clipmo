@@ -85,6 +85,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [storageBusy, setStorageBusy] = useState(false);
+  const [syncNowBusy, setSyncNowBusy] = useState(false);
   const [launchAtLoginBusy, setLaunchAtLoginBusy] = useState(false);
   const [ignoredAppsBusy, setIgnoredAppsBusy] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -170,6 +171,19 @@ export default function Settings() {
       setMutationError(mutationErrorMessage('Storage location could not be changed.', error));
     } finally {
       setStorageBusy(false);
+    }
+  };
+
+  const syncHistoryNow = async () => {
+    setMutationError(null);
+    setSyncNowBusy(true);
+    try {
+      await api.syncHistoryNow();
+      setSaved(true);
+    } catch (error) {
+      setMutationError(mutationErrorMessage('Sync could not be started.', error));
+    } finally {
+      setSyncNowBusy(false);
     }
   };
 
@@ -448,6 +462,11 @@ export default function Settings() {
             </button>
           </Row>
           <SyncPreferencesPanel />
+          <div className="history-actions">
+            <button type="button" className="secondary-button" disabled={!local.syncEnabled || syncNowBusy} onClick={() => void syncHistoryNow()}>
+              <RefreshCw size={16} aria-hidden /> {syncNowBusy ? 'Syncing…' : 'Sync now'}
+            </button>
+          </div>
           <div className="peer-list" aria-label="Discovered sync devices">
             {(sync?.peers.length ?? 0) === 0 ? (
               <span className="peer-empty">No paired devices discovered yet</span>

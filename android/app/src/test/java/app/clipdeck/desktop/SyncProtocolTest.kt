@@ -141,4 +141,21 @@ class SyncProtocolTest {
         )
         assertEquals("tombstone", tombstone["type"].asText())
     }
+
+    @Test
+    fun screenshotsWithTheSameLabelHaveDistinctSyncHashes() {
+        val first = contentHashForSync(ItemKind.image, "Image", "screenshot-one")
+        val second = contentHashForSync(ItemKind.image, "Image", "screenshot-two")
+
+        assertFalse(first == second)
+        assertEquals(first, contentHashForSync(ItemKind.image, "Image", "screenshot-one"))
+    }
+
+    @Test
+    fun textSyncHashStillDeduplicatesMatchingContent() {
+        assertEquals(
+            contentHashForSync(ItemKind.text, "same text", "first-id"),
+            contentHashForSync(ItemKind.text, "same text", "second-id"),
+        )
+    }
 }
