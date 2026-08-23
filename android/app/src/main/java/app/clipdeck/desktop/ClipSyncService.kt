@@ -35,7 +35,23 @@ const val DISCOVERY_TICK_MS = 3000L
 const val IO_TIMEOUT_MS = 20_000L
 const val CHUNK_SIZE = 64 * 1024
 const val MAX_HEADER_BYTES = 256 * 1024
-const val MAX_IMAGE_BYTES = 512 * 1024L
+// Keep this aligned with the Windows receiver. Modern phone screenshots are
+// routinely larger than 512 KiB, so that old cap caused image clips to stay
+// local even though text sync continued to work.
+const val MAX_IMAGE_BYTES = 8L * 1024 * 1024
+
+internal fun contentHashForSync(kind: ItemKind, content: String, idHash: String): String {
+	// Image/file rows use a generic label (for example, every screenshot is
+	// stored as "Image"). Hashing that label makes unrelated binary items
+	// collide in the desktop database, so key binary history by its stable ID.
+	val hashInput = when (kind) {
+		ItemKind.image, ItemKind.files -> "$kind|$idHash"
+		else -> content
+	}
+	val bytes = MessageDigest.getInstance("SHA-256")
+		.digest(hashInput.toByteArray(Charsets.UTF_8))
+	return bytes.take(16).joinToString("") { "%02x".format(it) }
+}
 const val HARD_MAX_MESSAGE_BYTES = 128L * 1024 * 1024
 const val LIVE_CLIP_MAX_AGE_MS = 30_000L
 const val LIVE_CLIP_FUTURE_TOLERANCE_MS = 5_000L
@@ -82,6 +98,8 @@ data class SyncEnvelope(
 	@JsonProperty("tcpPort") val tcp_port: Int,
 	val body: SyncBody
 )
+
+data class SyncAck(val ok: Boolean, val error: String? = null)
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes(
@@ -164,7 +182,9 @@ class ClipSyncService : Service() {
 	companion object {
 		const val CHANNEL_ID = "clipmo_sync_channel"
 		const val NOTIF_ID = 2
+		const val ACTION_SYNC_NOW = "app.clipdeck.desktop.action.SYNC_NOW"
 		const val CONNECT_TIMEOUT_MS = 900L
+		const val PROBE_TICK_MS = 10_000L
 	}
 
 	private val binder = LocalBinder()
@@ -234,7 +254,10 @@ class ClipSyncService : Service() {
 			.build()
 		startForeground(NOTIF_ID, notif)
 
-		if (running) return START_STICKY
+		if (running) {
+			if (intent?.action == ACTION_SYNC_NOW) serviceScope.launch { enqueueHistoryBackfill() }
+			return START_STICKY
+		}
 		val preferences = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
 		if (!preferences.getBoolean("sync_enabled", false)) {
 			stopSelf()
@@ -257,6 +280,8 @@ class ClipSyncService : Service() {
 			launch { listenForPeers(pairingCode, deviceId) }
 			launch { drainSendQueue(deviceId, deviceName, pairingCode) }
 			launch { watchLocalChanges(deviceId) }
+			launch { probePeers() }
+			if (intent?.action == ACTION_SYNC_NOW) enqueueHistoryBackfill()
 		}
 
 		Log.i("ClipSyncService", "started on port=$listenPort deviceId=$deviceId")
@@ -325,12 +350,6 @@ class ClipSyncService : Service() {
 			)
 		""".trimIndent())
 		db.close()
-	}
-
-	private fun contentHash(content: String): String {
-		val md = MessageDigest.getInstance("SHA-256")
-		val bytes = md.digest(content.toByteArray(Charsets.UTF_8))
-		return bytes.take(16).joinToString("") { "%02x".format(it) }
 	}
 
 	private fun generateIdHash(content: String, timestamp: Long): String {
@@ -424,22 +443,31 @@ class ClipSyncService : Service() {
 				Socket().use { sock ->
 					sock.connect(addr, CONNECT_TIMEOUT_MS.toInt())
 					sock.soTimeout = IO_TIMEOUT_MS.toInt()
-					DataOutputStream(BufferedOutputStream(sock.getOutputStream())).use { dos ->
-						dos.writeInt(headerBytes.size)
-						dos.write(headerBytes)
-						val buffer = ByteArray(CHUNK_SIZE)
-						blobs.forEach { file ->
-							file.inputStream().buffered().use { input ->
-								while (true) {
-									val count = input.read(buffer)
-									if (count < 0) break
-									dos.write(buffer, 0, count)
-								}
-							}
+				val dos = DataOutputStream(BufferedOutputStream(sock.getOutputStream()))
+				dos.writeInt(headerBytes.size)
+				dos.write(headerBytes)
+				val buffer = ByteArray(CHUNK_SIZE)
+				blobs.forEach { file ->
+					file.inputStream().buffered().use { input ->
+						while (true) {
+							val count = input.read(buffer)
+							if (count < 0) break
+							dos.write(buffer, 0, count)
 						}
-						dos.flush()
 					}
 				}
+				dos.flush()
+				val input = DataInputStream(BufferedInputStream(sock.getInputStream()))
+				val ackSize = input.readInt()
+				if (ackSize <= 0 || ackSize > MAX_HEADER_BYTES) return@withContext false
+				val ackBytes = ByteArray(ackSize)
+				input.readFully(ackBytes)
+				val ack = mapper.readValue(ackBytes, SyncAck::class.java)
+				if (!ack.ok) {
+					Log.w("ClipSyncService", "Windows rejected sync item: ${ack.error ?: "unknown reason"}")
+					return@withContext false
+				}
+			}
 				true
 			} catch (e: Exception) {
 				Log.d("ClipSyncService", "send failed to $addr: ${e.message}")
@@ -464,7 +492,7 @@ class ClipSyncService : Service() {
 				}
 				db.update("items", values, "id=?", arrayOf(itemId.toString()))
 			}
-			val contentHash = contentHash(content)
+			val contentHash = contentHashForSync(kind, content, idHash)
 			val version = SyncVersion(
 				device_id = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
 					.getString("device_id", "local")!!,
@@ -527,6 +555,7 @@ class ClipSyncService : Service() {
 				if (peer.address.address.isAnyLocalAddress) continue
 				if (sendToPeer(peer.address, envelope, job.blobs)) {
 					targets.remove(peerId)
+					touchDeviceSeen(peerId)
 					Log.i(
 						"ClipSyncService",
 						"sent ${job.body.javaClass.simpleName} version=${job.body.version().lamport} to ${peer.device.platform}",
@@ -572,6 +601,25 @@ class ClipSyncService : Service() {
 				Log.w("ClipSyncService", "local sync watcher iteration failed", error)
 			}
 		}
+	}
+
+	private suspend fun enqueueHistoryBackfill() {
+		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
+		val items = mutableListOf<Pair<Long, ItemKind>>()
+		db.query("items", arrayOf("id", "type"), "sync_status=?", arrayOf("local"), null, null, "id ASC", "500").use { cursor ->
+			while (cursor.moveToNext()) {
+				val kind = when (cursor.getString(cursor.getColumnIndexOrThrow("type"))) {
+					"URL" -> ItemKind.link
+					"IMAGE" -> ItemKind.image
+					"FILE" -> ItemKind.files
+					else -> ItemKind.text
+				}
+				items += cursor.getLong(cursor.getColumnIndexOrThrow("id")) to kind
+			}
+		}
+		db.close()
+		items.forEach { (id, kind) -> enqueueItem(id, kind, live = false) }
+		Log.i("ClipSyncService", "manual sync queued ${items.size} local items")
 	}
 
 	private fun loadTrustedPeers() {
@@ -1079,8 +1127,36 @@ class ClipSyncService : Service() {
 	private fun validIdHash(value: String): Boolean =
 		value.length in 16..128 && value.all { it.isLetterOrDigit() || it == '-' || it == '_' }
 
-	private fun rememberTrustedDevice(device: DeviceIdentity, address: InetSocketAddress) {
-		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
+	// "Online" used to depend solely on inbound traffic (UDP broadcasts or TCP
+	// frames), so a reachable-but-quiet peer — Windows NICs often ship
+	// broadcasts the phone never receives — showed as offline. Probing the
+	// same TCP channel sync uses makes the badge mean "reachable right now".
+	private suspend fun probePeers() = withContext(Dispatchers.IO) {
+		val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+		while (running) {
+			delay(PROBE_TICK_MS)
+			if (!prefs.getBoolean("sync_enabled", false)) continue
+			peers.values.toList().forEach { peer ->
+				val reachable = runCatching {
+					Socket().use { sock -> sock.connect(peer.address, CONNECT_TIMEOUT_MS.toInt()) }
+				}.isSuccess
+				if (reachable) touchDeviceSeen(peer.device.id)
+			}
+		}
+	}
+
+	private fun touchDeviceSeen(deviceId: String) {
+		runCatching {
+			val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
+			db.execSQL(
+				"UPDATE trusted_devices SET last_seen_ms=? WHERE device_id=? AND revoked=0",
+				arrayOf(System.currentTimeMillis(), deviceId),
+			)
+			db.close()
+		}
+	}
+
+	private fun rememberTrustedDevice(device: DeviceIdentity, address: InetSocketAddress) {		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
 		val now = System.currentTimeMillis()
 		db.execSQL(
 			"""

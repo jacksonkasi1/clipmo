@@ -26,6 +26,7 @@ data class ClipmoColors(
     val border: Color,
     val accent: Color,
     val accentMuted: Color,
+    val onAccent: Color,
     val danger: Color,
     val scrim: Color,
 )
@@ -43,31 +44,33 @@ data class ClipmoTypography(
 @Immutable
 data class ClipmoSpacing(
     val xxs: Dp = 4.dp,
-    val xs: Dp = 6.dp,
-    val sm: Dp = 8.dp,
-    val md: Dp = 12.dp,
-    val lg: Dp = 16.dp,
-    val xl: Dp = 20.dp,
-    val xxl: Dp = 28.dp,
+    val xs: Dp = 8.dp,
+    val sm: Dp = 12.dp,
+    val md: Dp = 16.dp,
+    val lg: Dp = 20.dp,
+    val xl: Dp = 24.dp,
+    val xxl: Dp = 32.dp,
 )
 
 @Immutable
 data class ClipmoShapes(
     val pill: Dp = 50.dp,
-    val search: Dp = 8.dp,
-    val card: Dp = 10.dp,
-    val panel: Dp = 12.dp,
+    val search: Dp = 14.dp,
+    val card: Dp = 16.dp,
+    val panel: Dp = 20.dp,
+    val sheet: Dp = 28.dp,
 )
 
 @Immutable
 data class ClipmoDimensions(
-    val topBarHeight: Dp = 48.dp,
-    val searchHeight: Dp = 40.dp,
-    val chipHeight: Dp = 28.dp,
-    val clipMinHeight: Dp = 62.dp,
-    val thumbnail: Dp = 38.dp,
-    val icon: Dp = 18.dp,
-    val touch: Dp = 42.dp,
+    val topBarHeight: Dp = 56.dp,
+    val searchHeight: Dp = 48.dp,
+    val chipHeight: Dp = 40.dp,
+    val actionHeight: Dp = 48.dp,
+    val clipMinHeight: Dp = 72.dp,
+    val thumbnail: Dp = 44.dp,
+    val icon: Dp = 20.dp,
+    val touch: Dp = 48.dp,
 )
 
 val LocalClipmoColors = staticCompositionLocalOf { darkColors }
@@ -101,41 +104,47 @@ fun ClipmoTheme(mode: ClipmoThemeMode, content: @Composable () -> Unit) {
     )
 }
 
+// Logo-blue accent (#1A73E8 family) on cool neutral grays; accent stays the
+// ~10% brand color while surfaces and text carry the 60/30/10 balance.
 private val darkColors = ClipmoColors(
-    background = Color(0xFF050505),
-    surface = Color(0xFF171719),
-    surfaceRaised = Color(0xFF242427),
-    surfacePressed = Color(0xFF303034),
-    textPrimary = Color(0xFFF5F5F2),
-    textSecondary = Color(0xFFC5C5C0),
-    textMuted = Color(0xFF88888B),
-    border = Color(0xFF2B2B2E),
-    accent = Color(0xFF78F13D),
-    accentMuted = Color(0xFF244515),
+    background = Color(0xFF05070B),
+    surface = Color(0xFF161A21),
+    surfaceRaised = Color(0xFF222834),
+    surfacePressed = Color(0xFF2F3644),
+    textPrimary = Color(0xFFF2F4F8),
+    textSecondary = Color(0xFFBEC4D0),
+    textMuted = Color(0xFF858D9E),
+    border = Color(0xFF2A313D),
+    accent = Color(0xFF5CA9FF),
+    accentMuted = Color(0xFF17263F),
+    onAccent = Color(0xFF0A1B33),
     danger = Color(0xFFFF6B68),
     scrim = Color(0xCC000000),
 )
 
 private val lightColors = ClipmoColors(
-    background = Color(0xFFF5F6F2),
+    background = Color(0xFFF4F6FA),
     surface = Color(0xFFFFFFFF),
-    surfaceRaised = Color(0xFFE9EAE5),
-    surfacePressed = Color(0xFFDEDFDA),
-    textPrimary = Color(0xFF11120F),
-    textSecondary = Color(0xFF454740),
-    textMuted = Color(0xFF73766E),
-    border = Color(0xFFD9DBD4),
-    accent = Color(0xFF49C514),
-    accentMuted = Color(0xFFDDF7D0),
-    danger = Color(0xFFC92F2B),
+    surfaceRaised = Color(0xFFEDEFF5),
+    surfacePressed = Color(0xFFE1E5EE),
+    textPrimary = Color(0xFF10141C),
+    textSecondary = Color(0xFF3E4554),
+    textMuted = Color(0xFF6F7687),
+    border = Color(0xFFDCE0EA),
+    accent = Color(0xFF1E7BF0),
+    accentMuted = Color(0xFFDEEAFC),
+    onAccent = Color(0xFFFFFFFF),
+    danger = Color(0xFFD23730),
     scrim = Color(0x66000000),
 )
 
+// Four sizes (20/14/12/10), two weights (SemiBold/Normal); hierarchy comes
+// from size, weight, and text color opacity — not extra weights.
 private val typography = ClipmoTypography(
-    brand = TextStyle(fontFamily = FontFamily.Serif, fontSize = 19.sp, fontWeight = FontWeight.Medium),
+    brand = TextStyle(fontFamily = FontFamily.Serif, fontSize = 20.sp, fontWeight = FontWeight.SemiBold),
     title = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 20.sp, fontWeight = FontWeight.SemiBold),
-    section = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+    section = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
     body = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 14.sp, fontWeight = FontWeight.Normal),
-    label = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 12.sp, fontWeight = FontWeight.Medium),
+    label = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 12.sp, fontWeight = FontWeight.Normal),
     metadata = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 10.sp, fontWeight = FontWeight.Normal),
 )

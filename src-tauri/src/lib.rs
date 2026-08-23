@@ -139,6 +139,7 @@ pub fn run() {
             commands::set_always_on_top,
             commands::set_preview_visible,
             commands::sync_state,
+            commands::sync_history_now,
             sync::load_sync_preferences,
             sync::save_sync_preferences,
             commands::regenerate_pairing_code,

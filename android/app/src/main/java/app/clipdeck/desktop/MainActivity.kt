@@ -135,6 +135,7 @@ class MainActivity : ComponentActivity() {
                 onThemeChanged = ::handleThemeChanged,
                 onForgetDevice = ::forgetDevice,
                 onStartPairing = ::startPairing,
+                onSyncNow = ::syncNow,
                 onRefresh = ::refreshSync,
             )
         }
@@ -235,6 +236,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun syncNow() {
+        if (!syncEnabled || pairingCode.isBlank()) {
+            Toast.makeText(this, "Enable LAN sync and enter a pairing code first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startForegroundService(
+            Intent(this, ClipSyncService::class.java).setAction(ClipSyncService.ACTION_SYNC_NOW),
+        )
+        Toast.makeText(this, "Syncing recent local history", Toast.LENGTH_SHORT).show()
+        refresh()
+    }
+
     private fun startPairing() {
         if (pairingCode.isBlank()) {
             Toast.makeText(this, "Enter a pairing code first", Toast.LENGTH_SHORT).show()
@@ -256,7 +269,7 @@ class MainActivity : ComponentActivity() {
         } else {
             clipboard.setPrimaryClip(ClipData.newPlainText("Clipmo", clip.content))
         }
-        Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show()
+        // Copy confirmation is the in-app "Copied" pill shown by the UI layer.
     }
 
     private fun captureClipboardWhileForeground(): Boolean {

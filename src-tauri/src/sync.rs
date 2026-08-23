@@ -35,7 +35,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_millis(900);
 const IO_TIMEOUT: Duration = Duration::from_secs(20);
 const CHUNK_SIZE: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 256 * 1024;
-const MAX_IMAGE_BYTES: u64 = 512 * 1024;
+// Keep this aligned with Android. A 512 KiB cap excludes most modern phone
+// screenshots, leaving them local while text continues to sync.
+const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 const HARD_MAX_MESSAGE_BYTES: u64 = 128 * 1024 * 1024;
 const HISTORY_BACKFILL_LIMIT: u32 = 500;
 
@@ -284,9 +286,13 @@ impl SyncService {
         }
     }
 
-    fn enqueue_history_backfill(&self) {
+    pub fn sync_history_now(&self) -> usize {
+        self.enqueue_history_backfill()
+    }
+
+    fn enqueue_history_backfill(&self) -> usize {
         let Some(db) = &self.db else {
-            return;
+            return 0;
         };
         let query = ListQuery {
             limit: Some(HISTORY_BACKFILL_LIMIT),
@@ -296,12 +302,14 @@ impl SyncService {
             Ok(items) => items,
             Err(error) => {
                 log::warn!("could not prepare sync history backfill: {error}");
-                return;
+                return 0;
             }
         };
+        let item_count = items.len();
         for item in items.into_iter().rev() {
             self.enqueue_item_with_delivery(&item, false);
         }
+        item_count
     }
 
     fn defer_file_item(&self, id: i64, live: bool) {
@@ -892,6 +900,13 @@ fn handle_incoming(
     service: SyncService,
     app: AppHandle,
 ) {
+    // The listening socket is non-blocking so its accept loop can poll for
+    // shutdown. Windows propagates that mode to accepted sockets, which made
+    // multi-packet image reads fail with WSAEWOULDBLOCK (10035). Each client
+    // has its own worker thread, so payload reads must be blocking.
+    if stream.set_nonblocking(false).is_err() {
+        return;
+    }
     let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
     let envelope = match read_envelope(&mut stream) {
@@ -905,14 +920,25 @@ fn handle_incoming(
         return;
     };
     let current = settings.read().clone();
-    if !current.sync_enabled
-        || envelope.protocol != PROTOCOL
-        || envelope.pairing_code != current.sync_pairing_code
-        || envelope.device.id == current.sync_device_id
-        || envelope.tcp_port == 0
-        || envelope.body.version().device_id != envelope.device.id
-        || !valid_id_hash(envelope.body.id_hash())
-    {
+    let rejection = if !current.sync_enabled {
+        Some("sync is disabled")
+    } else if envelope.protocol != PROTOCOL {
+        Some("protocol mismatch")
+    } else if envelope.pairing_code != current.sync_pairing_code {
+        Some("pairing code mismatch")
+    } else if envelope.device.id == current.sync_device_id {
+        Some("sender matches this device")
+    } else if envelope.tcp_port == 0 {
+        Some("sender TCP port is missing")
+    } else if envelope.body.version().device_id != envelope.device.id {
+        Some("version device does not match sender")
+    } else if !valid_id_hash(envelope.body.id_hash()) {
+        Some("item ID is invalid")
+    } else {
+        None
+    };
+    if let Some(reason) = rejection {
+        let _ = write_sync_ack(&mut stream, false, Some(reason));
         return;
     }
 
@@ -926,9 +952,30 @@ fn handle_incoming(
         },
     );
 
-    if let Err(error) = apply_incoming(&mut stream, &service, &app, envelope) {
-        log::warn!("synced clipboard change could not be applied: {error}");
+    match apply_incoming(&mut stream, &service, &app, envelope) {
+        Ok(()) => {
+            let _ = write_sync_ack(&mut stream, true, None);
+        }
+        Err(error) => {
+            log::warn!("synced clipboard change could not be applied: {error}");
+            let _ = write_sync_ack(&mut stream, false, Some(&error.to_string()));
+        }
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncAck<'a> {
+    ok: bool,
+    error: Option<&'a str>,
+}
+
+fn write_sync_ack(stream: &mut TcpStream, ok: bool, error: Option<&str>) -> io::Result<()> {
+    let payload = serde_json::to_vec(&SyncAck { ok, error })
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+    stream.write_all(&(payload.len() as u32).to_be_bytes())?;
+    stream.write_all(&payload)?;
+    stream.flush()
 }
 
 fn read_envelope(stream: &mut TcpStream) -> io::Result<SyncEnvelope> {
@@ -979,9 +1026,7 @@ fn apply_incoming(
             }
             let total = image.image_size.saturating_add(image.thumb_size);
             if total == 0 || total > MAX_IMAGE_BYTES {
-                return Err(Error::Other(
-                    "synced image exceeded the 512 KiB limit".into(),
-                ));
+                return Err(Error::Other("synced image exceeded the 8 MiB limit".into()));
             }
             let image_bytes = read_blob(stream, image.image_size, MAX_IMAGE_BYTES)?;
             let thumb_bytes = read_blob(stream, image.thumb_size, MAX_IMAGE_BYTES)?;
@@ -1171,7 +1216,10 @@ fn import_image(
                 height: image.height,
             }),
             size_bytes: image_bytes.len().min(i64::MAX as usize) as i64,
-            content_hash: clip.content_hash.clone(),
+            // Derive the binary hash from the bytes we actually received.
+            // This protects history deduplication from a buggy peer sending
+            // the same generic content hash for every screenshot.
+            content_hash: crate::clipboard::hash_image(image_bytes),
             device: Some(device.clone()),
             sync_status: SyncStatus::Synced,
             ..Default::default()
@@ -1535,7 +1583,7 @@ fn build_upsert_job(
             let thumb_size = std::fs::metadata(&thumb_path).ok()?.len();
             let total = image_size.saturating_add(thumb_size);
             if total == 0 || total > MAX_IMAGE_BYTES {
-                log::info!("image stayed local because it exceeded the 512 KiB sync limit");
+                log::info!("image stayed local because it exceeded the 8 MiB sync limit");
                 return None;
             }
             let extension = image_path
