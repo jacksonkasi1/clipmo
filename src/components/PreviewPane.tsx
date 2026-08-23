@@ -17,6 +17,7 @@ import {
   Link2,
   LoaderCircle,
   Mail,
+  Maximize2,
   MoreVertical,
   PanelBottomClose,
   PanelBottomOpen,
@@ -356,27 +357,156 @@ function TextPreview({ item, onEdit }: { item: ClipItem; onEdit: () => void }) {
 }
 
 function ImagePreview({ item }: { item: ClipItem }) {
+  const [fullscreen, setFullscreen] = useState(false);
+
   if (!item.image) {
     return <PreviewFailure title={item.preview} message="The image preview is unavailable." />;
   }
+
+  const imageSrc = fileSrc(item.image.path);
+
   return (
-    <div className="preview-scroll preview-image-wrap">
-      <div className="image-canvas">
-        <SafeImage
-          src={fileSrc(item.image.path)}
-          alt={item.preview}
-          className="preview-image"
-          fallback={
-            <div className="preview-fallback">
-              <FileImage size={48} strokeWidth={1.4} aria-hidden />
-              <span>The image preview is unavailable.</span>
-            </div>
-          }
-        />
+    <>
+      <div className="preview-scroll preview-image-wrap">
+        <div
+          className="image-canvas"
+          role="button"
+          tabIndex={0}
+          title="Click to view full screen"
+          aria-label="Click image to view full screen"
+          onClick={() => setFullscreen(true)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              setFullscreen(true);
+            }
+          }}
+        >
+          <SafeImage
+            src={imageSrc}
+            alt={item.preview}
+            className="preview-image"
+            fallback={
+              <div className="preview-fallback">
+                <FileImage size={48} strokeWidth={1.4} aria-hidden />
+                <span>The image preview is unavailable.</span>
+              </div>
+            }
+          />
+        </div>
+        <div className="preview-caption">
+          <div className="preview-caption-info">
+            <FileImage size={16} aria-hidden />
+            <span>{item.image.width} × {item.image.height} pixels</span>
+          </div>
+          <div className="preview-caption-actions">
+            <IconButton
+              label="View full screen"
+              onClick={() => setFullscreen(true)}
+            >
+              <Maximize2 size={16} aria-hidden />
+            </IconButton>
+          </div>
+        </div>
       </div>
-      <div className="preview-caption">
-        <FileImage size={16} aria-hidden />
-        <span>{item.image.width} × {item.image.height} pixels</span>
+      {fullscreen && (
+        <FullscreenImageModal
+          item={item}
+          imageSrc={imageSrc}
+          onClose={() => setFullscreen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function FullscreenImageModal({
+  item,
+  imageSrc,
+  onClose,
+}: {
+  item: ClipItem;
+  imageSrc: string;
+  onClose: () => void;
+}) {
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [onClose]);
+
+  return (
+    <div
+      className="image-fullscreen-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Full screen preview: ${item.preview}`}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <header className="image-fullscreen-header">
+        <div className="image-fullscreen-title-area">
+          <FileImage size={18} aria-hidden />
+          <span className="image-fullscreen-title">{item.preview || 'Image Preview'}</span>
+          {item.image && (
+            <span className="image-fullscreen-badge">
+              {item.image.width} × {item.image.height} px
+            </span>
+          )}
+        </div>
+        <div className="image-fullscreen-actions">
+          <IconButton
+            label="Copy to clipboard"
+            onClick={() => void api.copyToClipboard(item.id, 'original')}
+          >
+            <Copy size={17} aria-hidden />
+          </IconButton>
+          {item.image?.path && (
+            <IconButton
+              label="Reveal in File Explorer"
+              onClick={() => void api.revealItem(item.image!.path)}
+            >
+              <FolderOpen size={17} aria-hidden />
+            </IconButton>
+          )}
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="image-fullscreen-close-btn"
+            onClick={onClose}
+            aria-label="Close full screen"
+            title="Close (Esc)"
+          >
+            <X size={17} aria-hidden />
+            <span>Close (Esc)</span>
+          </button>
+        </div>
+      </header>
+      <div
+        className="image-fullscreen-content"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <div className="image-fullscreen-img-wrap">
+          <img
+            src={imageSrc}
+            alt={item.preview}
+            className="image-fullscreen-img"
+            loading="eager"
+            decoding="async"
+          />
+        </div>
       </div>
     </div>
   );
