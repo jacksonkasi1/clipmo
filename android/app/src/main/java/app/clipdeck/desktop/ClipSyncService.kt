@@ -167,6 +167,7 @@ class ClipSyncService : Service() {
 	companion object {
 		const val CHANNEL_ID = "clipmo_sync_channel"
 		const val NOTIF_ID = 2
+		const val ACTION_SYNC_NOW = "app.clipdeck.desktop.action.SYNC_NOW"
 		const val CONNECT_TIMEOUT_MS = 900L
 		const val PROBE_TICK_MS = 10_000L
 	}
@@ -238,7 +239,10 @@ class ClipSyncService : Service() {
 			.build()
 		startForeground(NOTIF_ID, notif)
 
-		if (running) return START_STICKY
+		if (running) {
+			if (intent?.action == ACTION_SYNC_NOW) serviceScope.launch { enqueueHistoryBackfill() }
+			return START_STICKY
+		}
 		val preferences = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
 		if (!preferences.getBoolean("sync_enabled", false)) {
 			stopSelf()
@@ -262,6 +266,7 @@ class ClipSyncService : Service() {
 			launch { drainSendQueue(deviceId, deviceName, pairingCode) }
 			launch { watchLocalChanges(deviceId) }
 			launch { probePeers() }
+			if (intent?.action == ACTION_SYNC_NOW) enqueueHistoryBackfill()
 		}
 
 		Log.i("ClipSyncService", "started on port=$listenPort deviceId=$deviceId")
@@ -578,6 +583,25 @@ class ClipSyncService : Service() {
 				Log.w("ClipSyncService", "local sync watcher iteration failed", error)
 			}
 		}
+	}
+
+	private suspend fun enqueueHistoryBackfill() {
+		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
+		val items = mutableListOf<Pair<Long, ItemKind>>()
+		db.query("items", arrayOf("id", "type"), "sync_status=?", arrayOf("local"), null, null, "id ASC", "500").use { cursor ->
+			while (cursor.moveToNext()) {
+				val kind = when (cursor.getString(cursor.getColumnIndexOrThrow("type"))) {
+					"URL" -> ItemKind.link
+					"IMAGE" -> ItemKind.image
+					"FILE" -> ItemKind.files
+					else -> ItemKind.text
+				}
+				items += cursor.getLong(cursor.getColumnIndexOrThrow("id")) to kind
+			}
+		}
+		db.close()
+		items.forEach { (id, kind) -> enqueueItem(id, kind, live = false) }
+		Log.i("ClipSyncService", "manual sync queued ${items.size} local items")
 	}
 
 	private fun loadTrustedPeers() {

@@ -150,6 +150,7 @@ fun ClipmoApp(
     onThemeChanged: (ClipmoThemeMode) -> Unit,
     onForgetDevice: (TrustedDeviceRecord) -> Unit,
     onStartPairing: () -> Unit,
+    onSyncNow: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     ClipmoTheme(state.themeMode) {
@@ -182,7 +183,7 @@ fun ClipmoApp(
                     when (screen) {
                         ClipmoScreen.HISTORY -> HistoryScreen(state, copyWithFeedback, onFavorite, onDelete, onFavoriteMany, onDeleteMany, onAddToCollection, onEditClip, onRefresh)
                         ClipmoScreen.COLLECTIONS -> CollectionsScreen(state, copyWithFeedback, onFavorite, { pendingDelete = it }, onCreateCollection)
-                        ClipmoScreen.DEVICES -> DevicesScreen(state, onForgetDevice, onPairingCodeChanged, onSyncChanged, onStartPairing, onRefresh)
+                        ClipmoScreen.DEVICES -> DevicesScreen(state, onForgetDevice, onPairingCodeChanged, onSyncChanged, onStartPairing, onSyncNow, onRefresh)
                         ClipmoScreen.SETTINGS -> SettingsScreen(
                             state = state,
                             onMonitorChanged = onMonitorChanged,
@@ -506,6 +507,7 @@ private fun DevicesScreen(
     onPairingCodeChanged: (String) -> Unit,
     onSyncChanged: (Boolean) -> Unit,
     onStartPairing: () -> Unit,
+    onSyncNow: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     val colors = ClipmoTheme.colors
@@ -529,7 +531,7 @@ private fun DevicesScreen(
                         if (!state.syncEnabled) onSyncChanged(true)
                         onStartPairing()
                     }
-                    ClipmoButton("Refresh", ClipmoButtonStyle.GHOST, Modifier.weight(1f), icon = ClipmoIconKind.REFRESH, onClick = onRefresh)
+                    ClipmoButton("Sync now", ClipmoButtonStyle.GHOST, Modifier.weight(1f), icon = ClipmoIconKind.REFRESH, onClick = onSyncNow)
                 }
             }
             Spacer(Modifier.height(space.xl))

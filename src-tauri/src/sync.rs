@@ -286,9 +286,13 @@ impl SyncService {
         }
     }
 
-    fn enqueue_history_backfill(&self) {
+    pub fn sync_history_now(&self) -> usize {
+        self.enqueue_history_backfill()
+    }
+
+    fn enqueue_history_backfill(&self) -> usize {
         let Some(db) = &self.db else {
-            return;
+            return 0;
         };
         let query = ListQuery {
             limit: Some(HISTORY_BACKFILL_LIMIT),
@@ -298,12 +302,14 @@ impl SyncService {
             Ok(items) => items,
             Err(error) => {
                 log::warn!("could not prepare sync history backfill: {error}");
-                return;
+                return 0;
             }
         };
+        let item_count = items.len();
         for item in items.into_iter().rev() {
             self.enqueue_item_with_delivery(&item, false);
         }
+        item_count
     }
 
     fn defer_file_item(&self, id: i64, live: bool) {

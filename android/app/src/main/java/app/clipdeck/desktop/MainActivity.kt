@@ -135,6 +135,7 @@ class MainActivity : ComponentActivity() {
                 onThemeChanged = ::handleThemeChanged,
                 onForgetDevice = ::forgetDevice,
                 onStartPairing = ::startPairing,
+                onSyncNow = ::syncNow,
                 onRefresh = ::refreshSync,
             )
         }
@@ -233,6 +234,18 @@ class MainActivity : ComponentActivity() {
             // TCP listener (which previously caused the port to hop on refresh).
             startSyncService()
         }
+    }
+
+    private fun syncNow() {
+        if (!syncEnabled || pairingCode.isBlank()) {
+            Toast.makeText(this, "Enable LAN sync and enter a pairing code first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startForegroundService(
+            Intent(this, ClipSyncService::class.java).setAction(ClipSyncService.ACTION_SYNC_NOW),
+        )
+        Toast.makeText(this, "Syncing recent local history", Toast.LENGTH_SHORT).show()
+        refresh()
     }
 
     private fun startPairing() {
