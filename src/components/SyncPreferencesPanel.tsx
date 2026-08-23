@@ -131,7 +131,7 @@ export function SyncPreferencesPanel() {
           <SyncToggle
             icon={<FileImage size={17} aria-hidden />}
             title="Images"
-            detail="Sync image and thumbnail bytes up to 512 KB per clipboard item."
+            detail="Sync image and thumbnail bytes up to 8 MB per clipboard item."
             checked={preferences.syncImages}
             onChange={(value) => update('syncImages', value)}
           />

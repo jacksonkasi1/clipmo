@@ -101,7 +101,7 @@ Share sheet:
   with the expected toast, and `singleTask` + `onNewIntent` routing delivered
   shares to the already-running instance.
 - Shared images are stored under `files/local_assets/<hash>/` with
-  `thumb.jpg`, capped at 8 MiB locally; the 512 KiB LAN image budget is
+  `thumb.jpg`, capped at 8 MiB locally; the 8 MiB LAN image budget is
   unchanged, so oversized captures simply stay device-local.
 
 ## 2026-08-22 — Screenshot capture setting

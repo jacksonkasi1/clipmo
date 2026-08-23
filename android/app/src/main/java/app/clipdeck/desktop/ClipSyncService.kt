@@ -35,7 +35,10 @@ const val DISCOVERY_TICK_MS = 3000L
 const val IO_TIMEOUT_MS = 20_000L
 const val CHUNK_SIZE = 64 * 1024
 const val MAX_HEADER_BYTES = 256 * 1024
-const val MAX_IMAGE_BYTES = 512 * 1024L
+// Keep this aligned with the Windows receiver. Modern phone screenshots are
+// routinely larger than 512 KiB, so that old cap caused image clips to stay
+// local even though text sync continued to work.
+const val MAX_IMAGE_BYTES = 8L * 1024 * 1024
 const val HARD_MAX_MESSAGE_BYTES = 128L * 1024 * 1024
 const val LIVE_CLIP_MAX_AGE_MS = 30_000L
 const val LIVE_CLIP_FUTURE_TOLERANCE_MS = 5_000L

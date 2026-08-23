@@ -35,7 +35,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_millis(900);
 const IO_TIMEOUT: Duration = Duration::from_secs(20);
 const CHUNK_SIZE: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 256 * 1024;
-const MAX_IMAGE_BYTES: u64 = 512 * 1024;
+// Keep this aligned with Android. A 512 KiB cap excludes most modern phone
+// screenshots, leaving them local while text continues to sync.
+const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 const HARD_MAX_MESSAGE_BYTES: u64 = 128 * 1024 * 1024;
 const HISTORY_BACKFILL_LIMIT: u32 = 500;
 
@@ -980,7 +982,7 @@ fn apply_incoming(
             let total = image.image_size.saturating_add(image.thumb_size);
             if total == 0 || total > MAX_IMAGE_BYTES {
                 return Err(Error::Other(
-                    "synced image exceeded the 512 KiB limit".into(),
+                    "synced image exceeded the 8 MiB limit".into(),
                 ));
             }
             let image_bytes = read_blob(stream, image.image_size, MAX_IMAGE_BYTES)?;
@@ -1535,7 +1537,7 @@ fn build_upsert_job(
             let thumb_size = std::fs::metadata(&thumb_path).ok()?.len();
             let total = image_size.saturating_add(thumb_size);
             if total == 0 || total > MAX_IMAGE_BYTES {
-                log::info!("image stayed local because it exceeded the 512 KiB sync limit");
+                log::info!("image stayed local because it exceeded the 8 MiB sync limit");
                 return None;
             }
             let extension = image_path
