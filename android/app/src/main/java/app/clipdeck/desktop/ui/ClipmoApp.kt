@@ -183,7 +183,7 @@ fun ClipmoApp(
                     when (screen) {
                         ClipmoScreen.HISTORY -> HistoryScreen(state, copyWithFeedback, onFavorite, onDelete, onFavoriteMany, onDeleteMany, onAddToCollection, onEditClip, onRefresh)
                         ClipmoScreen.COLLECTIONS -> CollectionsScreen(state, copyWithFeedback, onFavorite, { pendingDelete = it }, onCreateCollection)
-                        ClipmoScreen.DEVICES -> DevicesScreen(state, onForgetDevice, onPairingCodeChanged, onSyncChanged, onStartPairing, onSyncNow, onRefresh)
+                        ClipmoScreen.DEVICES -> DevicesScreen(state, onForgetDevice, onPairingCodeChanged, onSyncChanged, onStartPairing, onSyncNow)
                         ClipmoScreen.SETTINGS -> SettingsScreen(
                             state = state,
                             onMonitorChanged = onMonitorChanged,
@@ -508,7 +508,6 @@ private fun DevicesScreen(
     onSyncChanged: (Boolean) -> Unit,
     onStartPairing: () -> Unit,
     onSyncNow: () -> Unit,
-    onRefresh: () -> Unit,
 ) {
     val colors = ClipmoTheme.colors
     val space = ClipmoTheme.spacing
