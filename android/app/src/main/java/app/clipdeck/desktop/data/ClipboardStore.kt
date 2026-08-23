@@ -178,6 +178,68 @@ class ClipboardStore(context: Context) :
         }
     }
 
+    fun removeFromCollection(ids: Set<Long>, name: String) {
+        val normalized = normalizeCollectionName(name) ?: return
+        if (ids.isEmpty()) return
+        writableDatabase.beginTransaction()
+        try {
+            ids.forEach { id ->
+                writableDatabase.rawQuery(
+                    "SELECT tags, id_hash FROM items WHERE id=?",
+                    arrayOf(id.toString()),
+                ).use { cursor ->
+                    if (!cursor.moveToFirst()) return@use
+                    val tags = cursor.getString(0).orEmpty().split(',')
+                        .map(String::trim).filter(String::isNotEmpty).toMutableList()
+                    if (tags.removeAll { it.equals(normalized, ignoreCase = true) }) {
+                        val idHash = cursor.getString(1) ?: return@use
+                        writableDatabase.update(
+                            "items",
+                            ContentValues().apply { put("tags", tags.distinct().joinToString(",")) },
+                            "id=?",
+                            arrayOf(id.toString()),
+                        )
+                        enqueueMutation(writableDatabase, "upsert", idHash, null)
+                    }
+                }
+            }
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+    }
+
+    fun deleteCollection(name: String): Boolean {
+        val normalized = normalizeCollectionName(name) ?: return false
+        writableDatabase.beginTransaction()
+        try {
+            writableDatabase.delete("collections", "name COLLATE NOCASE = ?", arrayOf(normalized))
+            writableDatabase.rawQuery("SELECT id, tags, id_hash FROM items WHERE tags LIKE ?", arrayOf("%$normalized%")).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    val tags = cursor.getString(1).orEmpty().split(',')
+                        .map(String::trim).filter(String::isNotEmpty).toMutableList()
+                    if (tags.removeAll { it.equals(normalized, ignoreCase = true) }) {
+                        val idHash = cursor.getString(2)
+                        writableDatabase.update(
+                            "items",
+                            ContentValues().apply { put("tags", tags.distinct().joinToString(",")) },
+                            "id=?",
+                            arrayOf(id.toString()),
+                        )
+                        if (idHash != null) {
+                            enqueueMutation(writableDatabase, "upsert", idHash, null)
+                        }
+                    }
+                }
+            }
+            writableDatabase.setTransactionSuccessful()
+            return true
+        } finally {
+            writableDatabase.endTransaction()
+        }
+    }
+
     fun editContent(id: Long, content: String): Boolean {
         val trimmed = content.trim()
         if (trimmed.isEmpty()) return false

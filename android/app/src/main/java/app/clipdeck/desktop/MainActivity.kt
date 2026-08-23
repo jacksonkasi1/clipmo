@@ -92,7 +92,13 @@ class MainActivity : ComponentActivity() {
                 ClipmoThemeMode.LIGHT -> false
                 ClipmoThemeMode.DARK -> true
             }
+            val bgColor = if (isDark) 0xFF121316.toInt() else 0xFFF8F9FA.toInt()
             SideEffect {
+                window.decorView.setBackgroundColor(bgColor)
+                @Suppress("DEPRECATION")
+                window.statusBarColor = android.graphics.Color.TRANSPARENT
+                @Suppress("DEPRECATION")
+                window.navigationBarColor = android.graphics.Color.TRANSPARENT
                 WindowCompat.getInsetsController(window, window.decorView).apply {
                     isAppearanceLightStatusBars = !isDark
                     isAppearanceLightNavigationBars = !isDark
@@ -119,7 +125,9 @@ class MainActivity : ComponentActivity() {
                 onFavoriteMany = { store.favorite(it); refresh() },
                 onDeleteMany = { store.delete(it); refresh() },
                 onCreateCollection = { store.createCollection(it); refresh() },
+                onDeleteCollection = { store.deleteCollection(it); refresh() },
                 onAddToCollection = { ids, collection -> store.addToCollection(ids, collection); refresh() },
+                onRemoveFromCollection = { ids, collection -> store.removeFromCollection(ids, collection); refresh() },
                 onEditClip = { id, content ->
                     if (store.editContent(id, content)) {
                         Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
