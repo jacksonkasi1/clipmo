@@ -900,6 +900,13 @@ fn handle_incoming(
     service: SyncService,
     app: AppHandle,
 ) {
+    // The listening socket is non-blocking so its accept loop can poll for
+    // shutdown. Windows propagates that mode to accepted sockets, which made
+    // multi-packet image reads fail with WSAEWOULDBLOCK (10035). Each client
+    // has its own worker thread, so payload reads must be blocking.
+    if stream.set_nonblocking(false).is_err() {
+        return;
+    }
     let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
     let envelope = match read_envelope(&mut stream) {
