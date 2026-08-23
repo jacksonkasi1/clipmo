@@ -90,13 +90,7 @@ fn wait_for_foreground(target: HWND) -> bool {
 }
 
 unsafe fn release_modifiers() {
-    let modifiers = [
-        VK_CONTROL,
-        VK_SHIFT,
-        VK_MENU,
-        VK_LWIN,
-        VK_RWIN,
-    ];
+    let modifiers = [VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN];
     for vk in modifiers {
         if is_key_down(vk) {
             send_key_event(vk, true);
