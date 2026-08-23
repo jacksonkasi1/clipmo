@@ -388,7 +388,7 @@ mod tests {
             device: crate::models::DeviceIdentity {
                 id: "local".into(),
                 name: "This device".into(),
-                platform: "windows".into(),
+                platform: crate::models::PlatformKind::Windows,
                 color: "#000".into(),
             },
             sync_status: crate::models::SyncStatus::Local,
