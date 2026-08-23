@@ -1,9 +1,11 @@
 // ** import lib
-import { CornerDownLeft, PanelLeftOpen, Trash2, X } from 'lucide-react';
+import { ClipboardCopy, Copy, CornerDownLeft, PanelLeftOpen, Trash2, X } from 'lucide-react';
 
 import { IconButton } from './IconButton';
 import { useStore } from '../lib/store';
 import { resolvedFilterShortcuts } from '../lib/filter-shortcuts';
+import { api } from '../lib/tauri';
+import { toast } from '../lib/toast';
 
 /** A compact keyboard-hint strip shared by the quick and full windows. */
 export function Footer() {
@@ -24,10 +26,26 @@ export function Footer() {
   if (selectedIds.length > 1) {
     return (
       <footer className={`history-footer is-${mode} selection-footer`} aria-label="Selection actions">
-        <span>{selectedIds.length} selected</span>
+        <span className="selection-count">{selectedIds.length} selected</span>
+        <span className="footer-hint footer-primary-action">
+          <kbd aria-label="Enter"><CornerDownLeft size={12} aria-hidden /></kbd>
+          <span>{primaryVerb} {selectedIds.length}</span>
+        </span>
         <div className="footer-spacer" />
-        <IconButton label="Clear selection" onClick={() => select(null)}>
-          <X size={15} aria-hidden />
+        <IconButton
+          label={`Copy ${selectedIds.length} items`}
+          onClick={() => {
+            void api.copyMultipleToClipboard(selectedIds, 'original');
+            toast(`Copied ${selectedIds.length} items to clipboard`, 'info');
+          }}
+        >
+          <Copy size={15} aria-hidden />
+        </IconButton>
+        <IconButton
+          label={`Paste ${selectedIds.length} items`}
+          onClick={() => void api.pasteMultipleActive(selectedIds, 'original')}
+        >
+          <ClipboardCopy size={15} aria-hidden />
         </IconButton>
         <IconButton
           label={`Delete ${selectedIds.length} selected items`}
@@ -35,6 +53,9 @@ export function Footer() {
           onClick={() => void deleteSelected()}
         >
           <Trash2 size={15} aria-hidden />
+        </IconButton>
+        <IconButton label="Clear selection" onClick={() => select(null)}>
+          <X size={15} aria-hidden />
         </IconButton>
       </footer>
     );

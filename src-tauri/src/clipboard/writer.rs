@@ -58,6 +58,64 @@ pub fn put_back_on_clipboard(
     }
 }
 
+pub fn put_multiple_back_on_clipboard(items: &[ClipItem], flavor: PasteFlavor) -> Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    if items.len() == 1 {
+        return put_back_on_clipboard(&items[0], flavor, None, None);
+    }
+
+    let _session = ClipboardSession::open()?;
+    unsafe {
+        windows::Win32::System::DataExchange::EmptyClipboard()
+            .map_err(|error| Error::Clipboard(format!("EmptyClipboard: {error}")))?;
+    }
+    write_registered_bytes(super::formats::CLIPDECK_INTERNAL_WRITE, b"1")?;
+
+    let all_files = items.iter().all(|item| item.kind == ItemKind::Files);
+    if all_files && flavor != PasteFlavor::PlainText {
+        let mut all_paths = Vec::new();
+        for item in items {
+            all_paths.extend(copy_file_paths(item));
+        }
+        if !all_paths.is_empty() {
+            write_file_list(&all_paths)?;
+            let plain = all_paths.join("\r\n");
+            let _ = write_unicode_text(&plain);
+            return Ok(());
+        }
+    }
+
+    let combined = build_combined_text_payload(items);
+    write_unicode_text(&combined)
+}
+
+pub fn build_combined_text_payload(items: &[ClipItem]) -> String {
+    let mut entries = Vec::new();
+    for item in items {
+        let text = match item.kind {
+            ItemKind::Files => copy_file_paths(item).join("\r\n"),
+            ItemKind::Image => item
+                .image
+                .as_ref()
+                .map(|img| img.path.clone())
+                .unwrap_or_else(|| item.content.clone()),
+            _ => {
+                if !item.content.is_empty() {
+                    item.content.clone()
+                } else {
+                    item.preview.clone()
+                }
+            }
+        };
+        if !text.is_empty() {
+            entries.push(text);
+        }
+    }
+    entries.join("\r\n")
+}
+
 struct ClipboardSession;
 
 impl ClipboardSession {
@@ -308,5 +366,43 @@ mod tests {
         let start = read_offset("StartFragment:");
         let end = read_offset("EndFragment:");
         assert_eq!(&payload.as_bytes()[start..end], fragment.as_bytes());
+    }
+
+    #[test]
+    fn combined_text_payload_joins_with_newlines() {
+        let item1 = ClipItem {
+            id: 1,
+            kind: ItemKind::Text,
+            preview: "First".into(),
+            content: "First content".into(),
+            has_html: false,
+            has_rtf: false,
+            image: None,
+            files: vec![],
+            file_assets: vec![],
+            size_bytes: 13,
+            tags: vec![],
+            source: None,
+            favorite: false,
+            copy_count: 1,
+            device: crate::models::DeviceIdentity {
+                id: "local".into(),
+                name: "This device".into(),
+                platform: crate::models::PlatformKind::Windows,
+                color: "#000".into(),
+            },
+            sync_status: crate::models::SyncStatus::Local,
+            first_copied_at: 1,
+            last_copied_at: 1,
+        };
+        let item2 = ClipItem {
+            id: 2,
+            kind: ItemKind::Link,
+            preview: "https://example.com".into(),
+            content: "https://example.com".into(),
+            ..item1.clone()
+        };
+        let combined = build_combined_text_payload(&[item1, item2]);
+        assert_eq!(combined, "First content\r\nhttps://example.com");
     }
 }

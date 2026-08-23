@@ -14,6 +14,7 @@ import {
   FileImage,
   Folder,
   FolderOpen,
+  Layers,
   Link2,
   LoaderCircle,
   Mail,
@@ -30,11 +31,13 @@ import {
 } from 'lucide-react';
 
 import { IconButton } from './IconButton';
+import { KindIcon } from './KindIcon';
 import { useStore } from '../lib/store';
 import { api, fileSrc } from '../lib/tauri';
 import { getShortcutLabel } from '../lib/platform';
 import { normaliseUrl, tryParseScheme } from '../lib/url';
 import { toast } from '../lib/toast';
+import { formatBytes } from '../lib/formatting';
 
 /** Loads an image and falls back to a thumbnail-friendly placeholder on error. */
 function SafeImage({
@@ -64,24 +67,28 @@ function SafeImage({
 
 export function PreviewPane() {
   const selectedId = useStore((s) => s.selectedId);
+  const selectedIds = useStore((s) => s.selectedIds);
   const items = useStore((s) => s.items);
   const editItem = useStore((s) => s.editItem);
   const item = items.find((entry) => entry.id === selectedId) ?? null;
+  const isMulti = selectedIds.length > 1;
   const [editing, setEditing] = useState(false);
 
   useEffect(() => setEditing(false), [selectedId]);
   useEffect(() => {
     const beginEditing = () => {
-      if (item && !['image', 'files'].includes(item.kind)) setEditing(true);
+      if (item && !['image', 'files'].includes(item.kind) && !isMulti) setEditing(true);
     };
     window.addEventListener('clipmo:edit-selected', beginEditing);
     return () => window.removeEventListener('clipmo:edit-selected', beginEditing);
-  }, [item?.id]);
+  }, [item?.id, isMulti]);
 
   return (
     <section className="preview-pane" aria-label="Preview">
       <PreviewToolbar item={item} onEdit={() => setEditing(true)} />
-      {item ? (
+      {isMulti ? (
+        <MultiItemPreview items={items} selectedIds={selectedIds} />
+      ) : item ? (
         editing ? (
           <EditItem
             item={item}
@@ -108,26 +115,44 @@ function PreviewToolbar({ item, onEdit }: { item: ClipItem | null; onEdit: () =>
   const deleteItem = useStore((s) => s.deleteItem);
   const deleteSelected = useStore((s) => s.deleteSelected);
   const selectedIds = useStore((s) => s.selectedIds);
-  const editable = item && ['text', 'link', 'email', 'color'].includes(item.kind);
-  const contextAction = describeContextAction(item);
-  const sourceName = item?.source?.name ?? null;
+  const isMulti = selectedIds.length > 1;
+  const editable = !isMulti && item && ['text', 'link', 'email', 'color'].includes(item.kind);
+  const contextAction = !isMulti ? describeContextAction(item) : null;
+  const sourceName = isMulti ? `${selectedIds.length} items` : (item?.source?.name ?? null);
+
+  const handleCopy = () => {
+    if (isMulti) {
+      void api.copyMultipleToClipboard(selectedIds, 'original');
+      toast(`Copied ${selectedIds.length} items to clipboard`, 'info');
+    } else if (item) {
+      void api.copyToClipboard(item.id, 'original');
+    }
+  };
+
+  const handlePaste = () => {
+    if (isMulti) {
+      void api.pasteMultipleActive(selectedIds, 'original');
+    } else if (item) {
+      void api.pasteActive(item.id, 'original');
+    }
+  };
 
   return (
     <div className="preview-toolbar" role="toolbar" aria-label="Item actions">
-      <SourceIndicator name={sourceName} />
+      <SourceIndicator name={sourceName} isMulti={isMulti} />
       <div className="toolbar-spacer" />
       <div className="toolbar-group toolbar-group--primary">
         <IconButton
-          label={`Copy to clipboard (${getShortcutLabel('copy')})`}
-          disabled={!item}
-          onClick={() => item && void api.copyToClipboard(item.id, 'original')}
+          label={isMulti ? `Copy ${selectedIds.length} items (${getShortcutLabel('copy')})` : `Copy to clipboard (${getShortcutLabel('copy')})`}
+          disabled={!item && !isMulti}
+          onClick={handleCopy}
         >
           <Copy size={18} aria-hidden />
         </IconButton>
         <IconButton
-          label={`Paste to active application (${getShortcutLabel('paste')})`}
-          disabled={!item}
-          onClick={() => item && void api.pasteActive(item.id, 'original')}
+          label={isMulti ? `Paste ${selectedIds.length} items (${getShortcutLabel('paste')})` : `Paste to active application (${getShortcutLabel('paste')})`}
+          disabled={!item && !isMulti}
+          onClick={handlePaste}
         >
           <ClipboardCopy size={18} aria-hidden />
         </IconButton>
@@ -150,7 +175,7 @@ function PreviewToolbar({ item, onEdit }: { item: ClipItem | null; onEdit: () =>
         <IconButton
           label={item?.favorite ? 'Remove from favorites' : 'Add to favorites'}
           active={item?.favorite ?? false}
-          disabled={!item}
+          disabled={!item || isMulti}
           onClick={() => item && void toggleFavorite(item.id)}
         >
           <Star size={19} fill={item?.favorite ? 'currentColor' : 'none'} aria-hidden />
@@ -161,10 +186,9 @@ function PreviewToolbar({ item, onEdit }: { item: ClipItem | null; onEdit: () =>
           setShowDetails={setShowDetails}
           selectedCount={selectedIds.length}
           onDelete={async () => {
-            if (!item) return;
-            if (selectedIds.length > 1) {
+            if (isMulti) {
               await deleteSelected();
-            } else {
+            } else if (item) {
               await deleteItem(item.id);
             }
           }}
@@ -175,7 +199,15 @@ function PreviewToolbar({ item, onEdit }: { item: ClipItem | null; onEdit: () =>
 }
 
 /** Small "From {AppName}" tag with a generic window glyph for the source attribution. */
-function SourceIndicator({ name }: { name: string | null }) {
+function SourceIndicator({ name, isMulti }: { name: string | null; isMulti?: boolean }) {
+  if (isMulti) {
+    return (
+      <span className="source-indicator" title={`${name} selected`}>
+        <Layers size={14} aria-hidden />
+        <span className="source-indicator-name">{name}</span>
+      </span>
+    );
+  }
   if (!name) {
     return (
       <span className="source-indicator" aria-hidden>
@@ -746,4 +778,57 @@ function hexToRgb(value: string): string {
     : match[1];
   const number = Number.parseInt(body, 16);
   return `rgb(${number >> 16}, ${(number >> 8) & 255}, ${number & 255})`;
+}
+
+function MultiItemPreview({ items, selectedIds }: { items: ClipItem[]; selectedIds: number[] }) {
+  const selectedItems = selectedIds
+    .map((id) => items.find((item) => item.id === id) || {
+      id,
+      kind: 'text' as const,
+      preview: `Item #${id}`,
+      content: `Item #${id}`,
+      hasHtml: false,
+      hasRtf: false,
+      image: null,
+      files: [],
+      fileAssets: [],
+      sizeBytes: 0,
+      tags: [],
+      source: null,
+      favorite: false,
+      copyCount: 1,
+      device: { id: 'local', name: 'This device', platform: 'windows' as const, color: '#000' },
+      syncStatus: 'local' as const,
+      firstCopiedAt: 0,
+      lastCopiedAt: 0,
+    });
+  const totalBytes = selectedItems.reduce((acc, item) => acc + item.sizeBytes, 0);
+
+  return (
+    <div className="preview-scroll multi-preview" aria-label="Multiple items selected">
+      <div className="multi-preview-header">
+        <div className="multi-preview-badge">
+          <Layers size={15} aria-hidden />
+          <span>{selectedIds.length} items selected</span>
+        </div>
+        {totalBytes > 0 && <span className="multi-preview-size">{formatBytes(totalBytes)}</span>}
+      </div>
+      <div className="multi-preview-list" role="list">
+        {selectedItems.map((item, index) => (
+          <div key={item.id} className="multi-preview-card" role="listitem">
+            <div className="multi-preview-card-header">
+              <span className="multi-preview-card-index">#{index + 1}</span>
+              <KindIcon item={item} size={14} />
+              <span className="multi-preview-card-kind">{item.kind}</span>
+              <div className="multi-preview-card-spacer" />
+              <span className="multi-preview-card-time">{item.source?.name ?? 'Clip'}</span>
+            </div>
+            <div className="multi-preview-card-content">
+              {item.preview || item.content}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }

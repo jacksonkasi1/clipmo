@@ -40,8 +40,12 @@ export const api = {
   flavorsFor: (id: number) => invoke<FlavorBundle>('flavors_for', { id }),
   copyToClipboard: (id: number, flavor: PasteFlavor) =>
     invoke<void>('copy_to_clipboard', { id, flavor }),
+  copyMultipleToClipboard: (ids: number[], flavor: PasteFlavor) =>
+    invoke<void>('copy_multiple_to_clipboard', { ids, flavor }),
   pasteActive: (id: number, flavor: PasteFlavor) =>
     invoke<void>('paste_active', { id, flavor }),
+  pasteMultipleActive: (ids: number[], flavor: PasteFlavor) =>
+    invoke<void>('paste_multiple_active', { ids, flavor }),
   setFavorite: (id: number, value: boolean) =>
     invoke<void>('set_favorite', { id, value }),
   setItemTags: (id: number, tags: string[]) =>

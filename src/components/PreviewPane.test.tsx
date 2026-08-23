@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const apiMock = vi.hoisted(() => ({
   copyToClipboard: vi.fn(),
+  copyMultipleToClipboard: vi.fn(),
   pasteActive: vi.fn(),
+  pasteMultipleActive: vi.fn(),
   editItem: vi.fn(),
   setFavorite: vi.fn(),
   deleteItem: vi.fn(),
@@ -341,6 +343,39 @@ describe('PreviewPane OverflowMenu', () => {
       expect(apiMock.deleteItem).toHaveBeenCalledWith(TEXT_ITEM.id);
     });
     expect(apiMock.deleteSelected).not.toHaveBeenCalled();
+  });
+
+  it('renders MultiItemPreview and invokes multi copy/paste actions when multiple items are selected', async () => {
+    useStore.setState({
+      items: [TEXT_ITEM, LINK_ITEM],
+      selectedId: TEXT_ITEM.id,
+      selectedIds: [TEXT_ITEM.id, LINK_ITEM.id],
+    });
+    render(<PreviewPane />);
+
+    expect(screen.getByText('2 items selected')).toBeDefined();
+    expect(screen.getByText('hello world')).toBeDefined();
+    expect(screen.getByText('https://example.com')).toBeDefined();
+
+    // Copy multiple
+    const copyBtn = screen.getByRole('button', { name: /Copy 2 items/i });
+    fireEvent.click(copyBtn);
+    await waitFor(() => {
+      expect(apiMock.copyMultipleToClipboard).toHaveBeenCalledWith(
+        [TEXT_ITEM.id, LINK_ITEM.id],
+        'original',
+      );
+    });
+
+    // Paste multiple
+    const pasteBtn = screen.getByRole('button', { name: /Paste 2 items/i });
+    fireEvent.click(pasteBtn);
+    await waitFor(() => {
+      expect(apiMock.pasteMultipleActive).toHaveBeenCalledWith(
+        [TEXT_ITEM.id, LINK_ITEM.id],
+        'original',
+      );
+    });
   });
 });
 

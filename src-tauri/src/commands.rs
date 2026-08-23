@@ -142,6 +142,65 @@ pub async fn paste_active(
 }
 
 #[tauri::command]
+pub async fn copy_multiple_to_clipboard(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    ids: Vec<i64>,
+    flavor: PasteFlavor,
+) -> Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut items = Vec::new();
+    for id in &ids {
+        if let Ok(item) = state.db.get_required(*id) {
+            let _ = state.db.touch(*id);
+            items.push(item);
+        }
+    }
+    if items.is_empty() {
+        return Err(Error::NotFound("clipboard items"));
+    }
+    crate::clipboard::writer::put_multiple_back_on_clipboard(&items, flavor)?;
+    let _ = app.emit("clip-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn paste_multiple_active(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    ids: Vec<i64>,
+    flavor: PasteFlavor,
+) -> Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut items = Vec::new();
+    for id in &ids {
+        if let Ok(item) = state.db.get_required(*id) {
+            let _ = state.db.touch(*id);
+            items.push(item);
+        }
+    }
+    if items.is_empty() {
+        return Err(Error::NotFound("clipboard items"));
+    }
+    crate::clipboard::writer::put_multiple_back_on_clipboard(&items, flavor)?;
+    let _ = app.emit("clip-updated", ());
+
+    let target = *state.foreground.lock();
+    crate::window::hide_self(&window);
+    if !paste::paste_to(target) {
+        return Err(Error::Other(
+            "the previous application could not receive the paste command".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn set_favorite(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
