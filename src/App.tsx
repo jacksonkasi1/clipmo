@@ -18,7 +18,7 @@ import { FILTER_SHORTCUTS, matchesShortcut, resolvedFilterShortcuts } from './li
 import { useStore } from './lib/store';
 import { api, on } from './lib/tauri';
 import { applyTheme } from './lib/theme';
-import { ToastSurface } from './lib/toast';
+import { ToastSurface, toast } from './lib/toast';
 
 export default function App() {
   const mode = useStore((s) => s.mode);
@@ -170,6 +170,13 @@ export default function App() {
             else if (modifier) selectToggle(next.id);
             else selectOnly(next.id);
           }
+        } else if (selectedIds.length > 1) {
+          if (listAction.type === 'paste') {
+            void api.pasteMultipleActive(selectedIds, 'original');
+          } else {
+            void api.copyMultipleToClipboard(selectedIds, 'original');
+            toast(`Copied ${selectedIds.length} items to clipboard`, 'info');
+          }
         } else if (selectedId !== null) {
           if (listAction.type === 'paste') {
             void api.pasteActive(selectedId, 'original');
@@ -186,11 +193,18 @@ export default function App() {
         selectAll();
         return;
       }
-      if (modifier && key === 'c' && selectedId !== null && !window.getSelection()?.toString()) {
-        event.preventDefault();
-        // A clipboard can contain one logical payload. Ctrl+C therefore
-        // copies the focused row even when a range is selected.
-        void api.copyToClipboard(selectedId, 'original');
+      if (modifier && key === 'c' && !window.getSelection()?.toString()) {
+        if (selectedIds.length > 1) {
+          event.preventDefault();
+          void api.copyMultipleToClipboard(selectedIds, 'original');
+          toast(`Copied ${selectedIds.length} items to clipboard`, 'info');
+          return;
+        }
+        if (selectedId !== null) {
+          event.preventDefault();
+          void api.copyToClipboard(selectedId, 'original');
+          return;
+        }
       } else if (modifier && key === 'e' && selectedId) {
         event.preventDefault();
         if (!showPreview) {
