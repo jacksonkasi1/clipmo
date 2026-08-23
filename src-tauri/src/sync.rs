@@ -913,14 +913,25 @@ fn handle_incoming(
         return;
     };
     let current = settings.read().clone();
-    if !current.sync_enabled
-        || envelope.protocol != PROTOCOL
-        || envelope.pairing_code != current.sync_pairing_code
-        || envelope.device.id == current.sync_device_id
-        || envelope.tcp_port == 0
-        || envelope.body.version().device_id != envelope.device.id
-        || !valid_id_hash(envelope.body.id_hash())
-    {
+    let rejection = if !current.sync_enabled {
+        Some("sync is disabled")
+    } else if envelope.protocol != PROTOCOL {
+        Some("protocol mismatch")
+    } else if envelope.pairing_code != current.sync_pairing_code {
+        Some("pairing code mismatch")
+    } else if envelope.device.id == current.sync_device_id {
+        Some("sender matches this device")
+    } else if envelope.tcp_port == 0 {
+        Some("sender TCP port is missing")
+    } else if envelope.body.version().device_id != envelope.device.id {
+        Some("version device does not match sender")
+    } else if !valid_id_hash(envelope.body.id_hash()) {
+        Some("item ID is invalid")
+    } else {
+        None
+    };
+    if let Some(reason) = rejection {
+        let _ = write_sync_ack(&mut stream, false, Some(reason));
         return;
     }
 
@@ -934,9 +945,30 @@ fn handle_incoming(
         },
     );
 
-    if let Err(error) = apply_incoming(&mut stream, &service, &app, envelope) {
-        log::warn!("synced clipboard change could not be applied: {error}");
+    match apply_incoming(&mut stream, &service, &app, envelope) {
+        Ok(()) => {
+            let _ = write_sync_ack(&mut stream, true, None);
+        }
+        Err(error) => {
+            log::warn!("synced clipboard change could not be applied: {error}");
+            let _ = write_sync_ack(&mut stream, false, Some(&error.to_string()));
+        }
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncAck<'a> {
+    ok: bool,
+    error: Option<&'a str>,
+}
+
+fn write_sync_ack(stream: &mut TcpStream, ok: bool, error: Option<&str>) -> io::Result<()> {
+    let payload = serde_json::to_vec(&SyncAck { ok, error })
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+    stream.write_all(&(payload.len() as u32).to_be_bytes())?;
+    stream.write_all(&payload)?;
+    stream.flush()
 }
 
 fn read_envelope(stream: &mut TcpStream) -> io::Result<SyncEnvelope> {

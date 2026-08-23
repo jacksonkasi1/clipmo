@@ -99,6 +99,8 @@ data class SyncEnvelope(
 	val body: SyncBody
 )
 
+data class SyncAck(val ok: Boolean, val error: String? = null)
+
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes(
 	JsonSubTypes.Type(value = SyncBody.ClipUpsert::class, name = "clipUpsert"),
@@ -441,22 +443,31 @@ class ClipSyncService : Service() {
 				Socket().use { sock ->
 					sock.connect(addr, CONNECT_TIMEOUT_MS.toInt())
 					sock.soTimeout = IO_TIMEOUT_MS.toInt()
-					DataOutputStream(BufferedOutputStream(sock.getOutputStream())).use { dos ->
-						dos.writeInt(headerBytes.size)
-						dos.write(headerBytes)
-						val buffer = ByteArray(CHUNK_SIZE)
-						blobs.forEach { file ->
-							file.inputStream().buffered().use { input ->
-								while (true) {
-									val count = input.read(buffer)
-									if (count < 0) break
-									dos.write(buffer, 0, count)
-								}
-							}
+				val dos = DataOutputStream(BufferedOutputStream(sock.getOutputStream()))
+				dos.writeInt(headerBytes.size)
+				dos.write(headerBytes)
+				val buffer = ByteArray(CHUNK_SIZE)
+				blobs.forEach { file ->
+					file.inputStream().buffered().use { input ->
+						while (true) {
+							val count = input.read(buffer)
+							if (count < 0) break
+							dos.write(buffer, 0, count)
 						}
-						dos.flush()
 					}
 				}
+				dos.flush()
+				val input = DataInputStream(BufferedInputStream(sock.getInputStream()))
+				val ackSize = input.readInt()
+				if (ackSize <= 0 || ackSize > MAX_HEADER_BYTES) return@withContext false
+				val ackBytes = ByteArray(ackSize)
+				input.readFully(ackBytes)
+				val ack = mapper.readValue(ackBytes, SyncAck::class.java)
+				if (!ack.ok) {
+					Log.w("ClipSyncService", "Windows rejected sync item: ${ack.error ?: "unknown reason"}")
+					return@withContext false
+				}
+			}
 				true
 			} catch (e: Exception) {
 				Log.d("ClipSyncService", "send failed to $addr: ${e.message}")
