@@ -981,9 +981,7 @@ fn apply_incoming(
             }
             let total = image.image_size.saturating_add(image.thumb_size);
             if total == 0 || total > MAX_IMAGE_BYTES {
-                return Err(Error::Other(
-                    "synced image exceeded the 8 MiB limit".into(),
-                ));
+                return Err(Error::Other("synced image exceeded the 8 MiB limit".into()));
             }
             let image_bytes = read_blob(stream, image.image_size, MAX_IMAGE_BYTES)?;
             let thumb_bytes = read_blob(stream, image.thumb_size, MAX_IMAGE_BYTES)?;
