@@ -135,6 +135,7 @@ data class ClipmoUiState(
     val copyLiveSyncToClipboard: Boolean,
     val pairingCode: String,
     val pairingModeActive: Boolean,
+    val pairingUntilMs: Long = 0L,
     val localDeviceName: String,
     val localDeviceId: String,
     val themeMode: ClipmoThemeMode,
@@ -164,6 +165,8 @@ fun ClipmoApp(
     onThemeChanged: (ClipmoThemeMode) -> Unit,
     onForgetDevice: (TrustedDeviceRecord) -> Unit,
     onStartPairing: () -> Unit,
+    onStopPairing: () -> Unit = {},
+    onJoinDevice: (String) -> Unit = {},
     onSyncNow: () -> Unit = {},
     onRefresh: () -> Unit = {},
 ) {
@@ -241,6 +244,8 @@ fun ClipmoApp(
                             onForgetDevice = onForgetDevice,
                             onSyncChanged = onSyncChanged,
                             onStartPairing = onStartPairing,
+                            onStopPairing = onStopPairing,
+                            onJoinDevice = onJoinDevice,
                             onSyncNow = onSyncNow,
                         )
                         ClipmoScreen.SETTINGS -> SettingsScreen(
@@ -794,20 +799,25 @@ private fun DevicesScreen(
     onForgetDevice: (TrustedDeviceRecord) -> Unit,
     onSyncChanged: (Boolean) -> Unit,
     onStartPairing: () -> Unit,
+    onStopPairing: () -> Unit,
+    onJoinDevice: (String) -> Unit,
     onSyncNow: () -> Unit,
 ) {
     val colors = ClipmoTheme.colors
     val space = ClipmoTheme.spacing
     val type = ClipmoTheme.typography
+    var joinCodeInput by rememberSaveable { mutableStateOf("") }
+    val normalizedJoinCode = joinCodeInput.filter { it.isLetterOrDigit() }.take(6)
+    val canJoin = normalizedJoinCode.length == 6
 
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = space.md, vertical = space.sm),
     ) {
         item {
-            // Section 1: Pair a Device
+            // Section 1: Pair a Device (Share Code)
             BasicText(
-                "Pair a device",
+                "Share pairing code",
                 style = type.section.copy(color = colors.textSecondary),
             )
             Spacer(Modifier.height(space.xs))
@@ -821,7 +831,7 @@ private fun DevicesScreen(
                     .padding(space.md),
             ) {
                 BasicText(
-                    "Pair Clipmo using this code",
+                    "Show this code on this device to connect other devices",
                     style = type.bodyMedium.copy(color = colors.textSecondary),
                 )
                 Spacer(Modifier.height(space.sm))
@@ -846,17 +856,35 @@ private fun DevicesScreen(
                     )
                 }
 
+                if (state.pairingModeActive) {
+                    Spacer(Modifier.height(space.xs))
+                    BasicText(
+                        "Pairing open for 2 minutes",
+                        style = type.metadata.copy(color = colors.accent),
+                    )
+                }
+
                 Spacer(Modifier.height(space.md))
 
                 Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
-                    ClipmoButton(
-                        label = if (state.pairingModeActive) "Pairing active…" else "Pair device",
-                        style = if (state.pairingModeActive) ClipmoButtonStyle.SECONDARY else ClipmoButtonStyle.PRIMARY,
-                        modifier = Modifier.weight(1f),
-                        icon = ClipmoIconKind.PLUS,
-                    ) {
-                        if (!state.syncEnabled) onSyncChanged(true)
-                        onStartPairing()
+                    if (state.pairingModeActive) {
+                        ClipmoButton(
+                            label = "Close pairing",
+                            style = ClipmoButtonStyle.SECONDARY,
+                            modifier = Modifier.weight(1f),
+                            icon = ClipmoIconKind.CLOSE,
+                            onClick = onStopPairing,
+                        )
+                    } else {
+                        ClipmoButton(
+                            label = "Open pairing (2m)",
+                            style = ClipmoButtonStyle.PRIMARY,
+                            modifier = Modifier.weight(1f),
+                            icon = ClipmoIconKind.PLUS,
+                        ) {
+                            if (!state.syncEnabled) onSyncChanged(true)
+                            onStartPairing()
+                        }
                     }
                     ClipmoButton(
                         label = "Sync now",
@@ -864,6 +892,64 @@ private fun DevicesScreen(
                         modifier = Modifier.weight(1f),
                         icon = ClipmoIconKind.REFRESH,
                         onClick = onSyncNow,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(space.lg))
+
+            // Section 2: Join / Add Device with Code
+            BasicText(
+                "Add / Join device",
+                style = type.section.copy(color = colors.textSecondary),
+            )
+            Spacer(Modifier.height(space.xs))
+
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(ClipmoTheme.shapes.panel))
+                    .background(colors.surfaceContainerLow)
+                    .border(1.dp, colors.border, RoundedCornerShape(ClipmoTheme.shapes.panel))
+                    .padding(space.md),
+            ) {
+                BasicText(
+                    "Enter the 6-digit code shown on another device to connect",
+                    style = type.bodyMedium.copy(color = colors.textSecondary),
+                )
+                Spacer(Modifier.height(space.sm))
+
+                ClipmoSearchBar(
+                    value = joinCodeInput,
+                    hint = "Enter 6-digit code",
+                    onValueChange = {
+                        joinCodeInput = it.filter { ch -> ch.isLetterOrDigit() }.take(6)
+                    },
+                    searchIcon = false,
+                )
+
+                Spacer(Modifier.height(space.sm))
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BasicText(
+                        if (joinCodeInput.isNotEmpty() && !canJoin) "Requires 6 digits (${joinCodeInput.length}/6)" else if (canJoin) "Ready to connect" else "Min 6 digits required",
+                        style = type.metadata.copy(color = if (joinCodeInput.isNotEmpty() && !canJoin) colors.danger else colors.textMuted),
+                    )
+                    ClipmoButton(
+                        label = "Connect",
+                        style = if (canJoin) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.SECONDARY,
+                        enabled = canJoin,
+                        icon = ClipmoIconKind.LINK,
+                        onClick = {
+                            if (canJoin) {
+                                onJoinDevice(normalizedJoinCode)
+                                joinCodeInput = ""
+                            }
+                        },
                     )
                 }
             }
@@ -989,7 +1075,7 @@ private fun SettingsScreen(
                 )
                 Spacer(Modifier.height(space.md))
                 BasicText(
-                    "Pairing code",
+                    "Pairing code (min 6 digits)",
                     style = ClipmoTheme.typography.label.copy(color = colors.textSecondary),
                 )
                 Spacer(Modifier.height(space.xs))
@@ -999,6 +1085,13 @@ private fun SettingsScreen(
                     onValueChange = onPairingCodeChanged,
                     searchIcon = false,
                 )
+                if (state.pairingCode.isNotEmpty() && state.pairingCode.length < 6) {
+                    Spacer(Modifier.height(space.xs))
+                    BasicText(
+                        "Must be at least 6 digits (${state.pairingCode.length}/6)",
+                        style = ClipmoTheme.typography.metadata.copy(color = colors.danger),
+                    )
+                }
             }
 
             Spacer(Modifier.height(space.lg))
@@ -1805,6 +1898,7 @@ private fun ClipmoButton(
     label: String,
     style: ClipmoButtonStyle,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     icon: ClipmoIconKind? = null,
     tint: Color? = null,
     onClick: () -> Unit,
@@ -1813,22 +1907,23 @@ private fun ClipmoButton(
     val space = ClipmoTheme.spacing
     val shape = RoundedCornerShape(ClipmoTheme.shapes.pill)
 
-    val background = when (style) {
+    val background = if (!enabled) colors.surfaceContainerLow else when (style) {
         ClipmoButtonStyle.PRIMARY -> colors.accent
         ClipmoButtonStyle.SECONDARY -> colors.surfaceContainerHigh
         ClipmoButtonStyle.DANGER -> colors.danger
         ClipmoButtonStyle.TONAL_DANGER -> colors.dangerContainer
         ClipmoButtonStyle.GHOST -> colors.surfaceContainerLow
     }
-    val content = tint ?: when (style) {
+    val content = if (!enabled) colors.textMuted else tint ?: when (style) {
         ClipmoButtonStyle.PRIMARY -> colors.onAccent
         ClipmoButtonStyle.SECONDARY -> colors.textPrimary
         ClipmoButtonStyle.DANGER -> Color.White
         ClipmoButtonStyle.TONAL_DANGER -> colors.danger
         ClipmoButtonStyle.GHOST -> colors.textSecondary
     }
-    val borderCol = when (style) {
-        ClipmoButtonStyle.GHOST -> colors.border
+    val borderCol = when {
+        !enabled -> colors.borderSubtle
+        style == ClipmoButtonStyle.GHOST -> colors.border
         else -> Color.Transparent
     }
 
@@ -1839,6 +1934,7 @@ private fun ClipmoButton(
             .background(background)
             .border(1.dp, borderCol, shape)
             .clickable(
+                enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick,

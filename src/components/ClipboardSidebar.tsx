@@ -18,6 +18,7 @@ import {
   PanelLeftClose,
   Palette,
   Plus,
+  RefreshCw,
   Smartphone,
   Star,
   Tag,
@@ -83,11 +84,25 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
   const setSource = useStore((state) => state.setSource);
   const applyFilterAction = useStore((state) => state.applyFilterAction);
   const toggleSidebar = useStore((state) => state.toggleSidebar);
+  const refresh = useStore((state) => state.refresh);
   const settings = useStore((state) => state.settings);
   const showDevices = devices.length > 1;
   const hasOverflow = tags.length > MAX_RAIL_TAGS || devices.length > MAX_RAIL_DEVICES || sources.length > MAX_RAIL_SOURCES;
   const shortcuts = resolvedFilterShortcuts(settings?.filterShortcuts);
   const [context, setContext] = useState<ContextState>(null);
+  const [syncingDeviceId, setSyncingDeviceId] = useState<string | null>(null);
+
+  const syncDeviceNow = async (deviceId?: string) => {
+    if (deviceId) setSyncingDeviceId(deviceId);
+    try {
+      await api.syncHistoryNow();
+      await refresh();
+    } catch (err) {
+      console.error('Failed to sync history:', err);
+    } finally {
+      setTimeout(() => setSyncingDeviceId(null), 1000);
+    }
+  };
 
   useEffect(() => {
     if (!context) return;
@@ -241,19 +256,25 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
           {devices.slice(0, MAX_RAIL_DEVICES).map((device, index) => {
             const PlatformIcon = platformIcon(device.platform);
             const active = activeDeviceId === device.id;
+            const isSyncing = syncingDeviceId === device.id;
             return (
               <button
                 key={device.id}
                 type="button"
-                className={`sidebar-button device-filter ${active ? 'is-active' : ''}`}
-                title={`${device.name} (Ctrl+${index + 1})`}
+                className={`sidebar-button device-filter ${active ? 'is-active' : ''} ${isSyncing ? 'is-syncing' : ''}`}
+                title={`${device.name} (Double-click to sync, Ctrl+${index + 1})`}
                 aria-label={`${device.name}, Ctrl+${index + 1}`}
                 aria-pressed={active}
                 tabIndex={open ? 0 : -1}
                 onClick={() => void setDevice(device.id)}
+                onDoubleClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void syncDeviceNow(device.id);
+                }}
                 onContextMenu={(event) => openContext(event, { kind: 'device', value: device.id }, device.name)}
               >
-                <PlatformIcon size={16} aria-hidden />
+                {isSyncing ? <RefreshCw size={16} className="is-spinning" aria-hidden /> : <PlatformIcon size={16} aria-hidden />}
                 <span className="device-filter-dot" style={{ backgroundColor: device.color }} />
               </button>
             );
@@ -293,6 +314,19 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
           onPointerDown={(event) => event.stopPropagation()}
         >
           <div className="sidebar-context-title">{context.label}</div>
+          {context.scope.kind === 'device' && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const devId = context.scope.value;
+                setContext(null);
+                void syncDeviceNow(devId);
+              }}
+            >
+              <RefreshCw size={14} aria-hidden /> Sync device now
+            </button>
+          )}
           {context.scope.kind === 'tag' && (
             <div className="sidebar-context-color">
               <label htmlFor="sidebar-tag-color">Custom color</label>

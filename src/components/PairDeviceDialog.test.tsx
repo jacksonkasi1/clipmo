@@ -98,4 +98,20 @@ describe('PairDeviceDialog', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(close).toHaveBeenCalledOnce();
   });
+
+  it('allows stopping pairing when sync is enabled', async () => {
+    const user = userEvent.setup();
+    useStore.setState({
+      settings: { ...settings, syncEnabled: true },
+    });
+    render(<PairDeviceDialog open onClose={vi.fn()} />);
+
+    const closePairingButton = screen.getByRole('button', { name: 'Close pairing' });
+    await user.click(closePairingButton);
+
+    await waitFor(() => expect(saveSettings).toHaveBeenCalledWith({
+      ...settings,
+      syncEnabled: false,
+    }));
+  });
 });

@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
     private var copyLiveSyncToClipboard by mutableStateOf(false)
     private var pairingCode by mutableStateOf("")
     private var pairingModeActive by mutableStateOf(false)
+    private var pairingUntilMs by mutableStateOf(0L)
     private var themeMode by mutableStateOf(ClipmoThemeMode.SYSTEM)
     private var trustedDevices by mutableStateOf<List<TrustedDeviceRecord>>(emptyList())
     private var collections by mutableStateOf<List<String>>(emptyList())
@@ -113,6 +114,7 @@ class MainActivity : ComponentActivity() {
                     copyLiveSyncToClipboard = copyLiveSyncToClipboard,
                     pairingCode = pairingCode,
                     pairingModeActive = pairingModeActive,
+                    pairingUntilMs = pairingUntilMs,
                     localDeviceName = getOrCreateDeviceName(),
                     localDeviceId = getOrCreateDeviceId(),
                     themeMode = themeMode,
@@ -143,6 +145,8 @@ class MainActivity : ComponentActivity() {
                 onThemeChanged = ::handleThemeChanged,
                 onForgetDevice = ::forgetDevice,
                 onStartPairing = ::startPairing,
+                onStopPairing = ::stopPairing,
+                onJoinDevice = ::joinDevice,
                 onSyncNow = ::syncNow,
                 onRefresh = ::refreshSync,
             )
@@ -211,7 +215,9 @@ class MainActivity : ComponentActivity() {
             if (snapshot.clipsChanged) clips = snapshot.clips
             if (snapshot.collectionsChanged) collections = snapshot.collections
             if (snapshot.devicesChanged) trustedDevices = snapshot.devices
-            pairingModeActive = preferences.getLong(KEY_PAIRING_UNTIL, 0L) > System.currentTimeMillis()
+            val until = preferences.getLong(KEY_PAIRING_UNTIL, 0L)
+            pairingUntilMs = until
+            pairingModeActive = until > System.currentTimeMillis()
         }
     }
 
@@ -257,14 +263,39 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startPairing() {
-        if (pairingCode.isBlank()) {
-            Toast.makeText(this, "Enter a pairing code first", Toast.LENGTH_SHORT).show()
+        if (pairingCode.isBlank() || pairingCode.length < 6) {
+            Toast.makeText(this, "Pairing code must be at least 6 digits", Toast.LENGTH_SHORT).show()
             return
         }
-        preferences.edit().putLong(KEY_PAIRING_UNTIL, System.currentTimeMillis() + PAIRING_WINDOW_MS).apply()
+        val until = System.currentTimeMillis() + PAIRING_WINDOW_MS
+        preferences.edit().putLong(KEY_PAIRING_UNTIL, until).apply()
+        pairingUntilMs = until
         pairingModeActive = true
         if (!syncEnabled) handleSyncChanged(true) else refreshSync()
         Toast.makeText(this, "Pairing open for 2 minutes", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun stopPairing() {
+        preferences.edit().putLong(KEY_PAIRING_UNTIL, 0L).apply()
+        pairingUntilMs = 0L
+        pairingModeActive = false
+        Toast.makeText(this, "Pairing closed", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun joinDevice(code: String) {
+        val sanitized = code.filter { it.isLetterOrDigit() }.take(MAX_PAIRING_CODE_LENGTH)
+        if (sanitized.length < 6) {
+            Toast.makeText(this, "Pairing code must be at least 6 digits", Toast.LENGTH_SHORT).show()
+            return
+        }
+        handlePairingCodeChanged(sanitized)
+        val until = System.currentTimeMillis() + PAIRING_WINDOW_MS
+        preferences.edit().putLong(KEY_PAIRING_UNTIL, until).apply()
+        pairingUntilMs = until
+        pairingModeActive = true
+        if (!syncEnabled) handleSyncChanged(true) else refreshSync()
+        syncNow()
+        Toast.makeText(this, "Joined pairing with code $sanitized", Toast.LENGTH_SHORT).show()
     }
 
     private fun copyToClipboard(clip: ClipRecord) {
@@ -375,6 +406,8 @@ class MainActivity : ComponentActivity() {
         syncEnabled = preferences.getBoolean(KEY_SYNC_ENABLED, false)
         copyLiveSyncToClipboard = preferences.getBoolean(KEY_COPY_LIVE_SYNC_TO_CLIPBOARD, false)
         pairingCode = preferences.getString(KEY_PAIRING_CODE, "").orEmpty()
+        pairingUntilMs = preferences.getLong(KEY_PAIRING_UNTIL, 0L)
+        pairingModeActive = pairingUntilMs > System.currentTimeMillis()
         themeMode = runCatching {
             ClipmoThemeMode.valueOf(preferences.getString(KEY_THEME_MODE, ClipmoThemeMode.SYSTEM.name).orEmpty())
         }.getOrDefault(ClipmoThemeMode.SYSTEM)

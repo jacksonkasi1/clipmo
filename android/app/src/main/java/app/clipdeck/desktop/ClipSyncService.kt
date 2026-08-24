@@ -606,7 +606,9 @@ class ClipSyncService : Service() {
 	private suspend fun enqueueHistoryBackfill() {
 		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
 		val items = mutableListOf<Pair<Long, ItemKind>>()
-		db.query("items", arrayOf("id", "type"), "sync_status=?", arrayOf("local"), null, null, "id ASC", "500").use { cursor ->
+		val myDeviceId = getOrCreateDeviceId()
+		val query = "sync_status = 'local' OR sync_status IS NULL OR origin_device = ? OR origin_device IS NULL"
+		db.query("items", arrayOf("id", "type"), query, arrayOf(myDeviceId), null, null, "id DESC", "500").use { cursor ->
 			while (cursor.moveToNext()) {
 				val kind = when (cursor.getString(cursor.getColumnIndexOrThrow("type"))) {
 					"URL" -> ItemKind.link
@@ -782,6 +784,7 @@ class ClipSyncService : Service() {
 						if (msg.pairing_code != myPairing) continue
 						if (msg.device.id == myDeviceId) continue
 						if (isRevoked(msg.device.id) && !pairingWindowOpen()) continue
+						val isNew = !peers.containsKey(msg.device.id)
 						peers[msg.device.id] = PeerRecord(
 							device = msg.device,
 							address = InetSocketAddress(
@@ -792,6 +795,9 @@ class ClipSyncService : Service() {
 						)
 						rememberTrustedDevice(msg.device, InetSocketAddress(packet.address.hostAddress, msg.tcp_port))
 						lamport.updateAndGet { it + 1 }
+						if (isNew) {
+							serviceScope.launch { enqueueHistoryBackfill() }
+						}
 					} catch (e: SocketTimeoutException) {
 						// normal, continue loop
 					} catch (e: Exception) {

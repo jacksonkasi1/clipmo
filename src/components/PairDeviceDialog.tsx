@@ -61,6 +61,18 @@ export function PairDeviceDialog({ open, onClose }: PairDeviceDialogProps) {
     }
   };
 
+  const disablePairing = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await saveSettings({ ...settings, syncEnabled: false });
+    } catch (saveError) {
+      setError(mutationErrorMessage('Pairing could not be stopped.', saveError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const joinDevice = async () => {
     if (!canJoin) {
       setError('Enter the six-digit code shown on the other device.');
@@ -139,7 +151,16 @@ export function PairDeviceDialog({ open, onClose }: PairDeviceDialogProps) {
                 <RefreshCw size={14} aria-hidden /> New code
               </button>
             </div>
-            {!settings.syncEnabled && (
+            {settings.syncEnabled ? (
+              <div className="pair-device-actions-row">
+                <span className="pair-device-status-badge">
+                  <span className="pair-device-status-dot" /> Pairing active
+                </span>
+                <button type="button" className="secondary-button" disabled={busy} onClick={() => void disablePairing()}>
+                  <X size={14} aria-hidden /> Close pairing
+                </button>
+              </div>
+            ) : (
               <button type="button" className="primary-button" disabled={busy} onClick={() => void enablePairing()}>
                 <Wifi size={15} aria-hidden /> Start pairing
               </button>

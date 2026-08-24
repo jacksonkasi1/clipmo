@@ -2307,6 +2307,64 @@ kbd {
   border-color: var(--border-strong);
 }
 
+.sync-actions-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.pairing-code-field-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pairing-code-text-input {
+  width: 140px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.setting-field-error {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--danger, #ef4444);
+}
+
+.pair-device-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pair-device-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent, #3b82f6);
+  background: var(--accent-subtle, rgba(59, 130, 246, 0.1));
+  border-radius: 9999px;
+}
+
+.pair-device-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #3b82f6);
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.sidebar-button.is-syncing svg {
+  color: var(--accent, #3b82f6);
+}
+
 .peer-list {
   display: flex;
   flex-wrap: wrap;
