@@ -8,6 +8,7 @@ import {
   AppWindow,
   File,
   FileText,
+  Folder,
   Globe2,
   History,
   Image,
@@ -24,7 +25,7 @@ import {
   Tag,
   Terminal,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useStore } from '../lib/store';
@@ -54,6 +55,7 @@ const CATEGORIES: CategoryDefinition[] = [
 interface ClipboardSidebarProps {
   onAddDevice?: () => void;
   onExploreFilters?: () => void;
+  onShowCollections?: () => void;
 }
 
 const MAX_RAIL_TAGS = 3;
@@ -65,7 +67,7 @@ const CONTEXT_MENU_MARGIN = 8;
 
 type ContextState = { x: number; y: number; scope: FilterScope; label: string } | null;
 
-export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSidebarProps) {
+export function ClipboardSidebar({ onAddDevice, onExploreFilters, onShowCollections }: ClipboardSidebarProps) {
   const open = useStore((state) => state.sidebarOpen);
   const activeKinds = useStore((state) => state.activeKinds);
   const favoritesOnly = useStore((state) => state.favoritesOnly);
@@ -91,18 +93,35 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
   const shortcuts = resolvedFilterShortcuts(settings?.filterShortcuts);
   const [context, setContext] = useState<ContextState>(null);
   const [syncingDeviceId, setSyncingDeviceId] = useState<string | null>(null);
+  const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const syncDeviceNow = async (deviceId?: string) => {
     if (deviceId) setSyncingDeviceId(deviceId);
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = null;
+    }
     try {
       await api.syncHistoryNow();
       await refresh();
     } catch (err) {
       console.error('Failed to sync history:', err);
     } finally {
-      setTimeout(() => setSyncingDeviceId(null), 1000);
+      syncTimeoutRef.current = setTimeout(() => {
+        setSyncingDeviceId(null);
+        syncTimeoutRef.current = null;
+      }, 1000);
     }
   };
+
+  useEffect(() => {
+    return () => {
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+        syncTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!context) return;
@@ -159,6 +178,7 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
   return (
     <nav className="clipboard-sidebar" aria-label="Clipboard filters" aria-hidden={!open}>
       <div className="sidebar-actions">
+        {onShowCollections && <button type="button" className="sidebar-button" title="Collections" aria-label="Show collections" tabIndex={open ? 0 : -1} onClick={onShowCollections}><Folder size={17} aria-hidden /></button>}
         {CATEGORIES.map((category, index) => {
           const Icon = category.icon;
           const shortcut = shortcuts[index + 1];
@@ -262,7 +282,7 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
                 key={device.id}
                 type="button"
                 className={`sidebar-button device-filter ${active ? 'is-active' : ''} ${isSyncing ? 'is-syncing' : ''}`}
-                title={`${device.name} (Double-click to sync, Ctrl+${index + 1})`}
+                title={`${device.name} (Double-click to sync history, Ctrl+${index + 1})`}
                 aria-label={`${device.name}, Ctrl+${index + 1}`}
                 aria-pressed={active}
                 tabIndex={open ? 0 : -1}
@@ -324,7 +344,7 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
                 void syncDeviceNow(devId);
               }}
             >
-              <RefreshCw size={14} aria-hidden /> Sync device now
+              <RefreshCw size={14} aria-hidden /> Sync history now
             </button>
           )}
           {context.scope.kind === 'tag' && (

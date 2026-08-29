@@ -1,3 +1,6 @@
+// ** import types
+import type { Settings } from '../lib/types';
+
 // ** import utils
 import { mutationErrorMessage } from '../lib/mutation-error';
 
@@ -10,11 +13,12 @@ import { useStore } from '../lib/store';
 interface PairDeviceDialogProps {
   open: boolean;
   onClose: () => void;
+  onSettingsUpdated?: (updated: Partial<Settings>) => void;
 }
 
 const PAIRING_CODE_LENGTH = 6;
 
-export function PairDeviceDialog({ open, onClose }: PairDeviceDialogProps) {
+export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDeviceDialogProps) {
   const settings = useStore((state) => state.settings);
   const sync = useStore((state) => state.sync);
   const saveSettings = useStore((state) => state.saveSettings);
@@ -53,7 +57,8 @@ export function PairDeviceDialog({ open, onClose }: PairDeviceDialogProps) {
     setBusy(true);
     setError(null);
     try {
-      await saveSettings({ ...settings, syncEnabled: true });
+      const next = await saveSettings({ ...settings, syncEnabled: true });
+      onSettingsUpdated?.(next);
     } catch (saveError) {
       setError(mutationErrorMessage('Pairing could not be started.', saveError));
     } finally {
@@ -65,7 +70,8 @@ export function PairDeviceDialog({ open, onClose }: PairDeviceDialogProps) {
     setBusy(true);
     setError(null);
     try {
-      await saveSettings({ ...settings, syncEnabled: false });
+      const next = await saveSettings({ ...settings, syncEnabled: false });
+      onSettingsUpdated?.(next);
     } catch (saveError) {
       setError(mutationErrorMessage('Pairing could not be stopped.', saveError));
     } finally {
@@ -82,11 +88,12 @@ export function PairDeviceDialog({ open, onClose }: PairDeviceDialogProps) {
     setBusy(true);
     setError(null);
     try {
-      await saveSettings({
+      const next = await saveSettings({
         ...settings,
         syncEnabled: true,
         syncPairingCode: normalizedJoinCode,
       });
+      onSettingsUpdated?.(next);
       setJoinCode('');
     } catch (saveError) {
       setError(mutationErrorMessage('This device could not join the pairing.', saveError));
@@ -99,7 +106,8 @@ export function PairDeviceDialog({ open, onClose }: PairDeviceDialogProps) {
     setBusy(true);
     setError(null);
     try {
-      await regeneratePairingCode();
+      const next = await regeneratePairingCode();
+      if (next) onSettingsUpdated?.(next);
     } catch (regenerateError) {
       setError(mutationErrorMessage('A new pairing code could not be created.', regenerateError));
     } finally {

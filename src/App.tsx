@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { CommandPalette } from './components/CommandPalette';
 import { ClipboardSidebar } from './components/ClipboardSidebar';
+import { CollectionsView } from './components/CollectionsView';
 import { DetailsTable } from './components/DetailsTable';
 import { Footer } from './components/Footer';
 import { ItemList } from './components/ItemList';
@@ -52,6 +53,7 @@ export default function App() {
   const [quickEntering, setQuickEntering] = useState(false);
   const [pairDeviceOpen, setPairDeviceOpen] = useState(false);
   const [filterExplorerOpen, setFilterExplorerOpen] = useState(false);
+  const [collectionsOpen, setCollectionsOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.mode = mode;
@@ -337,6 +339,7 @@ export default function App() {
         <ClipboardSidebar
           onAddDevice={mode === 'full' ? () => setPairDeviceOpen(true) : undefined}
           onExploreFilters={mode === 'full' ? () => setFilterExplorerOpen(true) : undefined}
+          onShowCollections={mode === 'full' ? () => setCollectionsOpen(true) : undefined}
         />
         <div className="history-content">
           <SearchBar onAddDevice={mode === 'full' ? () => setPairDeviceOpen(true) : undefined} />
@@ -344,7 +347,7 @@ export default function App() {
           <Footer />
         </div>
       </aside>
-      {showPreview && (
+      {showPreview && !collectionsOpen && (
         <main className="content-pane">
           <PreviewPane />
           {mode === 'full' && showDetails && <DetailsTable />}
@@ -366,7 +369,7 @@ export default function App() {
         >
           {clipboardLayout}
         </div>
-      ) : clipboardLayout}
+      ) : collectionsOpen ? <CollectionsView onBack={() => setCollectionsOpen(false)} /> : clipboardLayout}
       {mode === 'full' && <CommandPalette />}
       {mode === 'full' && (
         <PairDeviceDialog open={pairDeviceOpen} onClose={() => setPairDeviceOpen(false)} />

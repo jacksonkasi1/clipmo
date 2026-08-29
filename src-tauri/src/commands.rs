@@ -16,7 +16,7 @@ use crate::clipboard::listener::{self, CaptureSink, ClipEvent};
 use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::models::{
-    BulkFilterAction, ClipItem, Counts, DeviceIdentity, FilterScope, IgnoredApp, ImageCompression,
+    BulkFilterAction, ClipItem, CollectionSummary, Counts, DeviceIdentity, FilterScope, IgnoredApp, ImageCompression,
     ImageFormat, ImageMeta, ItemKind, ListQuery, PasteFlavor, Settings, SourceApp, StoredFile,
     StoredFileStatus, SyncState, SystemAppearance,
 };
@@ -309,6 +309,25 @@ pub async fn known_devices(state: tauri::State<'_, AppState>) -> Result<Vec<Devi
 #[tauri::command]
 pub async fn known_tags(state: tauri::State<'_, AppState>) -> Result<Vec<String>> {
     state.db.known_tags()
+}
+
+#[tauri::command]
+pub async fn list_collections(state: tauri::State<'_, AppState>) -> Result<Vec<CollectionSummary>> {
+    state.db.collections()
+}
+
+#[tauri::command]
+pub async fn create_collection(app: AppHandle, state: tauri::State<'_, AppState>, name: String) -> Result<()> {
+    state.db.create_collection(&name)?;
+    let _ = app.emit("clip-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_collection(app: AppHandle, state: tauri::State<'_, AppState>, name: String) -> Result<()> {
+    state.db.delete_collection(&name)?;
+    let _ = app.emit("clip-updated", ());
+    Ok(())
 }
 
 #[tauri::command]

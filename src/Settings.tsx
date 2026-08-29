@@ -149,6 +149,19 @@ export default function Settings() {
     }
   };
 
+  const handleRegeneratePairingCode = async () => {
+    setSaved(false);
+    setMutationError(null);
+    try {
+      const next = await regeneratePairingCode();
+      if (next?.syncPairingCode) {
+        setLocal((prev) => (prev ? { ...prev, syncPairingCode: next.syncPairingCode } : prev));
+      }
+    } catch (error) {
+      setMutationError(mutationErrorMessage('A new pairing code could not be created.', error));
+    }
+  };
+
   const configuredFilterShortcuts = resolvedFilterShortcuts(local.filterShortcuts);
   const shortcutConflict = findShortcutConflict([
     { label: 'Quick clipboard', shortcut: local.hotkey },
@@ -465,16 +478,17 @@ export default function Settings() {
               onChange={(value) => update('syncDeviceColor', value)}
             />
           </Row>
-          <Row id="sync-pairing-code" label="Pairing code" description="Devices with the same code on the same network can sync (min 6 digits).">
+          <Row id="sync-pairing-code" label="Pairing code" description="Devices with the same code on the same network can sync (6 digits).">
             <div className="pairing-code-field-group">
               <input
                 type="text"
                 className="setting-input pairing-code-text-input"
                 value={local.syncPairingCode}
-                maxLength={12}
+                maxLength={6}
+                inputMode="numeric"
                 placeholder="000000"
                 onChange={(event) => {
-                  const val = event.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12);
+                  const val = event.target.value.replace(/\D/g, '').slice(0, 6);
                   update('syncPairingCode', val);
                 }}
                 aria-label="Pairing code"
@@ -482,7 +496,7 @@ export default function Settings() {
               <button
                 type="button"
                 className="pairing-code-button"
-                onClick={() => void regeneratePairingCode()}
+                onClick={() => void handleRegeneratePairingCode()}
                 title="Generate a new pairing code"
               >
                 <RefreshCw size={15} aria-hidden />
@@ -603,7 +617,13 @@ export default function Settings() {
           <Save size={16} aria-hidden /> {saving ? 'Saving…' : 'Save changes'}
         </button>
       </footer>
-      <PairDeviceDialog open={pairDeviceOpen} onClose={() => setPairDeviceOpen(false)} />
+      <PairDeviceDialog
+        open={pairDeviceOpen}
+        onClose={() => setPairDeviceOpen(false)}
+        onSettingsUpdated={(updated) => {
+          setLocal((prev) => (prev ? { ...prev, ...updated } : prev));
+        }}
+      />
     </div>
   );
 }

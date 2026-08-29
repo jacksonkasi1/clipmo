@@ -129,6 +129,11 @@ export interface Counts {
   storageBytes: number;
 }
 
+export interface CollectionSummary {
+  name: string;
+  itemCount: number;
+}
+
 export interface IgnoredApp {
   id: string;
   displayName: string;

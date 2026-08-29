@@ -20,6 +20,53 @@ env:
   WINDOWS_TARGET: x86_64-pc-windows-msvc
 
 jobs:
+  build-android:
+    name: Build Android release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Validate Android release version
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' android/app/build.gradle.kts)
+          test -n "$version"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            expected_version="${{ github.ref_name }}"
+            expected_version="${expected_version#v}"
+            test "$version" = "$expected_version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test Android release
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew test assembleRelease --no-daemon
+
+      - name: Upload Android release APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: clipmo-android-apk-${{ steps.version.outputs.version }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 90
+
   build:
     name: Build and verify Windows x64 release
     runs-on: windows-latest
@@ -187,7 +234,7 @@ jobs:
   publish:
     name: Publish GitHub release
     if: github.ref_type == 'tag'
-    needs: build
+    needs: [build, build-android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -199,30 +246,37 @@ jobs:
           name: clipmo-windows-x64-${{ needs.build.outputs.version }}
           path: release-assets
 
-      - name: Create or update GitHub release with only the verified installer
+      - name: Download Android release APK
+        uses: actions/download-artifact@v8
+        with:
+          name: clipmo-android-apk-${{ needs.build-android.outputs.version }}
+          path: release-assets
+
+      - name: Create or update GitHub release with verified installers
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
         run: |
           installer="release-assets/Clipmo_${RELEASE_VERSION}_x64-setup.exe"
+          android_apk="release-assets/app-release.apk"
           main_screenshot="release-assets/Clipmo_${RELEASE_VERSION}_main-startup.png"
           quick_screenshot="release-assets/Clipmo_${RELEASE_VERSION}_quick-startup.png"
-          test -s "$installer" && test -s "$main_screenshot" && test -s "$quick_screenshot"
-          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 3
+          test -s "$installer" && test -s "$android_apk" && test -s "$main_screenshot" && test -s "$quick_screenshot"
+          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 4
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             while IFS= read -r asset; do
               case "$asset" in
-                "$(basename "$installer")") ;;
+                "$(basename "$installer")"|"$(basename "$android_apk")") ;;
                 *) gh release delete-asset "$RELEASE_TAG" "$asset" --yes --repo "$GITHUB_REPOSITORY" ;;
               esac
             done < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' --repo "$GITHUB_REPOSITORY")
-            gh release upload "$RELEASE_TAG" "$installer" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload "$RELEASE_TAG" "$installer" "$android_apk" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$RELEASE_TAG" "$installer" \
+            gh release create "$RELEASE_TAG" "$installer" "$android_apk" \
               --verify-tag \
               --generate-notes \
               --title "Clipmo $RELEASE_VERSION" \
               --repo "$GITHUB_REPOSITORY"
           fi
-          test "$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length' --repo "$GITHUB_REPOSITORY")" -eq 1
+          test "$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length' --repo "$GITHUB_REPOSITORY")" -eq 2
