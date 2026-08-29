@@ -24,6 +24,7 @@ import {
   Mail,
   Monitor,
   Palette,
+  Plus,
   Search,
   Save,
   Settings2,
@@ -36,6 +37,7 @@ import {
 } from 'lucide-react';
 
 import { DeviceBadge } from './components/DeviceBadge';
+import { PairDeviceDialog } from './components/PairDeviceDialog';
 import { SyncPreferencesPanel } from './components/SyncPreferencesPanel';
 import { useStore } from './lib/store';
 import { api, fileSrc } from './lib/tauri';
@@ -86,6 +88,7 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [storageBusy, setStorageBusy] = useState(false);
   const [syncNowBusy, setSyncNowBusy] = useState(false);
+  const [pairDeviceOpen, setPairDeviceOpen] = useState(false);
   const [launchAtLoginBusy, setLaunchAtLoginBusy] = useState(false);
   const [ignoredAppsBusy, setIgnoredAppsBusy] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -123,6 +126,10 @@ export default function Settings() {
   };
 
   const persist = async () => {
+    if (local.syncPairingCode.trim().length < 6) {
+      setMutationError('Pairing code must be at least 6 digits/characters.');
+      return;
+    }
     setSaved(false);
     setMutationError(null);
     setSaving(true);
@@ -139,6 +146,19 @@ export default function Settings() {
       setMutationError(mutationErrorMessage('Settings could not be saved.', error));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleRegeneratePairingCode = async () => {
+    setSaved(false);
+    setMutationError(null);
+    try {
+      const next = await regeneratePairingCode();
+      if (next?.syncPairingCode) {
+        setLocal((prev) => (prev ? { ...prev, syncPairingCode: next.syncPairingCode } : prev));
+      }
+    } catch (error) {
+      setMutationError(mutationErrorMessage('A new pairing code could not be created.', error));
     }
   };
 
@@ -435,6 +455,14 @@ export default function Settings() {
 
         {activeCategory === 'sync' && (
         <Section title="Cross-device sync" description="Pair trusted devices on the same local network." icon={<Wifi size={18} />}>
+          <div className="history-actions sync-actions-header">
+            <button type="button" className="primary-button" onClick={() => setPairDeviceOpen(true)}>
+              <Plus size={16} aria-hidden /> Add / Pair device
+            </button>
+            <button type="button" className="secondary-button" disabled={!local.syncEnabled || syncNowBusy} onClick={() => void syncHistoryNow()}>
+              <RefreshCw size={16} aria-hidden /> {syncNowBusy ? 'Syncing…' : 'Sync now'}
+            </button>
+          </div>
           <Row id="sync-enabled" label="LAN sync" description="Discover paired Clipmo devices and exchange text-like clipboard entries.">
             <Toggle checked={local.syncEnabled} onChange={(value) => update('syncEnabled', value)} />
           </Row>
@@ -450,23 +478,36 @@ export default function Settings() {
               onChange={(value) => update('syncDeviceColor', value)}
             />
           </Row>
-          <Row id="sync-pairing-code" label="Pairing code" description="Devices with the same code on the same network can sync.">
-            <button
-              type="button"
-              className="pairing-code-button"
-              onClick={() => void regeneratePairingCode()}
-              title="Generate a new pairing code"
-            >
-              <span>{local.syncPairingCode}</span>
-              <RefreshCw size={15} aria-hidden />
-            </button>
+          <Row id="sync-pairing-code" label="Pairing code" description="Devices with the same code on the same network can sync (6 digits).">
+            <div className="pairing-code-field-group">
+              <input
+                type="text"
+                className="setting-input pairing-code-text-input"
+                value={local.syncPairingCode}
+                maxLength={6}
+                inputMode="numeric"
+                placeholder="000000"
+                onChange={(event) => {
+                  const val = event.target.value.replace(/\D/g, '').slice(0, 6);
+                  update('syncPairingCode', val);
+                }}
+                aria-label="Pairing code"
+              />
+              <button
+                type="button"
+                className="pairing-code-button"
+                onClick={() => void handleRegeneratePairingCode()}
+                title="Generate a new pairing code"
+              >
+                <RefreshCw size={15} aria-hidden />
+                <span>Generate</span>
+              </button>
+            </div>
+            {local.syncPairingCode.length > 0 && local.syncPairingCode.length < 6 && (
+              <span className="setting-field-error">Pairing code must be at least 6 digits</span>
+            )}
           </Row>
           <SyncPreferencesPanel />
-          <div className="history-actions">
-            <button type="button" className="secondary-button" disabled={!local.syncEnabled || syncNowBusy} onClick={() => void syncHistoryNow()}>
-              <RefreshCw size={16} aria-hidden /> {syncNowBusy ? 'Syncing…' : 'Sync now'}
-            </button>
-          </div>
           <div className="peer-list" aria-label="Discovered sync devices">
             {(sync?.peers.length ?? 0) === 0 ? (
               <span className="peer-empty">No paired devices discovered yet</span>
@@ -576,6 +617,13 @@ export default function Settings() {
           <Save size={16} aria-hidden /> {saving ? 'Saving…' : 'Save changes'}
         </button>
       </footer>
+      <PairDeviceDialog
+        open={pairDeviceOpen}
+        onClose={() => setPairDeviceOpen(false)}
+        onSettingsUpdated={(updated) => {
+          setLocal((prev) => (prev ? { ...prev, ...updated } : prev));
+        }}
+      />
     </div>
   );
 }

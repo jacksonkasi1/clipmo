@@ -42,7 +42,7 @@ const settings: Settings = {
 };
 
 const saveSettings = vi.fn(async (next: Settings) => next);
-const regeneratePairingCode = vi.fn(async () => undefined);
+const regeneratePairingCode = vi.fn(async () => settings);
 
 beforeEach(() => {
   saveSettings.mockClear();
@@ -65,13 +65,18 @@ afterEach(() => cleanup());
 describe('PairDeviceDialog', () => {
   it('joins another desktop by enabling sync and saving its six-digit code', async () => {
     const user = userEvent.setup();
-    render(<PairDeviceDialog open onClose={vi.fn()} />);
+    const onSettingsUpdated = vi.fn();
+    render(<PairDeviceDialog open onClose={vi.fn()} onSettingsUpdated={onSettingsUpdated} />);
 
     await user.type(screen.getByLabelText('Pairing code from another device'), '654321');
     await user.click(screen.getByRole('button', { name: 'Connect' }));
 
     await waitFor(() => expect(saveSettings).toHaveBeenCalledWith({
       ...settings,
+      syncEnabled: true,
+      syncPairingCode: '654321',
+    }));
+    expect(onSettingsUpdated).toHaveBeenCalledWith(expect.objectContaining({
       syncEnabled: true,
       syncPairingCode: '654321',
     }));
@@ -97,5 +102,25 @@ describe('PairDeviceDialog', () => {
     expect(screen.getByText('Connected: Laptop')).toBeTruthy();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('allows stopping pairing when sync is enabled', async () => {
+    const user = userEvent.setup();
+    const onSettingsUpdated = vi.fn();
+    useStore.setState({
+      settings: { ...settings, syncEnabled: true },
+    });
+    render(<PairDeviceDialog open onClose={vi.fn()} onSettingsUpdated={onSettingsUpdated} />);
+
+    const closePairingButton = screen.getByRole('button', { name: 'Close pairing' });
+    await user.click(closePairingButton);
+
+    await waitFor(() => expect(saveSettings).toHaveBeenCalledWith({
+      ...settings,
+      syncEnabled: false,
+    }));
+    expect(onSettingsUpdated).toHaveBeenCalledWith(expect.objectContaining({
+      syncEnabled: false,
+    }));
   });
 });

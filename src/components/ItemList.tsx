@@ -9,6 +9,7 @@ import { AlertCircle, Clipboard, LoaderCircle, SearchX } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { getShortcutLabel } from '../lib/platform';
 import { ItemRow } from './ItemRow';
+import { SelectionContextMenu } from './SelectionContextMenu';
 
 /**
  * Row heights, in px, shared by the virtualizer and the stylesheet.
@@ -42,6 +43,7 @@ export function ItemList() {
   const [listFocused, setListFocused] = useState(false);
   const [startupRetrying, setStartupRetrying] = useState(false);
   const [startupRecovered, setStartupRecovered] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const rowHeight = ROW_HEIGHT[mode];
 
@@ -146,6 +148,14 @@ export function ItemList() {
           selectToggle(selectedId);
         }
       }}
+      onContextMenu={(event) => {
+        const row = (event.target as HTMLElement).closest<HTMLElement>('[data-clip-id]');
+        if (!row) return;
+        event.preventDefault();
+        const id = Number(row.dataset.clipId);
+        if (!selectedIds.includes(id)) selectOnly(id);
+        setContextMenu({ x: event.clientX, y: event.clientY });
+      }}
     >
       {showStartupLoading ? (
         <div className="empty-state is-loading" role="status">
@@ -194,6 +204,7 @@ export function ItemList() {
                   position={row.index + 1}
                   total={hasMore ? -1 : items.length}
                   onSelect={(event) => {
+                    setContextMenu(null);
                     if (event.shiftKey) selectRange(item.id);
                     else if (event.ctrlKey || event.metaKey) selectToggle(item.id);
                     else selectOnly(item.id);
@@ -210,6 +221,7 @@ export function ItemList() {
           Loading more clipboard history
         </span>
       )}
+      {contextMenu && <SelectionContextMenu {...contextMenu} onClose={() => setContextMenu(null)} />}
     </div>
   );
 }

@@ -51,6 +51,7 @@ export function ItemRow({
     <div
       role="option"
       id={`clip-item-${item.id}`}
+      data-clip-id={item.id}
       aria-selected={selected || multiSelected}
       aria-posinset={position}
       aria-setsize={total}

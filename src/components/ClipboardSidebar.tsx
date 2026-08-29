@@ -8,6 +8,7 @@ import {
   AppWindow,
   File,
   FileText,
+  Folder,
   Globe2,
   History,
   Image,
@@ -18,12 +19,13 @@ import {
   PanelLeftClose,
   Palette,
   Plus,
+  RefreshCw,
   Smartphone,
   Star,
   Tag,
   Terminal,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useStore } from '../lib/store';
@@ -53,6 +55,7 @@ const CATEGORIES: CategoryDefinition[] = [
 interface ClipboardSidebarProps {
   onAddDevice?: () => void;
   onExploreFilters?: () => void;
+  onShowCollections?: () => void;
 }
 
 const MAX_RAIL_TAGS = 3;
@@ -64,7 +67,7 @@ const CONTEXT_MENU_MARGIN = 8;
 
 type ContextState = { x: number; y: number; scope: FilterScope; label: string } | null;
 
-export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSidebarProps) {
+export function ClipboardSidebar({ onAddDevice, onExploreFilters, onShowCollections }: ClipboardSidebarProps) {
   const open = useStore((state) => state.sidebarOpen);
   const activeKinds = useStore((state) => state.activeKinds);
   const favoritesOnly = useStore((state) => state.favoritesOnly);
@@ -83,11 +86,42 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
   const setSource = useStore((state) => state.setSource);
   const applyFilterAction = useStore((state) => state.applyFilterAction);
   const toggleSidebar = useStore((state) => state.toggleSidebar);
+  const refresh = useStore((state) => state.refresh);
   const settings = useStore((state) => state.settings);
   const showDevices = devices.length > 1;
   const hasOverflow = tags.length > MAX_RAIL_TAGS || devices.length > MAX_RAIL_DEVICES || sources.length > MAX_RAIL_SOURCES;
   const shortcuts = resolvedFilterShortcuts(settings?.filterShortcuts);
   const [context, setContext] = useState<ContextState>(null);
+  const [syncingDeviceId, setSyncingDeviceId] = useState<string | null>(null);
+  const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const syncDeviceNow = async (deviceId?: string) => {
+    if (deviceId) setSyncingDeviceId(deviceId);
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = null;
+    }
+    try {
+      await api.syncHistoryNow();
+      await refresh();
+    } catch (err) {
+      console.error('Failed to sync history:', err);
+    } finally {
+      syncTimeoutRef.current = setTimeout(() => {
+        setSyncingDeviceId(null);
+        syncTimeoutRef.current = null;
+      }, 1000);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+        syncTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!context) return;
@@ -144,6 +178,7 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
   return (
     <nav className="clipboard-sidebar" aria-label="Clipboard filters" aria-hidden={!open}>
       <div className="sidebar-actions">
+        {onShowCollections && <button type="button" className="sidebar-button" title="Collections" aria-label="Show collections" tabIndex={open ? 0 : -1} onClick={onShowCollections}><Folder size={17} aria-hidden /></button>}
         {CATEGORIES.map((category, index) => {
           const Icon = category.icon;
           const shortcut = shortcuts[index + 1];
@@ -241,19 +276,25 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
           {devices.slice(0, MAX_RAIL_DEVICES).map((device, index) => {
             const PlatformIcon = platformIcon(device.platform);
             const active = activeDeviceId === device.id;
+            const isSyncing = syncingDeviceId === device.id;
             return (
               <button
                 key={device.id}
                 type="button"
-                className={`sidebar-button device-filter ${active ? 'is-active' : ''}`}
-                title={`${device.name} (Ctrl+${index + 1})`}
+                className={`sidebar-button device-filter ${active ? 'is-active' : ''} ${isSyncing ? 'is-syncing' : ''}`}
+                title={`${device.name} (Double-click to sync history, Ctrl+${index + 1})`}
                 aria-label={`${device.name}, Ctrl+${index + 1}`}
                 aria-pressed={active}
                 tabIndex={open ? 0 : -1}
                 onClick={() => void setDevice(device.id)}
+                onDoubleClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void syncDeviceNow(device.id);
+                }}
                 onContextMenu={(event) => openContext(event, { kind: 'device', value: device.id }, device.name)}
               >
-                <PlatformIcon size={16} aria-hidden />
+                {isSyncing ? <RefreshCw size={16} className="is-spinning" aria-hidden /> : <PlatformIcon size={16} aria-hidden />}
                 <span className="device-filter-dot" style={{ backgroundColor: device.color }} />
               </button>
             );
@@ -293,6 +334,19 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters }: ClipboardSid
           onPointerDown={(event) => event.stopPropagation()}
         >
           <div className="sidebar-context-title">{context.label}</div>
+          {context.scope.kind === 'device' && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const devId = context.scope.value;
+                setContext(null);
+                void syncDeviceNow(devId);
+              }}
+            >
+              <RefreshCw size={14} aria-hidden /> Sync history now
+            </button>
+          )}
           {context.scope.kind === 'tag' && (
             <div className="sidebar-context-color">
               <label htmlFor="sidebar-tag-color">Custom color</label>

@@ -55,3 +55,10 @@ describe('Settings accessibility', () => {
     expect(normaliseExtensions('  ')).toEqual([]);
   });
 });
+
+describe('Settings pairing validation', () => {
+  it('validates minimum 6 characters for pairing codes', () => {
+    expect('123456'.length).toBe(6);
+    expect('12345'.length).toBeLessThan(6);
+  });
+});

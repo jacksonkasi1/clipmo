@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { ROW_HEIGHT } from '../components/ItemList';
 
 const app = readFileSync(fileURLToPath(new URL('./app.css', import.meta.url)), 'utf8');
+const polish = readFileSync(fileURLToPath(new URL('./polish.css', import.meta.url)), 'utf8');
 const tokens = readFileSync(fileURLToPath(new URL('./tokens.css', import.meta.url)), 'utf8');
 
 /** Returns the body of the first rule whose selector list matches exactly. */
@@ -86,5 +87,17 @@ describe('row trailing strip', () => {
     expect(trailing).toContain('min-width: 44px');
     expect(trailing).toContain('flex: 0 0 44px');
     expect(trailing).toContain('justify-content: flex-end');
+  });
+});
+
+describe('full-window collections layout', () => {
+  it('does not apply the clipboard split columns while collections are open', () => {
+    const splitSelector = '.app-frame.is-full:not(.preview-is-hidden):not(.collections-is-open)';
+
+    expect(polish.match(new RegExp(splitSelector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')))
+      .toHaveLength(2);
+    expect(polish).not.toContain('.app-frame.is-full:not(.preview-is-hidden) {');
+    expect(rule(app, '.app-frame.collections-is-open'))
+      .toContain('grid-template-columns: minmax(0, 1fr)');
   });
 });

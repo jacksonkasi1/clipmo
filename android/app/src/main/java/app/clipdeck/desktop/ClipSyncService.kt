@@ -408,7 +408,7 @@ class ClipSyncService : Service() {
 				).id
 				|| envelope.body.version().device_id != envelope.device.id
 				|| !validIdHash(envelope.body.idHash())
-				|| (isRevoked(envelope.device.id) && !pairingWindowOpen())
+				|| (!isTrusted(envelope.device.id) && !pairingWindowOpen())
 			) {
 				client.close()
 				return@withContext
@@ -475,7 +475,7 @@ class ClipSyncService : Service() {
 			}
 		}
 
-	private suspend fun enqueueItem(itemId: Long, kind: ItemKind, live: Boolean = true) = syncMutex.withLock {
+	private suspend fun enqueueItem(itemId: Long, kind: ItemKind, live: Boolean = true, targetPeerId: String? = null) = syncMutex.withLock {
 		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
 		val cursor = db.query("items", null, "id=?", arrayOf(itemId.toString()), null, null, null)
 		cursor.use { c ->
@@ -521,7 +521,12 @@ class ClipSyncService : Service() {
 				ItemKind.files -> buildFilesJob(snapshot, assetPaths)
 				else -> SyncJob(SyncBody.ClipUpsert(snapshot))
 			}
-			if (job != null) jobQueue.add(job)
+			if (job != null) {
+				if (targetPeerId != null) {
+					job.pendingPeers = mutableSetOf(targetPeerId)
+				}
+				jobQueue.add(job)
+			}
 		}
 		db.close()
 	}
@@ -603,10 +608,12 @@ class ClipSyncService : Service() {
 		}
 	}
 
-	private suspend fun enqueueHistoryBackfill() {
+	private suspend fun enqueueHistoryBackfill(targetPeerId: String? = null) {
 		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
 		val items = mutableListOf<Pair<Long, ItemKind>>()
-		db.query("items", arrayOf("id", "type"), "sync_status=?", arrayOf("local"), null, null, "id ASC", "500").use { cursor ->
+		val myDeviceId = getOrCreateDeviceId()
+		val query = "sync_status = 'local' OR sync_status IS NULL OR origin_device = ? OR origin_device IS NULL"
+		db.query("items", arrayOf("id", "type"), query, arrayOf(myDeviceId), null, null, "id DESC", "500").use { cursor ->
 			while (cursor.moveToNext()) {
 				val kind = when (cursor.getString(cursor.getColumnIndexOrThrow("type"))) {
 					"URL" -> ItemKind.link
@@ -618,8 +625,8 @@ class ClipSyncService : Service() {
 			}
 		}
 		db.close()
-		items.forEach { (id, kind) -> enqueueItem(id, kind, live = false) }
-		Log.i("ClipSyncService", "manual sync queued ${items.size} local items")
+		items.forEach { (id, kind) -> enqueueItem(id, kind, live = false, targetPeerId = targetPeerId) }
+		Log.i("ClipSyncService", "manual sync queued ${items.size} local items for target=${targetPeerId ?: "all"}")
 	}
 
 	private fun loadTrustedPeers() {
@@ -781,7 +788,8 @@ class ClipSyncService : Service() {
 						if (msg.protocol != PROTOCOL) continue
 						if (msg.pairing_code != myPairing) continue
 						if (msg.device.id == myDeviceId) continue
-						if (isRevoked(msg.device.id) && !pairingWindowOpen()) continue
+						if (!isTrusted(msg.device.id) && !pairingWindowOpen()) continue
+						val isNew = !peers.containsKey(msg.device.id)
 						peers[msg.device.id] = PeerRecord(
 							device = msg.device,
 							address = InetSocketAddress(
@@ -792,6 +800,9 @@ class ClipSyncService : Service() {
 						)
 						rememberTrustedDevice(msg.device, InetSocketAddress(packet.address.hostAddress, msg.tcp_port))
 						lamport.updateAndGet { it + 1 }
+						if (isNew) {
+							serviceScope.launch { enqueueHistoryBackfill(msg.device.id) }
+						}
 					} catch (e: SocketTimeoutException) {
 						// normal, continue loop
 					} catch (e: Exception) {
@@ -1171,6 +1182,16 @@ class ClipSyncService : Service() {
 			arrayOf(device.id, device.name, device.platform.name, device.color, address.hostString, address.port, now, now),
 		)
 		db.close()
+	}
+
+	private fun isTrusted(deviceId: String): Boolean {
+		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
+		val trusted = db.rawQuery(
+			"SELECT revoked FROM trusted_devices WHERE device_id=?",
+			arrayOf(deviceId),
+		).use { cursor -> cursor.moveToFirst() && cursor.getInt(0) == 0 }
+		db.close()
+		return trusted
 	}
 
 	private fun isRevoked(deviceId: String): Boolean {

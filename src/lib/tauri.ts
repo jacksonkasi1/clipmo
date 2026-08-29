@@ -4,6 +4,7 @@ import type {
   ApplicationInfo,
   ClipItem,
   Counts,
+  CollectionSummary,
   DeviceIdentity,
   IgnoredApp,
   FlavorBundle,
@@ -60,6 +61,9 @@ export const api = {
   counts: () => invoke<Counts>('counts'),
   knownDevices: () => invoke<DeviceIdentity[]>('known_devices'),
   knownTags: () => invoke<string[]>('known_tags'),
+  listCollections: () => invoke<CollectionSummary[]>('list_collections'),
+  createCollection: (name: string) => invoke<void>('create_collection', { name }),
+  deleteCollection: (name: string) => invoke<void>('delete_collection', { name }),
   knownSources: () => invoke<SourceApp[]>('known_sources'),
   applyFilterAction: (scope: FilterScope, action: BulkFilterAction) =>
     invoke<void>('apply_filter_action', { scope, action }),

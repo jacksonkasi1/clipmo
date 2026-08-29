@@ -10,15 +10,15 @@ android {
  applicationId = "app.clipdeck.desktop"
  minSdk = 29
  targetSdk = 35
- versionCode = 6
- versionName = "0.2.6"
+ versionCode = 7
+ versionName = "0.2.8"
  }
  signingConfigs {
  create("release") {
- storeFile = rootProject.file("debug.keystore")
- storePassword = "android"
- keyAlias = "androiddebugkey"
- keyPassword = "android"
+ storeFile = rootProject.file(System.getenv("ANDROID_KEYSTORE_PATH") ?: "debug.keystore")
+ storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: "android"
+ keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: "androiddebugkey"
+ keyPassword = System.getenv("ANDROID_KEY_PASSWORD") ?: "android"
  }
  }
  buildTypes {

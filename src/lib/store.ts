@@ -1,5 +1,5 @@
 // ** import types
-import type { BulkFilterAction, ClipItem, Counts, DeviceIdentity, FilterScope, ItemKind, ListQuery, Settings, SourceApp, SyncState, SystemAppearance } from './types';
+import type { BulkFilterAction, ClipItem, CollectionSummary, Counts, DeviceIdentity, FilterScope, ItemKind, ListQuery, Settings, SourceApp, SyncState, SystemAppearance } from './types';
 import type { TagColorMap } from './tag-color';
 
 // ** import lib
@@ -21,6 +21,7 @@ interface State {
   devices: DeviceIdentity[];
   activeDeviceId: string | null;
   tags: string[];
+  collections: CollectionSummary[];
   activeTag: string | null;
   tagColors: TagColorMap;
   sources: SourceApp[];
@@ -85,6 +86,12 @@ interface Actions {
   loadKnownDevices: () => Promise<void>;
   setDevice: (deviceId: string | null) => Promise<void>;
   loadKnownTags: () => Promise<void>;
+  loadCollections: () => Promise<void>;
+  createCollection: (name: string) => Promise<void>;
+  deleteCollection: (name: string) => Promise<void>;
+  addSelectedToCollection: (name: string) => Promise<void>;
+  removeSelectedFromCollection: (name: string) => Promise<void>;
+  setSelectedFavorites: (value: boolean) => Promise<void>;
   setTag: (tag: string | null) => Promise<void>;
   setTagColor: (tag: string, color: string | null) => void;
   loadKnownSources: () => Promise<void>;
@@ -108,7 +115,7 @@ interface Actions {
   saveSettings: (settings: Settings) => Promise<Settings>;
   setLaunchAtLogin: (enabled: boolean) => Promise<Settings>;
   setIgnoredApps: (ignoredApps: Settings['ignoredApps']) => Promise<Settings>;
-  regeneratePairingCode: () => Promise<void>;
+  regeneratePairingCode: () => Promise<Settings>;
   changeStorageLocation: (path: string) => Promise<Settings>;
   setShowPreview: (show: boolean) => Promise<void>;
   setShowDetails: (show: boolean) => void;
@@ -130,6 +137,22 @@ export type ResyncSource = 'open' | 'visible' | 'focus' | 'manual';
 let historyGeneration = 0;
 let metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Temporary visual-audit data for `vite dev` in a normal browser. The native
+// application never reaches this fallback because its collection command is
+// available through Tauri.
+const DEV_COLLECTIONS: CollectionSummary[] = [
+  { name: 'github', itemCount: 3 },
+  { name: 'expenses', itemCount: 13 },
+  { name: 'graphics', itemCount: 3 },
+  { name: 'instagram', itemCount: 2 },
+  { name: 'linkedin', itemCount: 3 },
+  { name: 'recipes', itemCount: 1 },
+  { name: 'youtube', itemCount: 2 },
+  { name: 'ai notes', itemCount: 0 },
+  { name: 'workouts', itemCount: 4 },
+  { name: 'web links', itemCount: 3 },
+];
+
 export const useStore = create<State & Actions>((set, get) => ({
   items: [],
   selectedId: null,
@@ -142,6 +165,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   devices: [],
   activeDeviceId: null,
   tags: [],
+  collections: [],
   activeTag: null,
   tagColors: loadTagColors(),
   sources: [],
@@ -343,8 +367,54 @@ export const useStore = create<State & Actions>((set, get) => ({
     }));
   },
 
+  loadCollections: async () => {
+    try {
+      set({ collections: await api.listCollections() });
+    } catch (error) {
+      if (!isDevBuild()) throw error;
+      set({ collections: DEV_COLLECTIONS });
+    }
+  },
+
+  createCollection: async (name) => {
+    await api.createCollection(name);
+    await Promise.all([get().loadCollections(), get().loadKnownTags()]);
+  },
+
+  deleteCollection: async (name) => {
+    await api.deleteCollection(name);
+    if (get().activeTag?.toLowerCase() === name.trim().toLowerCase()) set({ activeTag: null });
+    await Promise.all([get().loadCollections(), get().loadKnownTags(), get().refresh(false)]);
+  },
+
+  addSelectedToCollection: async (name) => {
+    const normalized = name.trim();
+    if (!normalized) return;
+    await Promise.all(get().selectedIds.map(async (id) => {
+      const item = get().items.find((entry) => entry.id === id);
+      if (item && !item.tags.some((tag) => tag.toLowerCase() === normalized.toLowerCase())) {
+        await api.setItemTags(id, [...item.tags, normalized]);
+      }
+    }));
+    await Promise.all([get().loadCollections(), get().loadKnownTags(), get().refresh(false)]);
+  },
+
+  removeSelectedFromCollection: async (name) => {
+    const normalized = name.trim().toLowerCase();
+    await Promise.all(get().selectedIds.map(async (id) => {
+      const item = get().items.find((entry) => entry.id === id);
+      if (item) await api.setItemTags(id, item.tags.filter((tag) => tag.toLowerCase() !== normalized));
+    }));
+    await Promise.all([get().loadCollections(), get().loadKnownTags(), get().refresh(false)]);
+  },
+
+  setSelectedFavorites: async (value) => {
+    await Promise.all(get().selectedIds.map((id) => api.setFavorite(id, value)));
+    await get().refresh();
+  },
+
   setTag: async (tag) => {
-    set({ activeTag: tag });
+    set({ activeTag: tag, activeKinds: [], favoritesOnly: false });
     await get().refresh(false);
   },
 
@@ -380,6 +450,7 @@ export const useStore = create<State & Actions>((set, get) => ({
     await Promise.all([
       get().refresh(),
       get().loadKnownTags(),
+      get().loadCollections(),
       get().loadKnownDevices(),
       get().loadKnownSources(),
     ]);
@@ -580,6 +651,7 @@ export const useStore = create<State & Actions>((set, get) => ({
     const next = await api.regeneratePairingCode();
     set({ settings: next });
     await get().loadSyncState();
+    return next;
   },
 
   changeStorageLocation: async (path) => {
@@ -610,6 +682,7 @@ export const useStore = create<State & Actions>((set, get) => ({
       }
     }
   },
+
   setShowDetails: (show) => set({ showDetails: show }),
   setShowCommands: (show) => set({ showCommands: show }),
 
@@ -647,6 +720,7 @@ export async function bootStore() {
       metadataRefreshTimer = null;
       void useStore.getState().loadKnownDevices();
       void useStore.getState().loadKnownTags();
+      void useStore.getState().loadCollections();
       void useStore.getState().loadKnownSources();
     }, 350);
   };
@@ -705,6 +779,7 @@ export async function bootStore() {
     useStore.getState().loadSyncState(),
     useStore.getState().loadKnownDevices(),
     useStore.getState().loadKnownTags(),
+    useStore.getState().loadCollections(),
     useStore.getState().loadKnownSources(),
     syncAppearance(),
   ]);

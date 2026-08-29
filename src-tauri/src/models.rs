@@ -391,6 +391,14 @@ fn default_image_quality() -> u8 {
     80
 }
 
+/// A user-visible collection and the number of clipboard items currently in it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionSummary {
+    pub name: String,
+    pub item_count: i64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterScope {

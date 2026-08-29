@@ -4,8 +4,10 @@ import type { Backdrop } from './lib/types';
 // ** import lib
 import { useEffect, useRef, useState } from 'react';
 
-import { CommandPalette } from './components/CommandPalette';
 import { ClipboardSidebar } from './components/ClipboardSidebar';
+import { CollectionContextBar } from './components/CollectionContextBar';
+import { CollectionsView } from './components/CollectionsView';
+import { CommandPalette } from './components/CommandPalette';
 import { DetailsTable } from './components/DetailsTable';
 import { Footer } from './components/Footer';
 import { ItemList } from './components/ItemList';
@@ -33,6 +35,8 @@ export default function App() {
   const selectedId = useStore((s) => s.selectedId);
   const selectedIds = useStore((s) => s.selectedIds);
   const items = useStore((s) => s.items);
+  const collections = useStore((s) => s.collections);
+  const activeTag = useStore((s) => s.activeTag);
   const select = useStore((s) => s.select);
   const selectOnly = useStore((s) => s.selectOnly);
   const selectToggle = useStore((s) => s.selectToggle);
@@ -46,12 +50,14 @@ export default function App() {
   const sidebarOpen = useStore((s) => s.sidebarOpen);
   const toggleSidebar = useStore((s) => s.toggleSidebar);
   const setCategory = useStore((s) => s.setCategory);
+  const setTag = useStore((s) => s.setTag);
   const showFavorites = useStore((s) => s.showFavorites);
   const setDevice = useStore((s) => s.setDevice);
   const readinessSignaled = useRef(false);
   const [quickEntering, setQuickEntering] = useState(false);
   const [pairDeviceOpen, setPairDeviceOpen] = useState(false);
   const [filterExplorerOpen, setFilterExplorerOpen] = useState(false);
+  const [collectionsOpen, setCollectionsOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.mode = mode;
@@ -326,7 +332,10 @@ export default function App() {
     'app-frame',
     `is-${mode}`,
     showPreview ? '' : 'preview-is-hidden',
+    collectionsOpen ? 'collections-is-open' : '',
   ].filter(Boolean).join(' ');
+  const activeCollectionIndex = collections.findIndex((collection) => collection.name === activeTag);
+  const activeCollection = activeCollectionIndex >= 0 ? collections[activeCollectionIndex] : null;
 
   const clipboardLayout = (
     <>
@@ -337,14 +346,25 @@ export default function App() {
         <ClipboardSidebar
           onAddDevice={mode === 'full' ? () => setPairDeviceOpen(true) : undefined}
           onExploreFilters={mode === 'full' ? () => setFilterExplorerOpen(true) : undefined}
+          onShowCollections={mode === 'full' ? () => setCollectionsOpen(true) : undefined}
         />
-        <div className="history-content">
+        <div className={`history-content ${activeCollection ? 'has-collection-context' : ''}`}>
+          {activeCollection && (
+            <CollectionContextBar
+              collection={activeCollection}
+              tone={activeCollectionIndex % 6}
+              onBack={() => {
+                void setTag(null);
+                setCollectionsOpen(true);
+              }}
+            />
+          )}
           <SearchBar onAddDevice={mode === 'full' ? () => setPairDeviceOpen(true) : undefined} />
           <ItemList />
           <Footer />
         </div>
       </aside>
-      {showPreview && (
+      {showPreview && !collectionsOpen && (
         <main className="content-pane">
           <PreviewPane />
           {mode === 'full' && showDetails && <DetailsTable />}
@@ -366,7 +386,7 @@ export default function App() {
         >
           {clipboardLayout}
         </div>
-      ) : clipboardLayout}
+      ) : collectionsOpen ? <CollectionsView onBack={() => setCollectionsOpen(false)} /> : clipboardLayout}
       {mode === 'full' && <CommandPalette />}
       {mode === 'full' && (
         <PairDeviceDialog open={pairDeviceOpen} onClose={() => setPairDeviceOpen(false)} />
