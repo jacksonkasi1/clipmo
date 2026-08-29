@@ -204,6 +204,7 @@ export function ItemList() {
                   position={row.index + 1}
                   total={hasMore ? -1 : items.length}
                   onSelect={(event) => {
+                    setContextMenu(null);
                     if (event.shiftKey) selectRange(item.id);
                     else if (event.ctrlKey || event.metaKey) selectToggle(item.id);
                     else selectOnly(item.id);

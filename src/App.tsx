@@ -4,9 +4,9 @@ import type { Backdrop } from './lib/types';
 // ** import lib
 import { useEffect, useRef, useState } from 'react';
 
-import { CommandPalette } from './components/CommandPalette';
 import { ClipboardSidebar } from './components/ClipboardSidebar';
 import { CollectionsView } from './components/CollectionsView';
+import { CommandPalette } from './components/CommandPalette';
 import { DetailsTable } from './components/DetailsTable';
 import { Footer } from './components/Footer';
 import { ItemList } from './components/ItemList';
@@ -328,6 +328,7 @@ export default function App() {
     'app-frame',
     `is-${mode}`,
     showPreview ? '' : 'preview-is-hidden',
+    collectionsOpen ? 'collections-is-open' : '',
   ].filter(Boolean).join(' ');
 
   const clipboardLayout = (

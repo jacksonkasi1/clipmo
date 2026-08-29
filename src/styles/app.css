@@ -24,6 +24,10 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
+.app-frame.collections-is-open {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .history-pane,
 .content-pane {
   min-width: 0;
@@ -448,7 +452,7 @@
   position: fixed;
   z-index: 190;
   display: grid;
-  min-width: 210px;
+  min-width: 222px;
   max-height: min(440px, calc(100vh - 16px));
   overflow: auto;
   padding: 4px;
@@ -471,27 +475,50 @@
 .selection-context-submenu { display: grid; max-height: 180px; margin: 1px 0 3px 12px; padding: 3px; overflow: auto; border-left: 1px solid var(--border); }
 .selection-context-submenu span { padding: 7px 9px; color: var(--text-muted); font-size: 11px; }
 
-.collections-view { display: grid; grid-template-rows: auto minmax(0, 1fr); width: 100%; min-width: 0; min-height: 0; padding: 18px 22px; overflow: hidden auto; color: var(--text); background: var(--pane); }
-.collections-header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 14px; padding-bottom: 17px; border-bottom: 1px solid var(--border); }
-.collections-header h1, .collections-header p { margin: 0; }
-.collections-header h1 { font-size: 20px; font-weight: 650; }
-.collections-header p { margin-bottom: 3px; color: var(--text-muted); font-size: 12px; }
-.collection-create { display: flex; align-items: center; height: 32px; overflow: hidden; background: var(--input); border: 1px solid var(--border); border-radius: var(--radius-control); }
-.collection-create input { width: 150px; height: 100%; padding: 0 9px; color: var(--text); background: transparent; border: 0; outline: 0; }
-.collection-create button { display: grid; place-items: center; width: 32px; height: 100%; color: var(--accent-foreground); background: var(--accent); border: 0; }
-.collection-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); align-content: start; gap: 16px; padding: 20px 0; }
-.collection-card { position: relative; min-height: 145px; overflow: hidden; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
-.collection-card::before { content: ''; position: absolute; top: 17px; left: 15px; width: 52px; height: 16px; border-radius: 7px 7px 0 0; background: currentColor; opacity: .75; }
-.collection-open { display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-end; width: 100%; height: 145px; padding: 16px; color: inherit; background: transparent; border: 0; text-align: left; }
-.collection-open svg { position: absolute; top: 26px; left: 16px; opacity: .35; }
-.collection-open strong { color: var(--text); font-size: 14px; }
-.collection-open span { margin-top: 3px; color: var(--text-muted); font-size: 11.5px; }
-.collection-open:hover { background: var(--hover); }
-.collection-delete { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 28px; height: 28px; color: var(--text-muted); background: transparent; border: 0; border-radius: 6px; opacity: 0; }
+.collections-view { display: grid; grid-template-rows: 58px minmax(0, 1fr); width: 100%; min-width: 0; min-height: 0; overflow: hidden; color: var(--text); background: var(--pane); }
+.collections-header { display: flex; align-items: center; gap: 11px; padding: 0 18px; border-bottom: 1px solid var(--border); }
+.collections-title { min-width: 0; margin-right: auto; }
+.collections-title h1 { margin: 0; font-size: 17px; font-weight: 620; line-height: 20px; }
+.collections-title span { display: block; margin-top: 1px; color: var(--text-muted); font-size: 10.5px; line-height: 13px; }
+.collection-header-button { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; padding: 0; color: var(--text-secondary); background: transparent; border: 1px solid transparent; border-radius: 8px; }
+.collection-header-button:hover { color: var(--text); background: var(--hover); border-color: var(--border); }
+.collection-header-button.is-primary { color: var(--accent-foreground); background: var(--accent); }
+.collection-header-button.is-primary:hover { background: color-mix(in srgb, var(--accent) 86%, var(--text)); border-color: transparent; }
+.collection-create { display: flex; align-items: center; height: 34px; overflow: hidden; background: var(--input); border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent); }
+.collection-create input { width: min(210px, 26vw); height: 100%; padding: 0 10px; color: var(--text); background: transparent; border: 0; outline: 0; font-size: 12px; }
+.collection-create button { display: grid; place-items: center; width: 32px; height: 100%; padding: 0; color: var(--text-secondary); background: transparent; border: 0; border-left: 1px solid var(--border); }
+.collection-create button:hover:not(:disabled) { color: var(--text); background: var(--hover); }
+.collection-create button:first-of-type { color: var(--accent); }
+.collection-create button:disabled { opacity: .4; }
+.collection-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); align-content: start; gap: 18px 16px; padding: 22px; overflow: hidden auto; }
+.collection-card { position: relative; min-width: 0; aspect-ratio: 1.15; color: var(--collection-color, var(--accent)); border-radius: 13px; }
+.collection-open { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; padding: 0; overflow: hidden; color: inherit; background: color-mix(in srgb, var(--collection-color) 14%, var(--surface)); border: 1px solid color-mix(in srgb, var(--collection-color) 36%, var(--border)); border-radius: inherit; text-align: left; box-shadow: 0 8px 20px color-mix(in srgb, var(--window) 34%, transparent); transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast); }
+.collection-open:hover { background: color-mix(in srgb, var(--collection-color) 19%, var(--surface)); border-color: color-mix(in srgb, var(--collection-color) 54%, var(--border)); transform: translateY(-2px); }
+.collection-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.collection-folder { position: relative; display: block; min-height: 0; margin: 13px 13px 0; }
+.collection-folder-back { position: absolute; inset: 2px 0 0; width: 100%; height: 100%; color: currentColor; opacity: .9; }
+.collection-papers { position: absolute; inset: 21% 16% 8%; display: flex; align-items: flex-end; justify-content: center; gap: 4px; color: var(--text-secondary); }
+.collection-papers svg { width: 31%; height: 69%; padding: 5px 3px; color: var(--pane); background: color-mix(in srgb, var(--text) 88%, var(--surface-raised)); border: 1px solid var(--border-strong); border-radius: 5px 5px 3px 3px; box-shadow: 0 3px 8px color-mix(in srgb, var(--window) 40%, transparent); }
+.collection-papers svg:first-child { transform: rotate(-5deg) translateY(4px); }
+.collection-papers svg:last-child { transform: rotate(5deg) translateY(4px); }
+.collection-folder-front { position: absolute; right: 0; bottom: 0; left: 0; height: 45%; background: color-mix(in srgb, var(--collection-color) 82%, var(--surface)); border-radius: 7px 7px 9px 9px; box-shadow: inset 0 1px color-mix(in srgb, var(--text) 12%, transparent); }
+.collection-label { position: relative; z-index: 2; display: block; min-width: 0; padding: 11px 13px 12px; color: var(--text); background: color-mix(in srgb, var(--collection-color) 74%, var(--surface)); }
+.collection-label strong, .collection-label span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collection-label strong { font-size: 13px; font-weight: 620; }
+.collection-label span { margin-top: 2px; color: color-mix(in srgb, var(--text) 72%, transparent); font-size: 10.5px; }
+.collection-delete { position: absolute; z-index: 3; top: 7px; right: 7px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; color: var(--text-secondary); background: color-mix(in srgb, var(--window) 78%, transparent); border: 1px solid var(--border); border-radius: 7px; opacity: 0; transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast); }
 .collection-card:hover .collection-delete, .collection-delete:focus-visible { opacity: 1; }
 .collection-delete:hover { color: var(--danger); background: var(--danger-soft); }
-.collection-tone-0 { color: var(--accent); }.collection-tone-1 { color: var(--success); }.collection-tone-2 { color: var(--tag-2); }.collection-tone-3 { color: var(--tag-3); }.collection-tone-4 { color: var(--tag-4); }.collection-tone-5 { color: var(--tag-5); }
-.collections-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; min-height: 260px; color: var(--text-muted); text-align: center; }.collections-empty strong { color: var(--text-secondary); }.collections-empty span { font-size: 12px; }
+.collection-tone-0 { --collection-color: var(--accent); }.collection-tone-1 { --collection-color: var(--success); }.collection-tone-2 { --collection-color: var(--tag-2); }.collection-tone-3 { --collection-color: var(--tag-3); }.collection-tone-4 { --collection-color: var(--tag-4); }.collection-tone-5 { --collection-color: var(--tag-5); }
+.collections-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 0; padding: 24px; color: var(--text-muted); text-align: center; }
+.collections-empty-icon { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 4px; color: var(--accent); background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent); border-radius: 14px; }
+.collections-empty strong { color: var(--text-secondary); font-size: 13px; }
+.collections-empty > span:last-of-type { font-size: 11px; }
+.collection-empty-create { display: inline-flex; align-items: center; gap: 6px; margin-top: 7px; padding: 7px 10px; color: var(--accent-foreground); background: var(--accent); border: 0; border-radius: 7px; font-size: 11.5px; }
+
+@media (max-width: 760px) {
+  .collection-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 14px; padding: 16px; }
+}
 
 .kind-icon {
   display: grid;
