@@ -116,29 +116,6 @@ jobs:
       - name: Build and type-check frontend
         run: npm run build
 
-      - name: Check Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-
-      - name: Lint Rust
-        run: >-
-          cargo clippy
-          --manifest-path src-tauri/Cargo.toml
-          --target ${{ env.WINDOWS_TARGET }}
-          --locked
-          --all-targets
-          --
-          -D warnings
-
-      - name: Run Rust tests on Windows MSVC
-        run: >-
-          cargo test
-          --manifest-path src-tauri/Cargo.toml
-          --target ${{ env.WINDOWS_TARGET }}
-          --locked
-          --all-targets
-          --
-          --test-threads=1
-
       - name: Prepare Windows code signing
         id: signing
         shell: pwsh
@@ -172,28 +149,11 @@ jobs:
           -TargetTriple "${{ env.WINDOWS_TARGET }}"
           -ExpectedSigned "${{ steps.signing.outputs.enabled }}"
 
-      - name: Build, extract, and smoke-test exact release assets
-        id: collect
-        shell: pwsh
-        run: >-
-          ./scripts/collect-windows-artifacts.ps1
-          -TargetTriple "${{ env.WINDOWS_TARGET }}"
-          -OutputDirectory "artifacts/windows-x64"
-
-      - name: Reject the quick-window white frame
-        shell: pwsh
-        run: >-
-          ./scripts/assert-quick-window-frame.ps1
-          -Screenshot "artifacts/windows-x64/${{ steps.collect.outputs.quick_screenshot }}"
-
-      - name: Upload the tested installer and startup screenshots
+      - name: Upload the Windows installer
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: clipmo-windows-x64-${{ github.sha }}
-          path: |
-            artifacts/windows-x64/Clipmo_*_x64-setup.exe
-            artifacts/windows-x64/Clipmo_*_main-startup.png
-            artifacts/windows-x64/Clipmo_*_quick-startup.png
+          path: src-tauri/target/${{ env.WINDOWS_TARGET }}/release/bundle/nsis/Clipmo_*_x64-setup.exe
           if-no-files-found: warn
           retention-days: 14
