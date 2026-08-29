@@ -3,7 +3,7 @@
 
 /* The full application should give the preview the visual priority while the
    history remains comfortably wide enough for titles and source labels. */
-.app-frame.is-full:not(.preview-is-hidden) {
+.app-frame.is-full:not(.preview-is-hidden):not(.collections-is-open) {
   grid-template-columns: minmax(360px, 39%) minmax(0, 61%);
 }
 
@@ -31,7 +31,7 @@
 }
 
 @media (max-width: 860px) {
-  .app-frame.is-full:not(.preview-is-hidden) {
+  .app-frame.is-full:not(.preview-is-hidden):not(.collections-is-open) {
     grid-template-columns: minmax(340px, 43%) minmax(0, 57%);
   }
 
