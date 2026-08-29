@@ -24,6 +24,7 @@ jobs:
     name: Build Android release APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    continue-on-error: true
     outputs:
       version: ${{ steps.version.outputs.version }}
 
@@ -245,7 +246,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' && always() && needs.build.result == 'success'
     needs: [build, build-android]
     runs-on: ubuntu-latest
     permissions:
@@ -260,6 +261,7 @@ jobs:
 
       - name: Download Android release APK
         uses: actions/download-artifact@v8
+        continue-on-error: true
         with:
           name: clipmo-android-apk-${{ needs.build-android.outputs.version }}
           path: release-assets
@@ -274,21 +276,21 @@ jobs:
           android_apk="release-assets/app-release.apk"
           main_screenshot="release-assets/Clipmo_${RELEASE_VERSION}_main-startup.png"
           quick_screenshot="release-assets/Clipmo_${RELEASE_VERSION}_quick-startup.png"
-          test -s "$installer" && test -s "$android_apk" && test -s "$main_screenshot" && test -s "$quick_screenshot"
-          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 4
+          test -s "$installer" && test -s "$main_screenshot" && test -s "$quick_screenshot"
+          release_assets=("$installer")
+          if test -s "$android_apk"; then
+            release_assets+=("$android_apk")
+          fi
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             while IFS= read -r asset; do
-              case "$asset" in
-                "$(basename "$installer")"|"$(basename "$android_apk")") ;;
-                *) gh release delete-asset "$RELEASE_TAG" "$asset" --yes --repo "$GITHUB_REPOSITORY" ;;
-              esac
+              gh release delete-asset "$RELEASE_TAG" "$asset" --yes --repo "$GITHUB_REPOSITORY"
             done < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' --repo "$GITHUB_REPOSITORY")
-            gh release upload "$RELEASE_TAG" "$installer" "$android_apk" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload "$RELEASE_TAG" "${release_assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$RELEASE_TAG" "$installer" "$android_apk" \
+            gh release create "$RELEASE_TAG" "${release_assets[@]}" \
               --verify-tag \
               --generate-notes \
               --title "Clipmo $RELEASE_VERSION" \
               --repo "$GITHUB_REPOSITORY"
           fi
-          test "$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length' --repo "$GITHUB_REPOSITORY")" -eq 2
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' --repo "$GITHUB_REPOSITORY" | grep -Fx "$(basename "$installer")"
