@@ -45,6 +45,7 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
+          keytool -genkeypair -keystore debug.keystore -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Clipmo CI" -noprompt
           ./gradlew test assembleRelease --no-daemon
 
       - name: Upload Android release APK

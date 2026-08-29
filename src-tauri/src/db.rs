@@ -19,9 +19,9 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::error::{Error, Result};
 use crate::models::{
-    now_ms, BulkFilterAction, ClipItem, Counts, DeviceIdentity, FilterScope, FilterScopeKind,
-    CollectionSummary, ImageMeta, ItemKind, ListQuery, NewItem, PlatformKind, Settings, SourceApp, StoredFile,
-    SyncStatus,
+    now_ms, BulkFilterAction, ClipItem, CollectionSummary, Counts, DeviceIdentity, FilterScope,
+    FilterScopeKind, ImageMeta, ItemKind, ListQuery, NewItem, PlatformKind, Settings, SourceApp,
+    StoredFile, SyncStatus,
 };
 
 /// Column list shared by every read query so that `row_to_item` stays valid.
@@ -451,13 +451,22 @@ CREATE TABLE IF NOT EXISTS collections (
              LEFT JOIN items AS item ON EXISTS (SELECT 1 FROM json_each(item.tags) AS item_tag WHERE lower(item_tag.value) = lower(collection.name))
              GROUP BY collection.name ORDER BY lower(collection.name)",
         )?;
-        let rows = statement.query_map([], |row| Ok(CollectionSummary { name: row.get(0)?, item_count: row.get(1)? }))?;
-        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Error::from)
+        let rows = statement.query_map([], |row| {
+            Ok(CollectionSummary {
+                name: row.get(0)?,
+                item_count: row.get(1)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Error::from)
     }
 
     pub fn create_collection(&self, name: &str) -> Result<()> {
         let name = normalize_collection_name(name)?;
-        self.conn.lock().execute("INSERT OR IGNORE INTO collections (name) VALUES (?1)", params![name])?;
+        self.conn.lock().execute(
+            "INSERT OR IGNORE INTO collections (name) VALUES (?1)",
+            params![name],
+        )?;
         Ok(())
     }
 
@@ -466,14 +475,22 @@ CREATE TABLE IF NOT EXISTS collections (
         let conn = self.conn.lock();
         conn.execute("DELETE FROM collections WHERE name = ?1", params![name])?;
         let mut statement = conn.prepare_cached("SELECT id, tags FROM items WHERE EXISTS (SELECT 1 FROM json_each(items.tags) AS item_tag WHERE lower(item_tag.value) = lower(?1))")?;
-        let rows = statement.query_map(params![name], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?;
+        let rows = statement.query_map(params![name], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
         let affected = rows.collect::<std::result::Result<Vec<_>, _>>()?;
         for (id, tags) in affected {
             let tags: Vec<String> = serde_json::from_str(&tags).unwrap_or_default();
-            let remaining: Vec<String> = tags.into_iter().filter(|tag| !tag.eq_ignore_ascii_case(name.as_str())).collect();
+            let remaining: Vec<String> = tags
+                .into_iter()
+                .filter(|tag| !tag.eq_ignore_ascii_case(name.as_str()))
+                .collect();
             let remaining_json = serde_json::to_string(&remaining)
                 .map_err(|error| Error::Other(error.to_string()))?;
-            conn.execute("UPDATE items SET tags = ?2 WHERE id = ?1", params![id, remaining_json])?;
+            conn.execute(
+                "UPDATE items SET tags = ?2 WHERE id = ?1",
+                params![id, remaining_json],
+            )?;
         }
         Ok(())
     }
@@ -585,7 +602,10 @@ CREATE TABLE IF NOT EXISTS collections (
             serde_json::to_string(&normalized).map_err(|error| Error::Other(error.to_string()))?;
         let conn = self.conn.lock();
         for tag in &normalized {
-            conn.execute("INSERT OR IGNORE INTO collections (name) VALUES (?1)", params![tag])?;
+            conn.execute(
+                "INSERT OR IGNORE INTO collections (name) VALUES (?1)",
+                params![tag],
+            )?;
         }
         let changed = conn.execute(
             "UPDATE items SET tags = ?2 WHERE id = ?1",
@@ -929,7 +949,12 @@ CREATE TABLE IF NOT EXISTS collections (
 }
 
 fn normalize_collection_name(name: &str) -> Result<String> {
-    let normalized = name.trim().trim_start_matches('#').chars().take(40).collect::<String>();
+    let normalized = name
+        .trim()
+        .trim_start_matches('#')
+        .chars()
+        .take(40)
+        .collect::<String>();
     if normalized.is_empty() {
         return Err(Error::Other("collection name cannot be empty".into()));
     }
