@@ -1495,6 +1495,23 @@ private fun ClipmoClipboardCard(
 // Collection Card
 // -----------------------------------------------------------------------------
 
+private val COLLECTION_TONE_COLORS = listOf(
+    Color(0xFF39B9E8), // Cyan / Blue
+    Color(0xFF62C68B), // Emerald
+    Color(0xFF89D329), // Lime
+    Color(0xFFF1A13B), // Amber
+    Color(0xFFA98DF0), // Purple
+    Color(0xFF34C8B2), // Teal
+    Color(0xFFEF68B2), // Pink
+    Color(0xFFEF7777), // Coral Red
+)
+
+private fun collectionToneColor(name: String): Color {
+    val hash = name.trim().lowercase().fold(0) { acc, c -> ((acc shl 5) - acc + c.code) }
+    val index = kotlin.math.abs(hash) % COLLECTION_TONE_COLORS.size
+    return COLLECTION_TONE_COLORS[index]
+}
+
 @Composable
 private fun ClipmoCollectionCard(
     name: String,
@@ -1508,6 +1525,7 @@ private fun ClipmoCollectionCard(
     val colors = ClipmoTheme.colors
     val space = ClipmoTheme.spacing
     val type = ClipmoTheme.typography
+    val toneColor = remember(name) { collectionToneColor(name) }
 
     val bg by animateColorAsState(
         if (selected) colors.surfaceContainerHighest else colors.surfaceContainerLow,
@@ -1515,7 +1533,7 @@ private fun ClipmoCollectionCard(
         label = "collBg",
     )
     val borderCol by animateColorAsState(
-        if (selected) colors.accent else colors.border,
+        if (selected) toneColor else colors.border,
         tween(150),
         label = "collBorder",
     )
@@ -1542,12 +1560,13 @@ private fun ClipmoCollectionCard(
         ) {
             Box(
                 Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (selected) colors.accentMuted else colors.surfaceContainer),
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(if (selected) toneColor.copy(alpha = 0.24f) else toneColor.copy(alpha = 0.14f))
+                    .border(1.dp, toneColor.copy(alpha = 0.28f), RoundedCornerShape(9.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                ClipmoIcon(icon, if (selected) colors.accent else colors.textSecondary, Modifier.size(16.dp))
+                ClipmoIcon(icon, toneColor, Modifier.size(17.dp))
             }
             if (onDelete != null) {
                 Box(
@@ -1572,7 +1591,7 @@ private fun ClipmoCollectionCard(
                     Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(colors.accent),
+                        .background(toneColor),
                 )
             }
         }

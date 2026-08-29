@@ -137,6 +137,22 @@ export type ResyncSource = 'open' | 'visible' | 'focus' | 'manual';
 let historyGeneration = 0;
 let metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Temporary visual-audit data for `vite dev` in a normal browser. The native
+// application never reaches this fallback because its collection command is
+// available through Tauri.
+const DEV_COLLECTIONS: CollectionSummary[] = [
+  { name: 'github', itemCount: 3 },
+  { name: 'expenses', itemCount: 13 },
+  { name: 'graphics', itemCount: 3 },
+  { name: 'instagram', itemCount: 2 },
+  { name: 'linkedin', itemCount: 3 },
+  { name: 'recipes', itemCount: 1 },
+  { name: 'youtube', itemCount: 2 },
+  { name: 'ai notes', itemCount: 0 },
+  { name: 'workouts', itemCount: 4 },
+  { name: 'web links', itemCount: 3 },
+];
+
 export const useStore = create<State & Actions>((set, get) => ({
   items: [],
   selectedId: null,
@@ -351,7 +367,14 @@ export const useStore = create<State & Actions>((set, get) => ({
     }));
   },
 
-  loadCollections: async () => set({ collections: await api.listCollections() }),
+  loadCollections: async () => {
+    try {
+      set({ collections: await api.listCollections() });
+    } catch (error) {
+      if (!isDevBuild()) throw error;
+      set({ collections: DEV_COLLECTIONS });
+    }
+  },
 
   createCollection: async (name) => {
     await api.createCollection(name);

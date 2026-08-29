@@ -5,6 +5,7 @@ import type { Backdrop } from './lib/types';
 import { useEffect, useRef, useState } from 'react';
 
 import { ClipboardSidebar } from './components/ClipboardSidebar';
+import { CollectionContextBar } from './components/CollectionContextBar';
 import { CollectionsView } from './components/CollectionsView';
 import { CommandPalette } from './components/CommandPalette';
 import { DetailsTable } from './components/DetailsTable';
@@ -34,6 +35,8 @@ export default function App() {
   const selectedId = useStore((s) => s.selectedId);
   const selectedIds = useStore((s) => s.selectedIds);
   const items = useStore((s) => s.items);
+  const collections = useStore((s) => s.collections);
+  const activeTag = useStore((s) => s.activeTag);
   const select = useStore((s) => s.select);
   const selectOnly = useStore((s) => s.selectOnly);
   const selectToggle = useStore((s) => s.selectToggle);
@@ -47,6 +50,7 @@ export default function App() {
   const sidebarOpen = useStore((s) => s.sidebarOpen);
   const toggleSidebar = useStore((s) => s.toggleSidebar);
   const setCategory = useStore((s) => s.setCategory);
+  const setTag = useStore((s) => s.setTag);
   const showFavorites = useStore((s) => s.showFavorites);
   const setDevice = useStore((s) => s.setDevice);
   const readinessSignaled = useRef(false);
@@ -330,6 +334,8 @@ export default function App() {
     showPreview ? '' : 'preview-is-hidden',
     collectionsOpen ? 'collections-is-open' : '',
   ].filter(Boolean).join(' ');
+  const activeCollectionIndex = collections.findIndex((collection) => collection.name === activeTag);
+  const activeCollection = activeCollectionIndex >= 0 ? collections[activeCollectionIndex] : null;
 
   const clipboardLayout = (
     <>
@@ -342,7 +348,17 @@ export default function App() {
           onExploreFilters={mode === 'full' ? () => setFilterExplorerOpen(true) : undefined}
           onShowCollections={mode === 'full' ? () => setCollectionsOpen(true) : undefined}
         />
-        <div className="history-content">
+        <div className={`history-content ${activeCollection ? 'has-collection-context' : ''}`}>
+          {activeCollection && (
+            <CollectionContextBar
+              collection={activeCollection}
+              tone={activeCollectionIndex % 6}
+              onBack={() => {
+                void setTag(null);
+                setCollectionsOpen(true);
+              }}
+            />
+          )}
           <SearchBar onAddDevice={mode === 'full' ? () => setPairDeviceOpen(true) : undefined} />
           <ItemList />
           <Footer />
