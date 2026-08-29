@@ -807,7 +807,7 @@ private fun DevicesScreen(
     val space = ClipmoTheme.spacing
     val type = ClipmoTheme.typography
     var joinCodeInput by rememberSaveable { mutableStateOf("") }
-    val normalizedJoinCode = joinCodeInput.filter { it.isLetterOrDigit() }.take(6)
+    val normalizedJoinCode = joinCodeInput.filter { it.isDigit() }.take(6)
     val canJoin = normalizedJoinCode.length == 6
 
     LazyColumn(
@@ -923,7 +923,7 @@ private fun DevicesScreen(
                     value = joinCodeInput,
                     hint = "Enter 6-digit code",
                     onValueChange = {
-                        joinCodeInput = it.filter { ch -> ch.isLetterOrDigit() }.take(6)
+                        joinCodeInput = it.filter { ch -> ch.isDigit() }.take(6)
                     },
                     searchIcon = false,
                 )
@@ -1075,20 +1075,20 @@ private fun SettingsScreen(
                 )
                 Spacer(Modifier.height(space.md))
                 BasicText(
-                    "Pairing code (min 6 digits)",
+                    "Pairing code (6 digits)",
                     style = ClipmoTheme.typography.label.copy(color = colors.textSecondary),
                 )
                 Spacer(Modifier.height(space.xs))
                 ClipmoSearchBar(
                     value = state.pairingCode,
                     hint = "Enter pairing code",
-                    onValueChange = onPairingCodeChanged,
+                    onValueChange = { onPairingCodeChanged(it.filter { ch -> ch.isDigit() }.take(6)) },
                     searchIcon = false,
                 )
                 if (state.pairingCode.isNotEmpty() && state.pairingCode.length < 6) {
                     Spacer(Modifier.height(space.xs))
                     BasicText(
-                        "Must be at least 6 digits (${state.pairingCode.length}/6)",
+                        "Must be 6 digits (${state.pairingCode.length}/6)",
                         style = ClipmoTheme.typography.metadata.copy(color = colors.danger),
                     )
                 }

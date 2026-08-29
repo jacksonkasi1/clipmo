@@ -263,8 +263,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startPairing() {
-        if (pairingCode.isBlank() || pairingCode.length < 6) {
-            Toast.makeText(this, "Pairing code must be at least 6 digits", Toast.LENGTH_SHORT).show()
+        val sanitized = pairingCode.filter { it.isDigit() }.take(PAIRING_CODE_LENGTH)
+        if (sanitized.length != PAIRING_CODE_LENGTH) {
+            Toast.makeText(this, "Pairing code must be 6 digits", Toast.LENGTH_SHORT).show()
             return
         }
         val until = System.currentTimeMillis() + PAIRING_WINDOW_MS
@@ -283,9 +284,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun joinDevice(code: String) {
-        val sanitized = code.filter { it.isLetterOrDigit() }.take(MAX_PAIRING_CODE_LENGTH)
-        if (sanitized.length < 6) {
-            Toast.makeText(this, "Pairing code must be at least 6 digits", Toast.LENGTH_SHORT).show()
+        val sanitized = code.filter { it.isDigit() }.take(PAIRING_CODE_LENGTH)
+        if (sanitized.length != PAIRING_CODE_LENGTH) {
+            Toast.makeText(this, "Pairing code must be 6 digits", Toast.LENGTH_SHORT).show()
             return
         }
         handlePairingCodeChanged(sanitized)
@@ -356,8 +357,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleSyncChanged(enabled: Boolean) {
-        if (enabled && pairingCode.isBlank()) {
-            Toast.makeText(this, "Enter a pairing code first", Toast.LENGTH_SHORT).show()
+        val sanitized = pairingCode.filter { it.isDigit() }.take(PAIRING_CODE_LENGTH)
+        if (enabled && sanitized.length != PAIRING_CODE_LENGTH) {
+            Toast.makeText(this, "Enter a 6-digit pairing code first", Toast.LENGTH_SHORT).show()
             syncEnabled = false
             return
         }
@@ -372,7 +374,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handlePairingCodeChanged(code: String) {
-        pairingCode = code.filter { it.isLetterOrDigit() }.take(MAX_PAIRING_CODE_LENGTH)
+        pairingCode = code.filter { it.isDigit() }.take(PAIRING_CODE_LENGTH)
         preferences.edit().putString(KEY_PAIRING_CODE, pairingCode).apply()
         if (syncEnabled) {
             stopService(Intent(this, ClipSyncService::class.java))
@@ -530,7 +532,7 @@ class MainActivity : ComponentActivity() {
         const val KEY_PAIRING_UNTIL = "pairing_until"
         const val KEY_CLIPBOARD_SUPPRESSION_HASH = "clipboard_suppression_hash"
         const val KEY_CLIPBOARD_SUPPRESSION_URI = "clipboard_suppression_uri"
-        const val MAX_PAIRING_CODE_LENGTH = 12
+        const val PAIRING_CODE_LENGTH = 6
         const val DEVICE_REFRESH_MS = 3_000L
         const val PAIRING_WINDOW_MS = 120_000L
         const val CLIPBOARD_FOCUS_DELAY_MS = 250L
