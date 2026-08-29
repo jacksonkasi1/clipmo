@@ -612,6 +612,7 @@ CREATE TABLE IF NOT EXISTS collections (
             params![id, json],
         )?;
         require_changed(changed, "clipboard item")?;
+        drop(conn);
         self.get_required(id)
     }
 
