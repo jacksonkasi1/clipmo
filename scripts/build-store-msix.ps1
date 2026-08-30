@@ -48,6 +48,11 @@ try {
             $env:PATH = "$directToolchain;$env:PATH"
         }
     }
+    & py -3 -c 'import PIL'
+    if ($LASTEXITCODE -ne 0) {
+        & py -3 -m pip install --disable-pip-version-check --requirement scripts/requirements-store.txt
+        if ($LASTEXITCODE -ne 0) { throw 'Store asset dependency installation failed.' }
+    }
     & py -3 scripts/generate-store-assets.py
     if ($LASTEXITCODE -ne 0) { throw 'Store asset generation failed.' }
 
