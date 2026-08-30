@@ -178,7 +178,11 @@ export function ClipboardSidebar({ onAddDevice, onExploreFilters, onShowCollecti
   return (
     <nav className="clipboard-sidebar" aria-label="Clipboard filters" aria-hidden={!open}>
       <div className="sidebar-actions">
-        {onShowCollections && <button type="button" className="sidebar-button" title="Collections" aria-label="Show collections" tabIndex={open ? 0 : -1} onClick={onShowCollections}><Folder size={17} aria-hidden /></button>}
+        {onShowCollections && (
+          <button type="button" className={`sidebar-button ${activeTag ? 'is-active' : ''}`} title="Collections" aria-label="Show collections" tabIndex={open ? 0 : -1} onClick={onShowCollections}>
+            <Folder size={17} aria-hidden />
+          </button>
+        )}
         {CATEGORIES.map((category, index) => {
           const Icon = category.icon;
           const shortcut = shortcuts[index + 1];

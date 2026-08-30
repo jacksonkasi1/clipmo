@@ -91,6 +91,20 @@ describe('row trailing strip', () => {
 });
 
 describe('full-window collections layout', () => {
+  it('right-aligns creation controls even without the optional search field', () => {
+    expect(rule(app, '.collection-create')).toContain('margin-left: auto');
+    expect(rule(app, '.collection-header-button.is-primary')).toContain('margin-left: auto');
+  });
+
+  it('preserves the native Windows material instead of stacking artificial blur layers', () => {
+    expect(rule(app, '.collections-view')).toContain('background: var(--window)');
+    for (const selector of ['.collections-view', '.collections-header', '.popout-folder-card', '.collection-inspector']) {
+      expect(rule(app, selector)).not.toContain('backdrop-filter');
+      expect(rule(app, selector)).not.toContain('radial-gradient');
+    }
+    expect(rule(app, '.popout-folder-card.is-selected')).toContain('var(--row-selected)');
+  });
+
   it('does not apply the clipboard split columns while collections are open', () => {
     const splitSelector = '.app-frame.is-full:not(.preview-is-hidden):not(.collections-is-open)';
 

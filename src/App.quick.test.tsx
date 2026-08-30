@@ -70,7 +70,7 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({ label: 'quick' }),
 }));
 
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 import { bootStore, useStore } from './lib/store';
 
@@ -209,6 +209,35 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('App quick-view clipboard sync', () => {
+  it('opens collections in Quick View and returns to the selected folder history', async () => {
+    useStore.setState({
+      sidebarOpen: true,
+      collections: [{ name: 'work', itemCount: 1 }],
+      activeTag: null,
+      items: [fileItem],
+      selectedId: fileItem.id,
+      selectedIds: [fileItem.id],
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show collections' }));
+    expect(screen.getByRole('region', { name: 'Quick collections' })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(apiMock.pasteActive).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Delete' });
+    expect(apiMock.deleteItem).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'work 1 item' }));
+    await waitFor(() => expect(useStore.getState().activeTag).toBe('work'));
+    expect(screen.queryByRole('region', { name: 'Quick collections' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Back to collections' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to collections' }));
+    expect(screen.getByRole('region', { name: 'Quick collections' })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('region', { name: 'Quick collections' })).toBeNull();
+  });
+
   it('refreshes the store on every clipdeck:quick-opened event', async () => {
     render(<App />);
     // `bootStore` is what installs the Tauri listeners; main.tsx schedules it

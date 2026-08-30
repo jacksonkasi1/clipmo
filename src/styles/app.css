@@ -536,8 +536,8 @@
 .selection-context-submenu { display: grid; max-height: 180px; margin: 1px 0 3px 12px; padding: 3px; overflow: auto; border-left: 1px solid var(--border); }
 .selection-context-submenu span { padding: 7px 9px; color: var(--text-muted); font-size: 11px; }
 
-.collections-view { position: relative; display: grid; grid-template-rows: 58px minmax(0, 1fr); width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; color: var(--text); background: radial-gradient(circle at 10% -10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 40%), radial-gradient(circle at 90% 110%, color-mix(in srgb, var(--tag-4) 10%, transparent), transparent 42%), var(--window); }
-.collections-header { position: relative; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 0 20px; background: color-mix(in srgb, var(--surface) 48%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--text) 10%, transparent); box-shadow: 0 1px color-mix(in srgb, var(--window) 24%, transparent); backdrop-filter: blur(24px) saturate(120%); -webkit-backdrop-filter: blur(24px) saturate(120%); }
+.collections-view { position: relative; display: grid; grid-template-rows: 58px minmax(0, 1fr); width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; color: var(--text); background: var(--window); }
+.collections-header { position: relative; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 0 20px; background: transparent; border-bottom: 1px solid var(--border); }
 .collections-title { min-width: 0; margin-right: 12px; }
 .collections-title h1 { margin: 0; font-size: 17px; font-weight: 620; line-height: 20px; }
 .collections-title span { display: block; margin-top: 1px; color: var(--text-muted); font-size: 10.5px; line-height: 13px; }
@@ -548,10 +548,10 @@
 .collections-search-clear:hover { color: var(--text); }
 .collection-header-button { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; padding: 0; color: var(--text-secondary); background: color-mix(in srgb, var(--text) 5%, transparent); border: 1px solid color-mix(in srgb, var(--text) 10%, transparent); border-radius: 8px; box-shadow: inset 0 1px color-mix(in srgb, var(--text) 7%, transparent); cursor: pointer; }
 .collection-header-button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); border-color: color-mix(in srgb, var(--text) 17%, transparent); }
-.collection-header-button.is-primary { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
+.collection-header-button.is-primary { margin-left: auto; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
 .collection-header-button.is-primary:hover { color: color-mix(in srgb, var(--accent) 84%, var(--text)); background: color-mix(in srgb, var(--accent) 23%, transparent); border-color: color-mix(in srgb, var(--accent) 48%, transparent); }
-.collection-create { display: flex; align-items: center; height: 34px; overflow: hidden; background: color-mix(in srgb, var(--input) 72%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: 8px; box-shadow: inset 0 1px color-mix(in srgb, var(--text) 6%, transparent), 0 0 0 2px color-mix(in srgb, var(--accent) 9%, transparent); }
-.collection-create input { width: min(210px, 26vw); height: 100%; padding: 0 10px; color: var(--text); background: transparent; border: 0; outline: 0; font-size: 12px; }
+.collection-create { display: flex; align-items: center; flex-shrink: 0; margin-left: auto; height: 34px; overflow: hidden; background: color-mix(in srgb, var(--input) 72%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: 8px; box-shadow: inset 0 1px color-mix(in srgb, var(--text) 6%, transparent), 0 0 0 2px color-mix(in srgb, var(--accent) 9%, transparent); }
+.collection-create input { width: min(210px, 26vw); min-width: 0; height: 100%; padding: 0 10px; color: var(--text); background: transparent; border: 0; outline: 0; font-size: 12px; }
 .collection-create button { display: grid; place-items: center; width: 32px; height: 100%; padding: 0; color: var(--text-secondary); background: transparent; border: 0; border-left: 1px solid var(--border); cursor: pointer; }
 .collection-create button:hover:not(:disabled) { color: var(--text); background: var(--hover); }
 .collection-create button:first-of-type { color: var(--accent); }
@@ -559,13 +559,14 @@
 
 /* Collections Master-Detail Layout */
 .collections-layout { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 320px; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
-.collections-gallery { position: relative; z-index: 1; padding: 24px; overflow-y: auto; min-width: 0; }
-.collections-popout-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 24px; align-content: start; overflow: visible; }
+.collections-gallery { position: relative; z-index: 1; padding: 20px; overflow-y: auto; min-width: 0; }
+.collections-popout-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 260px)); gap: 16px; align-content: start; overflow: visible; }
 
 /* 3D Popout Folder Card */
-.popout-folder-card { position: relative; display: flex; flex-direction: column; align-items: center; padding: 14px 14px 14px; color: var(--folder-color, var(--accent)); background: linear-gradient(145deg, color-mix(in srgb, var(--surface) 54%, transparent), color-mix(in srgb, var(--surface) 22%, transparent)); border: 1px solid color-mix(in srgb, var(--text) 10%, transparent); border-radius: 16px; cursor: pointer; outline: none; user-select: none; box-shadow: inset 0 1px color-mix(in srgb, var(--text) 8%, transparent), 0 8px 24px rgba(0, 0, 0, 0.25); backdrop-filter: blur(20px) saturate(110%); -webkit-backdrop-filter: blur(20px) saturate(110%); transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast); /* Allow doc burst to overflow above card */ overflow: visible; }
-.popout-folder-card:hover { transform: translateY(-4px); border-color: color-mix(in srgb, var(--folder-color, var(--accent)) 42%, var(--border-strong)); box-shadow: inset 0 1px color-mix(in srgb, var(--text) 12%, transparent), 0 14px 34px rgba(0, 0, 0, 0.38), 0 0 22px color-mix(in srgb, var(--folder-color, var(--accent)) 16%, transparent); background: linear-gradient(145deg, color-mix(in srgb, var(--surface) 72%, transparent), color-mix(in srgb, var(--surface) 35%, transparent)); }
-.popout-folder-card.is-selected { border-color: var(--folder-color, var(--accent)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--folder-color, var(--accent)) 36%, transparent), 0 12px 28px rgba(0, 0, 0, 0.32); background: linear-gradient(145deg, color-mix(in srgb, var(--folder-color, var(--accent)) 14%, var(--surface)), color-mix(in srgb, var(--surface) 44%, transparent)); }
+.popout-folder-card { position: relative; display: flex; flex-direction: column; align-items: center; padding: 14px; color: var(--folder-color, var(--accent)); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-panel); cursor: pointer; outline: none; user-select: none; transition: border-color var(--transition-fast), background var(--transition-fast); overflow: visible; }
+.popout-folder-card:hover { border-color: var(--border-strong); background: var(--row-hover); }
+.popout-folder-card.is-selected { border-color: var(--border-strong); background: var(--row-selected); }
+.folder-selection-mark { position: absolute; top: 10px; right: 10px; display: grid; place-items: center; width: 18px; height: 18px; color: var(--accent-foreground); background: var(--accent); border-radius: 50%; }
 .popout-folder-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* 3D Stage - Large enough to allow overflow on hover */
@@ -588,15 +589,14 @@
   bottom: 0;
   width: 164px;
   height: 104px;
-  border-radius: 16px;
+  border-radius: 9px;
   background: linear-gradient(170deg,
     color-mix(in srgb, var(--folder-color, var(--accent)) 90%, #222),
     color-mix(in srgb, var(--folder-color, var(--accent)) 52%, #000)
   );
   box-shadow:
-    inset 0 -14px 28px rgba(0, 0, 0, 0.55),
-    inset 0 1.5px 1px rgba(255, 255, 255, 0.4),
-    0 10px 24px rgba(0, 0, 0, 0.4);
+    inset 0 1px var(--border-strong),
+    0 4px 10px var(--dialog-scrim);
   z-index: 2;
 }
 /* Top Tab */
@@ -640,9 +640,9 @@
   padding-top: 14px; /* Scaled down */
   border: 1px solid rgba(0, 0, 0, 0.08);
   transition:
-    transform 400ms cubic-bezier(0.34, 1.56, 0.64, 1),
-    opacity 300ms ease,
-    box-shadow 400ms ease;
+    transform var(--transition-pane),
+    opacity var(--transition-pane),
+    box-shadow var(--transition-pane);
 }
 .doc-fold {
   position: absolute;
@@ -725,16 +725,16 @@
  * Smaller, tighter cross kept well inside the folder.
  */
 .popout-folder-card:hover .doc-cross-left {
-  transform: rotate(-12deg) translateY(-24px) scale(1);
+  transform: rotate(-8deg) translateY(-18px) scale(1);
   opacity: 1;
   z-index: 12;
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.3), 0 4px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 12px var(--dialog-scrim);
 }
 .popout-folder-card:hover .doc-cross-right {
-  transform: rotate(10deg) translateY(-28px) scale(1);
+  transform: rotate(6deg) translateY(-22px) scale(1);
   opacity: 1;
   z-index: 10;
-  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.32), 0 4px 10px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 4px 12px var(--dialog-scrim);
 }
 
 /*
@@ -745,22 +745,21 @@
   bottom: 0;
   width: 164px;
   height: 82px;
-  border-radius: 14px;
+  border-radius: 9px;
   background: linear-gradient(
     175deg,
     color-mix(in srgb, var(--folder-color, var(--accent)) 96%, #fff),
     color-mix(in srgb, var(--folder-color, var(--accent)) 76%, #000)
   );
   box-shadow:
-    inset 0 2px 2px rgba(255, 255, 255, 0.55),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.35),
-    0 8px 24px rgba(0, 0, 0, 0.4);
+    inset 0 1px var(--border-strong),
+    0 4px 10px var(--dialog-scrim);
   z-index: 8;
   transform-origin: bottom center;
   transform: perspective(500px) rotateX(-8deg);
   transition:
-    transform 380ms cubic-bezier(0.175, 0.885, 0.32, 1.1),
-    box-shadow 380ms ease;
+    transform var(--transition-pane),
+    box-shadow var(--transition-pane);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -779,7 +778,7 @@
 .folder-embossed-name {
   display: block;
   font-size: 13.5px;
-  font-weight: 800;
+  font-weight: 600;
   color: rgba(255, 255, 255, 0.95);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 -1px 1px rgba(255, 255, 255, 0.2);
   letter-spacing: -0.01em;
@@ -797,10 +796,10 @@
 
 /* On hover: flap moves down slightly, but DOES NOT hinge open */
 .popout-folder-card:hover .folder-front {
-  transform: perspective(500px) rotateX(-8deg) translateY(6px);
+  transform: perspective(500px) rotateX(-8deg) translateY(3px);
   box-shadow:
-    inset 0 1.5px 1px rgba(255, 255, 255, 0.4),
-    0 24px 48px rgba(0, 0, 0, 0.52);
+    inset 0 1px var(--border-strong),
+    0 6px 14px var(--dialog-scrim);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -815,7 +814,7 @@
 .folder-card-count { font-size: 11px; color: var(--text-muted); }
 
 /* Simplified, Clean Right Inspector */
-.collection-inspector { position: relative; z-index: 2; display: flex; flex-direction: column; gap: 16px; padding: 20px; background: color-mix(in srgb, var(--surface) 40%, transparent); border-left: 1px solid color-mix(in srgb, var(--text) 10%, transparent); overflow-y: auto; backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px); }
+.collection-inspector { position: relative; z-index: 2; display: flex; flex-direction: column; gap: 16px; padding: 20px; background: var(--row-hover); border-left: 1px solid var(--border); overflow-y: auto; }
 .inspector-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .inspector-title-wrap h2 { margin: 0; font-size: 16px; font-weight: 700; color: var(--text); }
 .inspector-badge { display: inline-block; margin-top: 2px; font-size: 11px; color: var(--text-muted); }
@@ -3323,6 +3322,22 @@ kbd {
 .app-frame.is-quick.preview-is-hidden .quick-content {
   grid-template-columns: minmax(0, 1fr);
 }
+
+.quick-collections { grid-column: 1 / -1; display: grid; grid-template-rows: 52px minmax(0, 1fr) auto; min-width: 0; min-height: 0; color: var(--text); }
+.quick-collections-header { display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+.quick-collections-header h1 { margin: 0; font-size: 14px; font-weight: 600; }
+.quick-collections-header > span { margin-left: auto; color: var(--text-muted); font-size: 12px; }
+.quick-collections-list { padding: 6px; overflow-y: auto; }
+.quick-collection-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 8px 12px; color: var(--text-secondary); background: transparent; border: 1px solid transparent; border-radius: var(--radius-control); cursor: pointer; text-align: left; }
+.quick-collection-row:hover { background: var(--row-hover); }
+.quick-collection-row[aria-pressed='true'] { background: var(--row-selected); }
+.quick-collection-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.quick-collection-icon { flex-shrink: 0; color: var(--folder-color, var(--accent)); }
+.quick-collection-row > span { display: grid; flex: 1; min-width: 0; gap: 2px; }
+.quick-collection-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; color: var(--text); }
+.quick-collection-row small { color: var(--text-muted); font-size: 11px; }
+.quick-collections-empty { padding: 24px; color: var(--text-secondary); font-size: 13px; text-align: center; }
+.quick-collections-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 8px 12px; color: var(--text-muted); border-top: 1px solid var(--border); font-size: 11px; }
 
 /* The flyout is the most minimal of the two surfaces: a shorter header, a
    single-line row and a 28px hint strip. */

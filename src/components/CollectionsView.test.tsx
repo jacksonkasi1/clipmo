@@ -30,6 +30,15 @@ describe('CollectionsView', () => {
     expect(screen.getAllByText('13 items').length).toBeGreaterThan(0);
   });
 
+  it('opens and cancels the creation editor when the folder search is absent', () => {
+    render(<CollectionsView onBack={vi.fn()} />);
+    expect(screen.queryByRole('searchbox', { name: 'Filter collections' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'New collection' }));
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Collection name' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'New collection' })).toBeTruthy();
+  });
+
   it('shows confirmation modal before deleting a collection', async () => {
     const deleteCollectionMock = vi.fn().mockResolvedValue(undefined);
     useStore.setState({ deleteCollection: deleteCollectionMock });
