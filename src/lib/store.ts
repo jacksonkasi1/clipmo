@@ -79,6 +79,7 @@ interface Actions {
   loadMore: () => Promise<void>;
   requestResync: (source: ResyncSource) => Promise<void>;
   setSearch: (search: string) => Promise<void>;
+  goHome: () => Promise<void>;
   toggleKind: (kind: ItemKind) => Promise<void>;
   setCategory: (kind: ItemKind | null) => Promise<void>;
   showFavorites: () => Promise<void>;
@@ -315,6 +316,18 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   setSearch: async (search) => {
     set({ search });
+    await get().refresh(false);
+  },
+
+  goHome: async () => {
+    set({
+      search: '',
+      activeTag: null,
+      activeKinds: [],
+      favoritesOnly: false,
+      activeDeviceId: null,
+      activeSourceExe: null,
+    });
     await get().refresh(false);
   },
 

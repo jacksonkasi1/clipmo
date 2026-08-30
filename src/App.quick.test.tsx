@@ -209,6 +209,33 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('App quick-view clipboard sync', () => {
+  it.each(['quick', 'full'] as const)('returns directly home from a collection in %s mode', async (mode) => {
+    useStore.setState({
+      mode,
+      collections: [{ name: 'work', itemCount: 1 }],
+      activeTag: 'work',
+      search: 'filtered',
+      activeKinds: ['image'],
+      favoritesOnly: true,
+      activeSourceExe: 'C:/example.exe',
+      activeDeviceId: 'remote',
+      items: [fileItem],
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+
+    await waitFor(() => expect(useStore.getState().activeTag).toBeNull());
+    expect(useStore.getState()).toMatchObject({
+      search: '', activeKinds: [], favoritesOnly: false,
+      activeDeviceId: null, activeSourceExe: null,
+    });
+    expect(screen.queryByRole('button', { name: 'Back to collections' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Home' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Quick collections' })).toBeNull();
+    expect(screen.getByRole('complementary', { name: 'Clipboard history' })).toBeTruthy();
+  });
+
   it('opens collections in Quick View and returns to the selected folder history', async () => {
     useStore.setState({
       sidebarOpen: true,

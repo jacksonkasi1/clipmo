@@ -26,6 +26,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 /// Sends Ctrl+V to the foreground window captured before the popup opened.
 pub fn paste_to(target: isize) -> bool {
+    paste_to_target(target).is_some()
+}
+
+/// Returns the actual receiving window, including when the saved target expired.
+pub fn paste_to_target(target: isize) -> Option<isize> {
     unsafe {
         let target_hwnd = if target != 0 && IsWindow(Some(HWND(target as *mut _))).as_bool() {
             HWND(target as *mut _)
@@ -35,7 +40,7 @@ pub fn paste_to(target: isize) -> bool {
             std::thread::sleep(std::time::Duration::from_millis(30));
             let fg = GetForegroundWindow();
             if fg.0.is_null() || !IsWindow(Some(fg)).as_bool() {
-                return false;
+                return None;
             }
             fg
         };
@@ -75,7 +80,7 @@ pub fn paste_to(target: isize) -> bool {
             let _ = AttachThreadInput(our_tid, target_tid, false);
         }
 
-        sent
+        sent.then_some(target_hwnd.0 as isize)
     }
 }
 
@@ -87,6 +92,19 @@ fn wait_for_foreground(target: HWND) -> bool {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     false
+}
+
+fn foreground_target() -> isize {
+    unsafe { GetForegroundWindow().0 as isize }
+}
+
+pub fn is_foreground(target: isize) -> bool {
+    target != 0 && foreground_target() == target
+}
+
+/// Continue a batch only in its original target, without restoring focus.
+pub fn paste_if_foreground(target: isize) -> bool {
+    is_foreground(target) && send_ctrl_v()
 }
 
 unsafe fn release_modifiers() {
@@ -105,7 +123,7 @@ unsafe fn is_key_down(vk: VIRTUAL_KEY) -> bool {
 
 /// Sends a single key event (up or down) for the given virtual-key code,
 /// including its hardware scan code for full target application compatibility.
-fn send_key_event(vk: VIRTUAL_KEY, up: bool) {
+fn send_key_event(vk: VIRTUAL_KEY, up: bool) -> bool {
     let scan_code = unsafe { MapVirtualKeyW(vk.0 as u32, MAPVK_VK_TO_VSC) as u16 };
     let mut flags = windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(0);
     if up {
@@ -125,30 +143,28 @@ fn send_key_event(vk: VIRTUAL_KEY, up: bool) {
         },
     };
 
-    unsafe {
-        SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
-    }
+    unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) == 1 }
 }
 
 /// Sends Ctrl+V via `SendInput` with sequential timing delays so the target
 /// application's message loop reliably registers the Ctrl modifier state.
 fn send_ctrl_v() -> bool {
     // 1. Press Ctrl
-    send_key_event(VK_CONTROL, false);
+    let mut sent = send_key_event(VK_CONTROL, false);
     std::thread::sleep(std::time::Duration::from_millis(15));
 
     // 2. Press V
-    send_key_event(VK_V, false);
+    sent &= send_key_event(VK_V, false);
     std::thread::sleep(std::time::Duration::from_millis(15));
 
     // 3. Release V
-    send_key_event(VK_V, true);
+    sent &= send_key_event(VK_V, true);
     std::thread::sleep(std::time::Duration::from_millis(15));
 
     // 4. Release Ctrl
-    send_key_event(VK_CONTROL, true);
+    sent &= send_key_event(VK_CONTROL, true);
 
-    true
+    sent
 }
 
 fn window_thread_id(hwnd: HWND) -> u32 {

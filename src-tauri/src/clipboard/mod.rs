@@ -18,6 +18,7 @@ mod classifier;
 pub mod formats;
 mod hasher;
 pub mod listener;
+pub mod paste_batch;
 pub mod writer;
 
 pub use classifier::classify;
