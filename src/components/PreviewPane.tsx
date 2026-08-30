@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 
 import { IconButton } from './IconButton';
+import { copySelectedItems, pasteSelectedItems } from '../lib/clipboard-actions';
 import { KindIcon } from './KindIcon';
 import { useStore } from '../lib/store';
 import { api, fileSrc } from '../lib/tauri';
@@ -122,8 +123,7 @@ function PreviewToolbar({ item, onEdit }: { item: ClipItem | null; onEdit: () =>
 
   const handleCopy = () => {
     if (isMulti) {
-      void api.copyMultipleToClipboard(selectedIds, 'original');
-      toast(`Copied ${selectedIds.length} items to clipboard`, 'info');
+      void copySelectedItems(selectedIds);
     } else if (item) {
       void api.copyToClipboard(item.id, 'original');
     }
@@ -131,7 +131,7 @@ function PreviewToolbar({ item, onEdit }: { item: ClipItem | null; onEdit: () =>
 
   const handlePaste = () => {
     if (isMulti) {
-      void api.pasteMultipleActive(selectedIds, 'original');
+      void pasteSelectedItems(selectedIds);
     } else if (item) {
       void api.pasteActive(item.id, 'original');
     }

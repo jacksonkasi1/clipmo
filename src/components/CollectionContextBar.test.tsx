@@ -15,6 +15,7 @@ describe('CollectionContextBar', () => {
         collection={{ name: 'work', itemCount: 4 }}
         tone={2}
         onBack={onBack}
+        onHome={vi.fn()}
       />,
     );
 

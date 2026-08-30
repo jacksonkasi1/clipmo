@@ -2,10 +2,9 @@
 import { ClipboardCopy, Copy, CornerDownLeft, PanelLeftOpen, Trash2, X } from 'lucide-react';
 
 import { IconButton } from './IconButton';
+import { copySelectedItems, pasteSelectedItems } from '../lib/clipboard-actions';
 import { useStore } from '../lib/store';
 import { resolvedFilterShortcuts } from '../lib/filter-shortcuts';
-import { api } from '../lib/tauri';
-import { toast } from '../lib/toast';
 
 /** A compact keyboard-hint strip shared by the quick and full windows. */
 export function Footer() {
@@ -34,16 +33,13 @@ export function Footer() {
         <div className="footer-spacer" />
         <IconButton
           label={`Copy ${selectedIds.length} items`}
-          onClick={() => {
-            void api.copyMultipleToClipboard(selectedIds, 'original');
-            toast(`Copied ${selectedIds.length} items to clipboard`, 'info');
-          }}
+          onClick={() => void copySelectedItems(selectedIds)}
         >
           <Copy size={15} aria-hidden />
         </IconButton>
         <IconButton
           label={`Paste ${selectedIds.length} items`}
-          onClick={() => void api.pasteMultipleActive(selectedIds, 'original')}
+          onClick={() => void pasteSelectedItems(selectedIds)}
         >
           <ClipboardCopy size={15} aria-hidden />
         </IconButton>

@@ -1,19 +1,22 @@
-import { ArrowLeft } from 'lucide-react';
+// ** import types
 import type { CSSProperties } from 'react';
+import type { CollectionSummary } from '../lib/types';
 
+// ** import lib
+import { ArrowLeft, House } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { tagColorKey } from '../lib/tag-color';
-import type { CollectionSummary } from '../lib/types';
 import { FluentFolderIcon } from './FluentFolderIcon';
 
 interface Props {
   collection: CollectionSummary;
   tone: number;
   onBack: () => void;
+  onHome: () => void;
 }
 
 /** Keeps filtered history visibly anchored inside its collection with Windows Fluent styling. */
-export function CollectionContextBar({ collection, tone, onBack }: Props) {
+export function CollectionContextBar({ collection, tone, onBack, onHome }: Props) {
   const tagColors = useStore((state) => state.tagColors);
   const customColor = tagColors[tagColorKey(collection.name)];
   const style = customColor ? ({ '--collection-color': customColor } as CSSProperties) : undefined;
@@ -26,6 +29,9 @@ export function CollectionContextBar({ collection, tone, onBack }: Props) {
     >
       <button type="button" onClick={onBack} aria-label="Back to collections" title="Back to collections">
         <ArrowLeft size={15} aria-hidden />
+      </button>
+      <button type="button" onClick={onHome} aria-label="Home" title="Home — all clipboard history">
+        <House size={15} aria-hidden />
       </button>
       <span className="collection-context-icon" aria-hidden>
         <FluentFolderIcon size={18} isOpen={true} color={customColor} />

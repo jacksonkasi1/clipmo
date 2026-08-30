@@ -73,22 +73,40 @@ pub fn put_multiple_back_on_clipboard(items: &[ClipItem], flavor: PasteFlavor) -
     }
     write_registered_bytes(super::formats::CLIPDECK_INTERNAL_WRITE, b"1")?;
 
-    let all_files = items.iter().all(|item| item.kind == ItemKind::Files);
-    if all_files && flavor != PasteFlavor::PlainText {
-        let mut all_paths = Vec::new();
-        for item in items {
-            all_paths.extend(copy_file_paths(item));
-        }
+    let all_assets = items
+        .iter()
+        .all(|item| matches!(item.kind, ItemKind::Files | ItemKind::Image));
+    if all_assets && flavor != PasteFlavor::PlainText {
+        let all_paths = copy_asset_paths(items)?;
         if !all_paths.is_empty() {
             write_file_list(&all_paths)?;
-            let plain = all_paths.join("\r\n");
-            let _ = write_unicode_text(&plain);
+            // Image selections are files when copied as a group. Do not also
+            // advertise their storage paths as text to chat apps/editors.
+            if items.iter().all(|item| item.kind == ItemKind::Files) {
+                let _ = write_unicode_text(&all_paths.join("\r\n"));
+            }
             return Ok(());
         }
     }
 
     let combined = build_combined_text_payload(items);
     write_unicode_text(&combined)
+}
+
+fn copy_asset_paths(items: &[ClipItem]) -> Result<Vec<String>> {
+    let mut paths = Vec::new();
+    for item in items {
+        if item.kind == ItemKind::Image {
+            let image = item
+                .image
+                .as_ref()
+                .ok_or_else(|| Error::Other("image asset is missing".into()))?;
+            paths.push(image.path.clone());
+        } else {
+            paths.extend(copy_file_paths(item));
+        }
+    }
+    Ok(paths)
 }
 
 pub fn build_combined_text_payload(items: &[ClipItem]) -> String {
@@ -368,9 +386,8 @@ mod tests {
         assert_eq!(&payload.as_bytes()[start..end], fragment.as_bytes());
     }
 
-    #[test]
-    fn combined_text_payload_joins_with_newlines() {
-        let item1 = ClipItem {
+    fn text_item() -> ClipItem {
+        ClipItem {
             id: 1,
             kind: ItemKind::Text,
             preview: "First".into(),
@@ -394,7 +411,12 @@ mod tests {
             sync_status: crate::models::SyncStatus::Local,
             first_copied_at: 1,
             last_copied_at: 1,
-        };
+        }
+    }
+
+    #[test]
+    fn combined_text_payload_joins_with_newlines() {
+        let item1 = text_item();
         let item2 = ClipItem {
             id: 2,
             kind: ItemKind::Link,
@@ -404,5 +426,51 @@ mod tests {
         };
         let combined = build_combined_text_payload(&[item1, item2]);
         assert_eq!(combined, "First content\r\nhttps://example.com");
+    }
+
+    #[test]
+    fn copied_images_use_file_drop_paths_in_selection_order() {
+        let items: Vec<_> = ["third.webp", "first.webp", "second.webp"]
+            .iter()
+            .map(|name| ClipItem {
+                kind: ItemKind::Image,
+                image: Some(crate::models::ImageMeta {
+                    path: format!(r"C:\images\{name}"),
+                    thumb_path: "unused-thumbnail.webp".into(),
+                    width: 2,
+                    height: 2,
+                }),
+                ..text_item()
+            })
+            .collect();
+        let paths = copy_asset_paths(&items).unwrap();
+        assert_eq!(
+            paths,
+            [
+                r"C:\images\third.webp",
+                r"C:\images\first.webp",
+                r"C:\images\second.webp"
+            ]
+        );
+        let payload = build_file_drop_bytes(&paths).unwrap();
+        let wide: Vec<_> = payload[20..]
+            .chunks_exact(2)
+            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+            .collect();
+        assert_eq!(
+            String::from_utf16_lossy(&wide),
+            format!("{}\0\0", paths.join("\0"))
+        );
+        // Explicit plain-text paste still offers paths, as before.
+        assert_eq!(build_combined_text_payload(&items), paths.join("\r\n"));
+    }
+
+    #[test]
+    fn missing_image_metadata_does_not_silently_omit_an_image() {
+        let item = ClipItem {
+            kind: ItemKind::Image,
+            ..text_item()
+        };
+        assert!(copy_asset_paths(&[item]).is_err());
     }
 }

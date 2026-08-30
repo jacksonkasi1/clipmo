@@ -149,11 +149,41 @@ jobs:
           -TargetTriple "${{ env.WINDOWS_TARGET }}"
           -ExpectedSigned "${{ steps.signing.outputs.enabled }}"
 
+      - name: Record installer version and checksum
+        id: installer
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -ne $packageVersion) { throw 'Installer and package versions must match.' }
+          $installer = "src-tauri/target/${{ env.WINDOWS_TARGET }}/release/bundle/nsis/Clipmo_${version}_x64-setup.exe"
+          if (-not (Test-Path -LiteralPath $installer)) { throw "Missing installer: $installer" }
+          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path $installer -Leaf)" | Set-Content -LiteralPath "$installer.sha256" -Encoding utf8
+          "version=$version" | Add-Content $env:GITHUB_OUTPUT
+
       - name: Upload the Windows installer
-        if: always()
+        id: installer-artifact
         uses: actions/upload-artifact@v7
         with:
-          name: clipmo-windows-x64-${{ github.sha }}
-          path: src-tauri/target/${{ env.WINDOWS_TARGET }}/release/bundle/nsis/Clipmo_*_x64-setup.exe
-          if-no-files-found: warn
-          retention-days: 14
+          name: Clipmo-${{ steps.installer.outputs.version }}-windows-x64-${{ github.run_number }}
+          path: |
+            src-tauri/target/${{ env.WINDOWS_TARGET }}/release/bundle/nsis/Clipmo_*_x64-setup.exe
+            src-tauri/target/${{ env.WINDOWS_TARGET }}/release/bundle/nsis/Clipmo_*_x64-setup.exe.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Add installer download to the build summary
+        shell: pwsh
+        env:
+          INSTALLER_URL: ${{ steps.installer-artifact.outputs.artifact-url }}
+          INSTALLER_VERSION: ${{ steps.installer.outputs.version }}
+          INSTALLER_SIGNED: ${{ steps.signing.outputs.enabled }}
+        run: |
+          "## Clipmo $env:INSTALLER_VERSION for Windows" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "[Download installer and SHA-256 checksum]($env:INSTALLER_URL)" | Add-Content $env:GITHUB_STEP_SUMMARY
+          if ($env:INSTALLER_SIGNED -eq 'true') {
+            'Authenticode signature verified.' | Add-Content $env:GITHUB_STEP_SUMMARY
+          } else {
+            '**Unsigned test build:** Windows may display an unknown-publisher warning. Official tagged releases still require a trusted signing certificate.' | Add-Content $env:GITHUB_STEP_SUMMARY
+          }

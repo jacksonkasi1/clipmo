@@ -13,14 +13,16 @@ import { Footer } from './components/Footer';
 import { ItemList } from './components/ItemList';
 import { PairDeviceDialog } from './components/PairDeviceDialog';
 import { PreviewPane } from './components/PreviewPane';
+import { QuickCollectionsView } from './components/quick-collections-view';
 import { SearchBar } from './components/SearchBar';
 import { SidebarExplorerDialog } from './components/SidebarExplorerDialog';
 import { getListKeyboardAction } from './lib/list-navigation';
+import { copySelectedItems, pasteSelectedItems } from './lib/clipboard-actions';
 import { FILTER_SHORTCUTS, matchesShortcut, resolvedFilterShortcuts } from './lib/filter-shortcuts';
 import { useStore } from './lib/store';
 import { api, on } from './lib/tauri';
 import { applyTheme } from './lib/theme';
-import { ToastSurface, toast } from './lib/toast';
+import { ToastSurface } from './lib/toast';
 
 export default function App() {
   const mode = useStore((s) => s.mode);
@@ -111,7 +113,7 @@ export default function App() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || collectionsOpen) return;
       const modifier = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
       const target = event.target as HTMLElement | null;
@@ -178,10 +180,9 @@ export default function App() {
           }
         } else if (selectedIds.length > 1) {
           if (listAction.type === 'paste') {
-            void api.pasteMultipleActive(selectedIds, 'original');
+            void pasteSelectedItems(selectedIds);
           } else {
-            void api.copyMultipleToClipboard(selectedIds, 'original');
-            toast(`Copied ${selectedIds.length} items to clipboard`, 'info');
+            void copySelectedItems(selectedIds);
           }
         } else if (selectedId !== null) {
           if (listAction.type === 'paste') {
@@ -202,8 +203,7 @@ export default function App() {
       if (modifier && key === 'c' && !window.getSelection()?.toString()) {
         if (selectedIds.length > 1) {
           event.preventDefault();
-          void api.copyMultipleToClipboard(selectedIds, 'original');
-          toast(`Copied ${selectedIds.length} items to clipboard`, 'info');
+          void copySelectedItems(selectedIds);
           return;
         }
         if (selectedId !== null) {
@@ -256,6 +256,7 @@ export default function App() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [
+    collectionsOpen,
     clearHistory,
     deleteItem,
     deleteSelected,
@@ -346,13 +347,18 @@ export default function App() {
         <ClipboardSidebar
           onAddDevice={mode === 'full' ? () => setPairDeviceOpen(true) : undefined}
           onExploreFilters={mode === 'full' ? () => setFilterExplorerOpen(true) : undefined}
-          onShowCollections={mode === 'full' ? () => setCollectionsOpen(true) : undefined}
+          onShowCollections={() => setCollectionsOpen(true)}
         />
         <div className={`history-content ${activeCollection ? 'has-collection-context' : ''}`}>
           {activeCollection && (
             <CollectionContextBar
               collection={activeCollection}
               tone={activeCollectionIndex % 6}
+              onHome={() => {
+                setCollectionsOpen(false);
+                void useStore.getState().goHome();
+                window.dispatchEvent(new CustomEvent('clipmo:focus-search'));
+              }}
               onBack={() => {
                 void setTag(null);
                 setCollectionsOpen(true);
@@ -384,7 +390,9 @@ export default function App() {
           className={`quick-content ${quickEntering ? 'quick-entering' : ''}`}
           onAnimationEnd={() => setQuickEntering(false)}
         >
-          {clipboardLayout}
+          {collectionsOpen
+            ? <QuickCollectionsView onBack={() => setCollectionsOpen(false)} />
+            : clipboardLayout}
         </div>
       ) : collectionsOpen ? <CollectionsView onBack={() => setCollectionsOpen(false)} /> : clipboardLayout}
       {mode === 'full' && <CommandPalette />}

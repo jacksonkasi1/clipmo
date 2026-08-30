@@ -25,6 +25,15 @@ use crate::AppState;
 
 // ---- command handlers ----------------------------------------------------
 
+// A second request from either window must not replace an image mid-sequence.
+static CLIPBOARD_OPERATION: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+fn clipboard_operation() -> Result<parking_lot::MutexGuard<'static, ()>> {
+    CLIPBOARD_OPERATION
+        .try_lock()
+        .ok_or_else(|| Error::Other("another clipboard operation is still in progress".into()))
+}
+
 #[tauri::command]
 pub async fn list_items(
     state: tauri::State<'_, AppState>,
@@ -82,6 +91,7 @@ pub async fn copy_to_clipboard(
     id: i64,
     flavor: PasteFlavor,
 ) -> Result<()> {
+    let _operation = clipboard_operation()?;
     let item = state.db.get_required(id)?;
     let (_, html, rtf) = state
         .db
@@ -109,6 +119,7 @@ pub async fn paste_active(
     id: i64,
     flavor: PasteFlavor,
 ) -> Result<()> {
+    let _operation = clipboard_operation()?;
     let item = state.db.get_required(id)?;
     let (_, html, rtf) = state
         .db
@@ -148,20 +159,18 @@ pub async fn copy_multiple_to_clipboard(
     ids: Vec<i64>,
     flavor: PasteFlavor,
 ) -> Result<()> {
+    let _operation = clipboard_operation()?;
     if ids.is_empty() {
         return Ok(());
     }
-    let mut items = Vec::new();
-    for id in &ids {
-        if let Ok(item) = state.db.get_required(*id) {
-            let _ = state.db.touch(*id);
-            items.push(item);
-        }
-    }
-    if items.is_empty() {
-        return Err(Error::NotFound("clipboard items"));
-    }
+    let items = ids
+        .iter()
+        .map(|id| state.db.get_required(*id))
+        .collect::<Result<Vec<_>>>()?;
     crate::clipboard::writer::put_multiple_back_on_clipboard(&items, flavor)?;
+    for id in &ids {
+        state.db.touch(*id)?;
+    }
     let _ = app.emit("clip-updated", ());
     Ok(())
 }
@@ -174,28 +183,77 @@ pub async fn paste_multiple_active(
     ids: Vec<i64>,
     flavor: PasteFlavor,
 ) -> Result<()> {
-    if ids.is_empty() {
-        return Ok(());
-    }
-    let mut items = Vec::new();
-    for id in &ids {
-        if let Ok(item) = state.db.get_required(*id) {
-            let _ = state.db.touch(*id);
-            items.push(item);
-        }
-    }
-    if items.is_empty() {
-        return Err(Error::NotFound("clipboard items"));
-    }
-    crate::clipboard::writer::put_multiple_back_on_clipboard(&items, flavor)?;
-    let _ = app.emit("clip-updated", ());
-
+    let db = state.db.clone();
     let target = *state.foreground.lock();
-    crate::window::hide_self(&window);
-    if !paste::paste_to(target) {
-        return Err(Error::Other(
-            "the previous application could not receive the paste command".into(),
-        ));
+    tauri::async_runtime::spawn_blocking(move || {
+        paste_selected_items(&app, &window, &db, target, &ids, flavor)
+    })
+    .await
+    .map_err(|error| Error::Other(format!("paste task failed: {error}")))?
+}
+
+fn paste_selected_items(
+    app: &AppHandle,
+    window: &tauri::WebviewWindow,
+    db: &Db,
+    mut target: isize,
+    ids: &[i64],
+    flavor: PasteFlavor,
+) -> Result<()> {
+    const PASTE_SETTLE_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
+    let _operation = clipboard_operation()?;
+    let items = ids
+        .iter()
+        .map(|id| db.get_required(*id))
+        .collect::<Result<Vec<_>>>()?;
+    let batches = crate::clipboard::paste_batch::paste_batches(&items, flavor);
+    for (index, batch) in batches.iter().enumerate() {
+        if index > 0 {
+            // Ctrl+V is asynchronous: leave the previous payload available while
+            // the receiving application reads/attaches it. Never steal focus back
+            // if the user switches applications or opens Clipmo during the batch.
+            std::thread::sleep(PASTE_SETTLE_DELAY);
+            if !paste::is_foreground(target) {
+                return Err(Error::Other(
+                    "paste stopped because the active application changed".into(),
+                ));
+            }
+        }
+        if batch.len() == 1 {
+            let (_, html, rtf) = db
+                .flavors(batch[0].id)?
+                .ok_or(Error::NotFound("clipboard item"))?;
+            crate::clipboard::writer::put_back_on_clipboard(
+                &batch[0],
+                flavor,
+                html.as_deref(),
+                rtf.as_deref(),
+            )?;
+        } else {
+            crate::clipboard::writer::put_multiple_back_on_clipboard(batch, flavor)?;
+        }
+        let sent = if index == 0 {
+            crate::window::hide_self(window);
+            // paste_to can resolve a missing/stale saved window. Pin all later
+            // pastes to the window that actually received the first one.
+            if let Some(receiving_window) = paste::paste_to_target(target) {
+                target = receiving_window;
+                true
+            } else {
+                false
+            }
+        } else {
+            paste::paste_if_foreground(target)
+        };
+        if !sent {
+            return Err(Error::Other(
+                "the previous application could not receive the paste command".into(),
+            ));
+        }
+        for item in *batch {
+            db.touch(item.id)?;
+        }
+        let _ = app.emit("clip-updated", ());
     }
     Ok(())
 }

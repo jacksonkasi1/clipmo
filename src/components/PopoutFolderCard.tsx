@@ -1,9 +1,12 @@
+// ** import types
+import type { CSSProperties } from 'react';
+import type { ClipItem, CollectionSummary } from '../lib/types';
+
+// ** import lib
 import {
+  Check,
   Folder,
 } from 'lucide-react';
-import type { CSSProperties } from 'react';
-
-import type { ClipItem, CollectionSummary } from '../lib/types';
 
 interface PopoutFolderCardProps {
   collection: CollectionSummary;
@@ -373,13 +376,19 @@ export function PopoutFolderCard({
       onDoubleClick={onOpenInHistory}
       tabIndex={0}
       role="button"
+      aria-pressed={isSelected}
       aria-label={`Collection ${collection.name}, ${collection.itemCount} ${collection.itemCount === 1 ? 'item' : 'items'}`}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
+          e.preventDefault();
           onOpenInHistory();
+        } else if (e.key === ' ') {
+          e.preventDefault();
+          onClick();
         }
       }}
     >
+      {isSelected && <span className="folder-selection-mark" aria-hidden><Check size={12} /></span>}
       {/* 3D Popout Folder Stage */}
       <div className="folder-stage">
         {/* Back Plate with Top Tab */}
