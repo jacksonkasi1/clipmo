@@ -17,5 +17,7 @@ src-tauri/.cargo/config.toml
 .DS_Store
 Thumbs.db
 *.stackdump
+*.pfx
+*.cer
 
 web
