@@ -1,0 +1,46 @@
+name: Microsoft Store MSIX
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-store-msix:
+    name: Build unsigned Store MSIX x64
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+          targets: x86_64-pc-windows-msvc
+
+      - name: Set up Microsoft winapp CLI
+        uses: microsoft/setup-WinAppCli@v0.1
+
+      - name: Install dependencies
+        run: npm ci --no-audit
+
+      - name: Build and validate unsigned Store MSIX
+        run: npm run store:msix
+
+      - name: Upload Store package
+        uses: actions/upload-artifact@v7
+        with:
+          name: Clipmo-0.2.10.0-Store-MSIX-x64
+          path: artifacts/store/Clipmo_0.2.10.0_x64.msix
+          if-no-files-found: error
+          retention-days: 90

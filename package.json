@@ -13,7 +13,10 @@
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
     "start": "tauri dev",
-    "release": "tauri build"
+    "release": "tauri build",
+    "store:msix": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-store-msix.ps1",
+    "store:msix:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-store-msix.ps1 -DevelopmentSigned",
+    "store:msix:test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-store-msix.ps1"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.9",
