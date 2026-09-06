@@ -1,0 +1,115 @@
+name: macOS build and release
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release to append Mac assets to (e.g. v0.2.10); blank builds artifacts only"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Test and bundle ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            arch: Intel
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            arch: Apple Silicon
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.97.0"
+          components: clippy, rustfmt
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+      - run: npm ci --no-audit
+      - name: Validate release version
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const pkg = JSON.parse(fs.readFileSync('package.json'));
+          const config = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json'));
+          const cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8').match(/^version = "([^"]+)"/m)[1];
+          if (pkg.version !== config.version || pkg.version !== cargo) throw Error('Version files disagree');
+          if (process.env.RELEASE_TAG && process.env.RELEASE_TAG !== `v${pkg.version}`) throw Error('Release tag must match the source version');
+          JS
+      - run: npm test
+      - run: npm run build
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets --target ${{ matrix.target }} -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets --target ${{ matrix.target }} -- --test-threads=1
+      - name: Test native pasteboard without touching the system clipboard
+        run: bash scripts/test-macos-native.sh
+      - name: Build macOS app and disk image
+        run: npx tauri build --ci --target ${{ matrix.target }} --bundles app,dmg
+      - name: Verify architecture, signature, version, disk image and checksums
+        run: bash scripts/verify-macos-bundle.sh ${{ matrix.target }}
+      - name: Smoke-test packaged WebKit main and quick windows
+        run: python3 scripts/smoke-test-macos.py src-tauri/target/${{ matrix.target }}/release/bundle/macos/Clipmo.app/Contents/MacOS/clipmo
+      - uses: actions/upload-artifact@v7
+        with:
+          name: clipmo-macos-${{ matrix.target }}
+          path: artifacts/macos/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Append macOS assets to the existing release
+    needs: build
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: clipmo-macos-*
+          path: release-assets
+          merge-multiple: true
+      - name: Upload without deleting Windows or Android assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag }}
+        run: |
+          # The Windows workflow owns release creation. Tags may build in parallel.
+          for attempt in $(seq 1 90); do
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then break; fi
+            if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+              echo "The selected release does not exist" >&2; exit 1
+            fi
+            sleep 60
+          done
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"

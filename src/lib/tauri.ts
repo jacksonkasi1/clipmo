@@ -26,6 +26,16 @@ import { listen } from '@tauri-apps/api/event';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { confirm, open } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { toast } from './toast';
+
+async function pasteCommand(command: string, args: Record<string, unknown>): Promise<void> {
+  try {
+    await invoke<void>(command, args);
+  } catch (error) {
+    toast(String(error), 'error');
+    throw error;
+  }
+}
 
 async function openClipmoSettings(): Promise<void> {
   await invoke<void>('open_settings_window');
@@ -44,9 +54,9 @@ export const api = {
   copyMultipleToClipboard: (ids: number[], flavor: PasteFlavor) =>
     invoke<void>('copy_multiple_to_clipboard', { ids, flavor }),
   pasteActive: (id: number, flavor: PasteFlavor) =>
-    invoke<void>('paste_active', { id, flavor }),
+    pasteCommand('paste_active', { id, flavor }),
   pasteMultipleActive: (ids: number[], flavor: PasteFlavor) =>
-    invoke<void>('paste_multiple_active', { ids, flavor }),
+    pasteCommand('paste_multiple_active', { ids, flavor }),
   setFavorite: (id: number, value: boolean) =>
     invoke<void>('set_favorite', { id, value }),
   setItemTags: (id: number, tags: string[]) =>

@@ -486,6 +486,8 @@ dependencies = [
 name = "clipdeck"
 version = "0.2.10"
 dependencies = [
+ "base64 0.22.1",
+ "cc",
  "image",
  "log",
  "parking_lot",

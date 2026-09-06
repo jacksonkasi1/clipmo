@@ -23,7 +23,7 @@ use windows::Win32::System::DataExchange::{
 };
 use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 
-use crate::win::{from_wide, pcwstr, to_wide};
+use crate::platform::{from_wide, pcwstr, to_wide};
 
 /// Standard clipboard format codes not exported by `windows` crate constants
 /// that we still need.

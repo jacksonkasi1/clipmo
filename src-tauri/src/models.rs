@@ -384,7 +384,12 @@ pub enum ImageCompression {
 /// Default accelerator for the decorated application window. Deliberately
 /// distinct from the quick palette so the two actions never collide.
 fn default_full_window_hotkey() -> String {
-    "Ctrl+Alt+Shift+V".to_string()
+    if cfg!(target_os = "macos") {
+        "Super+Alt+Shift+V"
+    } else {
+        "Ctrl+Alt+Shift+V"
+    }
+    .to_string()
 }
 
 fn default_image_quality() -> u8 {
@@ -527,7 +532,12 @@ impl Default for Settings {
             // Win+V is reserved by the OS shell and cannot be intercepted by a
             // user process, so we default to the de-facto convention used by
             // third-party clipboard managers on Windows.
-            hotkey: "Ctrl+Shift+V".to_string(),
+            hotkey: if cfg!(target_os = "macos") {
+                "Super+Shift+V"
+            } else {
+                "Ctrl+Shift+V"
+            }
+            .to_string(),
             full_window_hotkey: default_full_window_hotkey(),
             filter_shortcuts: default_filter_shortcuts(),
             max_items: 10_000,
@@ -544,7 +554,11 @@ impl Default for Settings {
             image_quality: default_image_quality(),
             storage_path: None,
             ignored_apps: Vec::new(),
-            backdrop: Backdrop::Acrylic,
+            backdrop: if cfg!(target_os = "macos") {
+                Backdrop::Solid
+            } else {
+                Backdrop::Acrylic
+            },
             theme: ThemeMode::System,
             paste_on_enter: true,
             launch_at_login: false,

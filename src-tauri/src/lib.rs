@@ -31,7 +31,12 @@ pub mod tray;
 pub mod window;
 pub mod window_layout;
 
-mod win;
+#[cfg(windows)]
+#[path = "win/mod.rs"]
+mod platform;
+#[cfg(target_os = "macos")]
+#[path = "macos/mod.rs"]
+mod platform;
 
 /// Shared application state handed to every command handler.
 #[cfg(not(test))]
@@ -187,7 +192,14 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_, _| {});
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                window::show_full(app);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
 
 /// Wires up everything that has to be alive before the first window appears:
@@ -260,7 +272,7 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     {
         let app_state: tauri::State<AppState> = app.state();
         let settings = app_state.settings.read().clone();
-        let system = crate::win::appearance::read();
+        let system = crate::platform::appearance::read();
         for label in [window::MAIN_LABEL, window::QUICK_LABEL] {
             let Some(window) = app.get_webview_window(label) else {
                 log::error!("window '{label}' is missing from tauri.conf.json");

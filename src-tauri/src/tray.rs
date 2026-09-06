@@ -29,7 +29,7 @@ pub fn install(app: &mut App) -> tauri::Result<()> {
                 .expect("tray icon must be valid PNG")
         }))
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| match event.id.as_ref() {
             "quick" => window::show_quick(app),
             "show" => window::show_full(app),

@@ -22,7 +22,9 @@ pub fn parse(combo: &str) -> Result<Shortcut> {
             "ctrl" | "control" => insert_modifier(&mut modifiers, Modifiers::CONTROL, part)?,
             "shift" => insert_modifier(&mut modifiers, Modifiers::SHIFT, part)?,
             "alt" => insert_modifier(&mut modifiers, Modifiers::ALT, part)?,
-            "super" | "win" | "meta" => insert_modifier(&mut modifiers, Modifiers::SUPER, part)?,
+            "super" | "win" | "meta" | "cmd" | "command" => {
+                insert_modifier(&mut modifiers, Modifiers::SUPER, part)?
+            }
             key => {
                 if code.is_some() {
                     return Err(Error::Other(
@@ -39,7 +41,7 @@ pub fn parse(combo: &str) -> Result<Shortcut> {
 
     if !modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER) {
         return Err(Error::Other(
-            "global shortcut must include Ctrl, Alt, or Win".into(),
+            "global shortcut must include Ctrl, Alt, or Command/Win".into(),
         ));
     }
     let code =
@@ -187,6 +189,12 @@ mod tests {
 
     #[test]
     fn accepts_supported_shortcuts_with_a_primary_modifier() {
+        assert_eq!(
+            parse("Cmd+Shift+V").unwrap(),
+            parse("Super+Shift+V").unwrap()
+        );
+        let defaults = crate::models::Settings::default();
+        assert!(validate_distinct(&defaults.hotkey, &defaults.full_window_hotkey).is_ok());
         let shortcut = parse("Ctrl+Shift+V").unwrap();
         assert!(shortcut.mods.contains(Modifiers::CONTROL));
         assert!(shortcut.mods.contains(Modifiers::SHIFT));

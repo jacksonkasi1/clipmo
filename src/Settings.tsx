@@ -280,8 +280,8 @@ export default function Settings() {
         <SettingsNav active={activeCategory} onChange={setActiveCategory} />
         <div className="settings-scroll" key={activeCategory}>
         {activeCategory === 'appearance' && (
-        <Section title="Appearance" description="Match Windows or choose a fixed theme." icon={<Monitor size={18} />}>
-          <Row id="theme" label="Theme" description="System is recommended and follows Windows automatically.">
+        <Section title="Appearance" description="Match your system or choose a fixed theme." icon={<Monitor size={18} />}>
+          <Row id="theme" label="Theme" description="System is recommended and follows your operating system automatically.">
             <Segmented<ThemeMode>
               value={local.theme}
               onChange={(value) => update('theme', value)}
@@ -292,7 +292,7 @@ export default function Settings() {
               ]}
             />
           </Row>
-          <Row id="window-material" label="Windows glass style" description="Acrylic is the native Windows flyout look and the default; Mica is calmer, while Solid disables transparency.">
+          {getPlatform() === 'windows' && <Row id="window-material" label="Windows glass style" description="Acrylic is the native Windows flyout look and the default; Mica is calmer, while Solid disables transparency.">
             <Segmented<Backdrop>
               value={local.backdrop}
               onChange={(value) => update('backdrop', value)}
@@ -302,7 +302,7 @@ export default function Settings() {
                 { value: 'solid', label: 'Solid' },
               ]}
             />
-          </Row>
+          </Row>}
           <Row id="show-preview" label="Show preview by default" description="Keep the history compact until you open the preview pane.">
             <Toggle checked={local.showPreview} onChange={(value) => update('showPreview', value)} />
           </Row>
@@ -758,7 +758,7 @@ function StorageLocationButton({
       onClick={onClick}
     >
       <FolderOpen size={16} aria-hidden />
-      <span>{busy ? 'Moving…' : (path ?? 'Windows app data (default)')}</span>
+      <span>{busy ? 'Moving…' : (path ?? (getPlatform() === 'macos' ? 'Application Support (default)' : 'Windows app data (default)'))}</span>
     </button>
   );
 }

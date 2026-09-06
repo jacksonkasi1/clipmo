@@ -4,7 +4,7 @@
   <img src="assets/logo-256.png" alt="Clipmo logo" width="200" height="200" />
 </p>
 
-**Fast, private clipboard history for Windows.** Clipmo uses a Fluent surface
+**Fast, private clipboard history for Windows and macOS.** Clipmo uses a Fluent surface
 that feels at home on Windows 11, with a compact quick window and a full history
 window for previewing and editing clipboard items.
 
@@ -14,7 +14,7 @@ window for previewing and editing clipboard items.
 
 ## Download
 
-The latest signed Windows installer is published on the
+The Windows installer and macOS Intel/Apple Silicon builds are published on the
 [Releases](https://github.com/jacksonkasi1/clipmo/releases/latest) page.
 
 [![Latest release](https://img.shields.io/github/v/release/jacksonkasi1/clipmo?label=Clipmo&sort=semver)](https://github.com/jacksonkasi1/clipmo/releases/latest)
@@ -66,6 +66,71 @@ For older builds and the full changelog, see
 | Node.js | 22.12 or newer |
 | Visual Studio | Desktop development with C++ + Windows 11 SDK |
 | WebView2 | Included with Windows 11; otherwise the installer bootstraps it |
+
+macOS builds require macOS 12 or newer, on either Intel or Apple Silicon.
+Development requires the Xcode Command Line Tools (`xcode-select --install`),
+Rust, and Node.js 22.12+. WebKit is included with macOS.
+
+## macOS installation and usage
+
+Choose `Clipmo_<version>_x86_64.dmg` for Intel or
+`Clipmo_<version>_arm64.dmg` for Apple Silicon from the same release page as
+the Windows installer. Open the disk image and drag Clipmo into Applications.
+An `.app.zip` and SHA-256 checksums are also provided for each architecture.
+
+Current Mac builds are **ad-hoc signed, not Apple notarized**. Gatekeeper may
+block the first launch; after attempting to open Clipmo, use **System Settings →
+Privacy & Security → Open Anyway** if you trust this download. Ad-hoc signing
+does not establish a verified developer identity.
+
+Press **Command+Shift+V** for quick history, or **Command+Option+Shift+V** for
+the full window. The menu-bar icon also opens either window and Settings.
+Closing a window keeps capture running; choose Quit Clipmo from the menu to exit.
+Dock activation reopens the full window. Launch at login uses a LaunchAgent.
+
+Automatic paste requires **System Settings → Privacy & Security → Accessibility →
+Clipmo**. Clipmo requests this on the first paste attempt and displays instructions
+if access is denied. Copying history items and manually pressing Command+V works
+without Accessibility permission. Move the app to Applications before granting access.
+
+The native pasteboard captures text, HTML/RTF, PNG/TIFF images, and Finder file
+URLs every 200 ms, skipping password-manager concealed/transient markers and its
+own writes. Very short-lived clipboard changes between polls can be missed.
+Source attribution uses the foreground application at capture time. Mac windows
+use solid surfaces; Windows Acrylic/Mica remain Windows-specific. App icons use
+generic glyphs. Data lives in `~/Library/Application Support/app.clipdeck.desktop/`.
+
+## macOS builds and release verification
+
+```bash
+npm ci
+rustup target add x86_64-apple-darwin aarch64-apple-darwin
+npm run tauri build -- --target x86_64-apple-darwin
+npm run tauri build -- --target aarch64-apple-darwin
+# Optional single app containing both architectures:
+npm run tauri build -- --target universal-apple-darwin
+bash scripts/test-macos-native.sh
+```
+
+Tauri automatically merges `src-tauri/tauri.macos.conf.json` on macOS.
+The macOS workflow runs on native Intel and Apple Silicon runners, checks frontend
+tests/build, Rust formatting/Clippy/tests, native clipboard round trips on an
+isolated pasteboard, app signatures and CPU architecture, DMG integrity, and the
+packaged main/quick windows' WebKit readiness handshakes.
+Paste into a different application and the Accessibility grant still require a
+manual desktop check; CI does not grant privacy permissions.
+
+For new `v*` tags, Mac assets are appended after the Windows workflow creates the
+release. To add Mac downloads to an existing release, run **macOS build and release**
+from the branch containing this support and set `release_tag` to `v0.2.10` (or the
+matching source version). A blank input only builds downloadable CI artifacts.
+Both architectures must pass before publishing; existing Windows/Android assets
+are preserved. A backfill uses the selected branch's source, not the old tag's
+Windows-only source; the workflow run records that commit.
+
+For trusted distribution, supply a Developer ID signing identity and notarization
+credentials through Tauri's documented signing setup before replacing the ad-hoc
+configuration: [macOS code signing](https://v2.tauri.app/distribute/sign/macos/).
 
 ## Development
 

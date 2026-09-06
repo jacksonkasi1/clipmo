@@ -57,3 +57,6 @@ export const getShortcutLabel = (action: ShortcutAction): string => {
   const keys = getShortcutKeys(action);
   return getPlatform() === 'macos' ? keys.join('') : keys.join('+');
 };
+
+export const isDeleteShortcutKey = (event: Pick<KeyboardEvent, 'key' | 'metaKey'>): boolean =>
+  event.key === 'Delete' || (getPlatform() === 'macos' && event.metaKey && event.key === 'Backspace');

@@ -15,10 +15,20 @@
 //! windows only.
 
 mod classifier;
+mod event;
+#[cfg(windows)]
 pub mod formats;
 mod hasher;
+#[cfg(windows)]
+pub mod listener;
+#[cfg(target_os = "macos")]
+#[path = "macos_listener.rs"]
 pub mod listener;
 pub mod paste_batch;
+#[cfg(windows)]
+pub mod writer;
+#[cfg(target_os = "macos")]
+#[path = "macos_writer.rs"]
 pub mod writer;
 
 pub use classifier::classify;
