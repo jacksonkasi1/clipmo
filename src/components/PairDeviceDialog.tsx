@@ -52,6 +52,7 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
   useEffect(() => {
     if (!open) {
       setJoinCode('');
+      setJoinAddress('');
       setError(null);
     }
   }, [open]);
@@ -144,7 +145,7 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
           <span className="pair-device-heading-icon"><MonitorUp size={19} aria-hidden /></span>
           <div>
             <h2 id="pair-device-title">Add another device</h2>
-            <p>Clipmo {version} · Update every device to 0.2.12 or newer before pairing.</p>
+            <p>Clipmo {version} · Connect devices on the same local network.</p>
           </div>
           <button type="button" className="icon-button" aria-label="Close add device" onClick={onClose}>
             <X size={16} aria-hidden />
@@ -175,7 +176,6 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
                 <RefreshCw size={14} aria-hidden /> New code
               </button>
             </div>
-            {sync?.localAddress && <p>This device’s LAN address: <code>{sync.localAddress}</code></p>}
             {pairingActive && qr && <figure className="pair-device-qr"><img src={qr} width={140} height={140} alt="Scan this pairing invitation in Clipmo for Android" /><figcaption>Android: Devices → Scan QR code</figcaption></figure>}
             {pairingActive ? (
               <div className="pair-device-actions-row">
@@ -200,12 +200,17 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
               <Link2 size={17} aria-hidden />
               <div>
                 <h3 id="join-code-title">Join a device that already shows a code</h3>
-                <p>Enter its six-digit code here. Your own code and saved connections stay unchanged.</p>
+                <p>Enter the six-digit code shown on the other device.</p>
               </div>
             </div>
-            <label>Can’t discover the device? Enter its LAN address (optional)
+            <details className="pair-device-help" onToggle={(event) => { if (!event.currentTarget.open) setJoinAddress(''); }}>
+              <summary>Connection help</summary>
+              {sync?.localAddress && <p>This device: <code>{sync.localAddress}</code></p>}
+              <label>Other device’s address
               <input value={joinAddress} onChange={(event) => setJoinAddress(event.target.value)} placeholder="192.168.1.4:47634" aria-label="Other device LAN address" />
-            </label>
+              </label>
+              <p>Use this only if code entry cannot find the device. Both apps need version 0.2.12 or newer.</p>
+            </details>
             <form className="pair-device-join" onSubmit={(event) => {
               event.preventDefault();
               void joinDevice();
@@ -231,7 +236,7 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
             </form>
           </section>
 
-          <p>New codes and closing pairing keep saved devices connected. Use Remove to disconnect a device.</p>
+          <p>New codes keep saved devices connected.</p>
           {peers.length > 0 && (
             <ul className="pair-device-peers" aria-label="Saved connections">
               {peers.map((peer) => (
@@ -254,7 +259,6 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
           {pairingActive && peers.length === 0 && !connecting && (
             <p className="pair-device-waiting" aria-live="polite">Ready to pair. Enter this code on another device or scan the QR code in Clipmo for Android.</p>
           )}
-          <p>Use the updated Clipmo app on every device. Pair each pair of devices that should sync directly.</p>
           {error && <p className="pair-device-error" role="alert">{error}</p>}
         </div>
       </section>

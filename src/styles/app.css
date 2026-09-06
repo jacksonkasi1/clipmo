@@ -3402,3 +3402,9 @@ kbd {
 .pair-device-peers { list-style: none; padding: 0; margin: 0; }
 .pair-device-peers li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
 .pair-device-dialog { max-height: calc(100vh - 48px); overflow-y: auto; }
+.pair-device-help { margin-left: 31px; font-size: 12px; color: var(--text-secondary); }
+.pair-device-help summary { cursor: pointer; padding: 4px 0; }
+.pair-device-help label { display: grid; gap: 6px; margin-top: 8px; }
+.pair-device-help input { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px 10px; border-radius: 8px; }
+.pair-device-help p { margin: 8px 0; }
+@media (max-width: 560px) { .pair-device-help { margin-left: 0; } }

@@ -71,6 +71,8 @@ describe('PairDeviceDialog', () => {
   it('submits a direct address with the other device code', async () => {
     const user = userEvent.setup();
     render(<PairDeviceDialog open onClose={vi.fn()} />);
+    expect(screen.getByLabelText('Other device LAN address').closest('details')?.open).toBe(false);
+    await user.click(screen.getByText('Connection help'));
     await user.type(screen.getByLabelText('Other device LAN address'), '192.168.1.4:47634');
     await user.type(screen.getByLabelText('Pairing code from another device'), '654321');
     await user.click(screen.getByRole('button', { name: 'Connect' }));

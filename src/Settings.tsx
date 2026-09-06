@@ -280,7 +280,7 @@ export default function Settings() {
         <span className="settings-app-icon"><Settings2 size={21} aria-hidden /></span>
         <div>
           <h1>Clipmo settings</h1>
-          <p>Version {version} · Pairing v3</p>
+          <p>Version {version}</p>
         </div>
       </header>
 

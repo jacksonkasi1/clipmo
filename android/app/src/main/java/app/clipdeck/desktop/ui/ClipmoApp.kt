@@ -814,6 +814,7 @@ private fun DevicesScreen(
     val type = ClipmoTheme.typography
     var joinCodeInput by rememberSaveable { mutableStateOf("") }
     var joinAddressInput by rememberSaveable { mutableStateOf("") }
+    var connectionHelp by rememberSaveable { mutableStateOf(false) }
     val normalizedJoinCode = joinCodeInput.filter { it.isDigit() }.take(6)
     val canJoin = normalizedJoinCode.length == 6 && !state.joinPending
 
@@ -936,9 +937,14 @@ private fun DevicesScreen(
                 Spacer(Modifier.height(space.sm))
 
                 ClipmoButton(label = "Scan QR code", style = ClipmoButtonStyle.SECONDARY, onClick = onScanPairing, enabled = !state.joinPending)
-                BasicText("This device: ${state.localAddress}", style = type.metadata.copy(color = colors.textSecondary))
                 Spacer(Modifier.height(space.sm))
-                ClipmoSearchBar(value = joinAddressInput, hint = "Other device address (optional): 192.168.1.16:47634", onValueChange = { joinAddressInput = it.trim() }, searchIcon = false)
+                ClipmoButton(label = if (connectionHelp) "Hide connection help" else "Connection help", style = ClipmoButtonStyle.SECONDARY, onClick = { connectionHelp = !connectionHelp; if (!connectionHelp) joinAddressInput = "" })
+                if (connectionHelp) {
+                    Spacer(Modifier.height(space.sm))
+                    BasicText("This device: ${state.localAddress}", style = type.metadata.copy(color = colors.textSecondary))
+                    Spacer(Modifier.height(space.sm))
+                    ClipmoSearchBar(value = joinAddressInput, hint = "Other device address (optional)", onValueChange = { joinAddressInput = it.trim() }, searchIcon = false)
+                }
                 Spacer(Modifier.height(space.sm))
                 ClipmoSearchBar(
                     value = joinCodeInput,
@@ -1066,7 +1072,7 @@ private fun SettingsScreen(
         contentPadding = PaddingValues(horizontal = space.md, vertical = space.sm),
     ) {
         item {
-            BasicText("Clipmo ${app.clipdeck.desktop.BuildConfig.VERSION_NAME} · Pairing v3",
+            BasicText("Clipmo ${app.clipdeck.desktop.BuildConfig.VERSION_NAME}",
                 style = ClipmoTheme.typography.bodyMedium.copy(color = colors.textSecondary))
             Spacer(Modifier.height(space.md))
             ClipmoSettingsGroup(title = "Clipboard") {
