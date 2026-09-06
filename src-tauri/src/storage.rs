@@ -580,11 +580,20 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(windows)]
     #[test]
     fn overlap_check_normalizes_parent_components_and_case() {
         let base = PathBuf::from(r"C:\Users\Person\Clipdeck");
         let nested = PathBuf::from(r"c:\users\person\Clipdeck\files\..\images");
         assert!(paths_overlap(&base, &nested).unwrap());
+    }
+
+    #[test]
+    fn overlap_check_normalizes_native_parent_components() {
+        let base = test_root("native-parent-overlap");
+        let nested = base.join("files").join("..").join("images");
+        assert!(paths_overlap(&base, &nested).unwrap());
+        assert!(!paths_overlap(&base, &base.with_file_name("unrelated-root")).unwrap());
     }
 
     #[test]

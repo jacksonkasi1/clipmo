@@ -40,7 +40,7 @@ import { DeviceBadge } from './components/DeviceBadge';
 import { PairDeviceDialog } from './components/PairDeviceDialog';
 import { SyncPreferencesPanel } from './components/SyncPreferencesPanel';
 import { useStore } from './lib/store';
-import { api, fileSrc } from './lib/tauri';
+import { api, fileSrc, on } from './lib/tauri';
 import { getPlatform } from './lib/platform';
 import { APP_SHORTCUTS, shortcutKeys } from './lib/shortcuts';
 import { FILTER_SHORTCUTS, resolvedFilterShortcuts } from './lib/filter-shortcuts';
@@ -102,6 +102,13 @@ export default function Settings() {
     applyTheme(local?.theme ?? 'system', appearance);
     document.documentElement.dataset.backdrop = local?.backdrop ?? 'acrylic';
   }, [local?.theme, local?.backdrop, appearance]);
+
+  useEffect(() => {
+    const unlisten = on<Backdrop>('clipdeck:backdrop', (effective) => {
+      document.documentElement.dataset.backdrop = effective;
+    });
+    return () => { void unlisten.then((stop) => stop()); };
+  }, []);
 
   useEffect(() => {
     const jumpToCategory = (event: KeyboardEvent) => {
@@ -280,8 +287,8 @@ export default function Settings() {
         <SettingsNav active={activeCategory} onChange={setActiveCategory} />
         <div className="settings-scroll" key={activeCategory}>
         {activeCategory === 'appearance' && (
-        <Section title="Appearance" description="Match Windows or choose a fixed theme." icon={<Monitor size={18} />}>
-          <Row id="theme" label="Theme" description="System is recommended and follows Windows automatically.">
+        <Section title="Appearance" description="Match your system or choose a fixed theme." icon={<Monitor size={18} />}>
+          <Row id="theme" label="Theme" description="System is recommended and follows your operating system automatically.">
             <Segmented<ThemeMode>
               value={local.theme}
               onChange={(value) => update('theme', value)}
@@ -292,7 +299,7 @@ export default function Settings() {
               ]}
             />
           </Row>
-          <Row id="window-material" label="Windows glass style" description="Acrylic is the native Windows flyout look and the default; Mica is calmer, while Solid disables transparency.">
+          {getPlatform() === 'windows' && <Row id="window-material" label="Windows glass style" description="Acrylic is the native Windows flyout look and the default; Mica is calmer, while Solid disables transparency.">
             <Segmented<Backdrop>
               value={local.backdrop}
               onChange={(value) => update('backdrop', value)}
@@ -302,7 +309,17 @@ export default function Settings() {
                 { value: 'solid', label: 'Solid' },
               ]}
             />
-          </Row>
+          </Row>}
+          {getPlatform() === 'macos' && <Row id="window-material" label="Window material" description="Vibrancy softly blurs the desktop behind Clipmo. Solid disables transparency.">
+            <Segmented<Backdrop>
+              value={local.backdrop === 'solid' ? 'solid' : 'acrylic'}
+              onChange={(value) => update('backdrop', value)}
+              options={[
+                { value: 'acrylic', label: 'Vibrancy' },
+                { value: 'solid', label: 'Solid' },
+              ]}
+            />
+          </Row>}
           <Row id="show-preview" label="Show preview by default" description="Keep the history compact until you open the preview pane.">
             <Toggle checked={local.showPreview} onChange={(value) => update('showPreview', value)} />
           </Row>
@@ -758,7 +775,7 @@ function StorageLocationButton({
       onClick={onClick}
     >
       <FolderOpen size={16} aria-hidden />
-      <span>{busy ? 'Moving…' : (path ?? 'Windows app data (default)')}</span>
+      <span>{busy ? 'Moving…' : (path ?? (getPlatform() === 'macos' ? 'Application Support (default)' : 'Windows app data (default)'))}</span>
     </button>
   );
 }

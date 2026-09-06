@@ -20,7 +20,7 @@ use crate::models::{
     ImageCompression, ImageFormat, ImageMeta, ItemKind, ListQuery, PasteFlavor, Settings,
     SourceApp, StoredFile, StoredFileStatus, SyncState, SystemAppearance,
 };
-use crate::win::paste;
+use crate::platform::paste;
 use crate::AppState;
 
 // ---- command handlers ----------------------------------------------------
@@ -119,6 +119,8 @@ pub async fn paste_active(
     id: i64,
     flavor: PasteFlavor,
 ) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    paste::ensure_permission()?;
     let _operation = clipboard_operation()?;
     let item = state.db.get_required(id)?;
     let (_, html, rtf) = state
@@ -200,6 +202,8 @@ fn paste_selected_items(
     ids: &[i64],
     flavor: PasteFlavor,
 ) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    paste::ensure_permission()?;
     const PASTE_SETTLE_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
     let _operation = clipboard_operation()?;
     let items = ids
@@ -405,7 +409,7 @@ pub async fn known_sources(state: tauri::State<'_, AppState>) -> Result<Vec<Sour
             .as_ref()
             .is_none_or(|path| !std::path::Path::new(path).exists())
         {
-            source.icon_path = crate::win::icon::cached(&source.exe_path);
+            source.icon_path = crate::platform::icon::cached(&source.exe_path);
         }
     }
     Ok(sources)
@@ -598,30 +602,30 @@ pub async fn prune_now(state: tauri::State<'_, AppState>) -> Result<()> {
 pub async fn list_installed_apps(
     refresh: Option<bool>,
 ) -> Result<Vec<crate::models::ApplicationInfo>> {
-    Ok(crate::win::apps::installed(refresh.unwrap_or(false)))
+    Ok(crate::platform::apps::installed(refresh.unwrap_or(false)))
 }
 
 #[tauri::command]
 pub async fn list_running_apps() -> Result<Vec<crate::models::ApplicationInfo>> {
-    Ok(crate::win::apps::running())
+    Ok(crate::platform::apps::running())
 }
 
 #[tauri::command]
 pub async fn resolve_application_identity(
     executable_path: String,
 ) -> Result<crate::models::IgnoredApp> {
-    crate::win::apps::resolve(&executable_path)
+    crate::platform::apps::resolve(&executable_path)
         .ok_or_else(|| Error::Other("executable path is empty".into()))
 }
 
 #[tauri::command]
 pub async fn extract_application_icon(executable_path: String) -> Result<Option<String>> {
-    Ok(crate::win::icon::extract(&executable_path))
+    Ok(crate::platform::icon::extract(&executable_path))
 }
 
 #[tauri::command]
 pub async fn appearance() -> Result<SystemAppearance> {
-    Ok(crate::win::appearance::read())
+    Ok(crate::platform::appearance::read())
 }
 
 #[tauri::command]
@@ -699,7 +703,7 @@ pub async fn signal_frontend_ready(
         "layoutVisible": layout_visible,
         "processId": std::process::id(),
     });
-    let temporary = path.with_extension("tmp");
+    let temporary = path.with_extension(format!("{}.tmp", window.label()));
     std::fs::write(
         &temporary,
         serde_json::to_vec(&payload).map_err(|error| Error::Other(error.to_string()))?,
@@ -1005,6 +1009,13 @@ pub fn install_hotkeys(app: &App) {
     }
 
     log::warn!("saved global shortcuts are unavailable; trying safe fallbacks");
+    #[cfg(target_os = "macos")]
+    const FALLBACKS: [(&str, &str); 3] = [
+        ("Super+Shift+V", "Super+Alt+Shift+V"),
+        ("Super+Alt+V", "Super+Alt+Shift+C"),
+        ("Super+Shift+C", "Super+Alt+Shift+D"),
+    ];
+    #[cfg(not(target_os = "macos"))]
     const FALLBACKS: [(&str, &str); 3] = [
         ("Ctrl+Shift+V", "Ctrl+Alt+Shift+V"),
         ("Ctrl+Alt+V", "Ctrl+Alt+Shift+C"),
@@ -1182,7 +1193,7 @@ impl CaptureSink for TauriSink {
             };
         }
         if event.source.as_ref().is_some_and(|source| {
-            crate::win::source::is_current_process(&source.exe_path)
+            crate::platform::source::is_current_process(&source.exe_path)
                 || settings
                     .ignored_apps
                     .iter()
@@ -1572,7 +1583,7 @@ pub fn show_settings_window(app: &AppHandle) -> std::result::Result<(), String> 
     if let Some(existing) = app.get_webview_window("settings") {
         let state: tauri::State<AppState> = app.state();
         let settings = state.settings.read().clone();
-        let system = crate::win::appearance::read();
+        let system = crate::platform::appearance::read();
         crate::native_appearance::apply_window(&existing, &settings, &system);
         if existing.is_minimized().unwrap_or(false) {
             existing.unminimize().map_err(|error| error.to_string())?;
@@ -1581,22 +1592,22 @@ pub fn show_settings_window(app: &AppHandle) -> std::result::Result<(), String> 
         existing.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
     }
-    let window =
+    let builder =
         WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
             .title("Clipmo settings")
             .inner_size(800.0, 680.0)
             .min_inner_size(680.0, 560.0)
             .resizable(true)
             .decorations(true)
-            .transparent(true)
             .skip_taskbar(true)
             .center()
-            .visible(false)
-            .build()
-            .map_err(|e| e.to_string())?;
+            .visible(false);
+    #[cfg(any(windows, target_os = "macos"))]
+    let builder = builder.transparent(true);
+    let window = builder.build().map_err(|e| e.to_string())?;
     let state: tauri::State<AppState> = app.state();
     let settings = state.settings.read().clone();
-    let system = crate::win::appearance::read();
+    let system = crate::platform::appearance::read();
     crate::native_appearance::apply_window(&window, &settings, &system);
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())

@@ -1,7 +1,7 @@
 // ** import lib
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { getPlatform, getShortcutKeys, getShortcutLabel } from './platform';
+import { getPlatform, getShortcutKeys, getShortcutLabel, isDeleteShortcutKey } from './platform';
 
 describe('platform shortcut labels', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -19,5 +19,13 @@ describe('platform shortcut labels', () => {
     expect(getPlatform()).toBe('macos');
     expect(getShortcutKeys('edit')).toEqual(['⌘', 'E']);
     expect(getShortcutLabel('commands')).toBe('⌘K');
+    expect(isDeleteShortcutKey({ key: 'Backspace', metaKey: true })).toBe(true);
+    expect(isDeleteShortcutKey({ key: 'Backspace', metaKey: false })).toBe(false);
+  });
+
+  it('keeps Windows Backspace separate from Delete', () => {
+    vi.stubGlobal('navigator', { platform: 'Win32', userAgent: 'Windows NT 10.0' });
+    expect(isDeleteShortcutKey({ key: 'Backspace', metaKey: true })).toBe(false);
+    expect(isDeleteShortcutKey({ key: 'Delete', metaKey: false })).toBe(true);
   });
 });

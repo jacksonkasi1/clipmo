@@ -78,7 +78,7 @@ pub fn apply_window(
 /// Applies the persisted appearance to every native window.
 #[cfg(not(test))]
 pub fn apply_all(app: &AppHandle, settings: &Settings) -> SystemAppearance {
-    let system = crate::win::appearance::read();
+    let system = crate::platform::appearance::read();
     for window in app.webview_windows().values() {
         apply_window(window, settings, &system);
     }
@@ -94,7 +94,7 @@ pub fn handle_scale_factor_changed(window: &Window) {
         return;
     };
     let settings = state.settings.read().clone();
-    let system = crate::win::appearance::read();
+    let system = crate::platform::appearance::read();
     if let Some(webview) = app.get_webview_window(window.label()) {
         apply_window(&webview, &settings, &system);
     }
@@ -113,7 +113,7 @@ pub fn handle_system_theme_changed(window: &Window, theme: Theme) {
         return;
     }
 
-    let mut system = crate::win::appearance::read();
+    let mut system = crate::platform::appearance::read();
     system.dark = matches!(theme, Theme::Dark);
     for webview in app.webview_windows().values() {
         apply_surface(webview, &settings, system.dark);
@@ -125,17 +125,19 @@ pub fn handle_system_theme_changed(window: &Window, theme: Theme) {
 fn apply_surface(window: &WebviewWindow, settings: &Settings, dark: bool) -> Backdrop {
     let mode = crate::window::mode_for_label(window.label());
     let requested = material_for(mode, settings.backdrop);
-    let effective = crate::win::backdrop::apply(window, requested, dark);
+    let effective = crate::platform::backdrop::apply(window, requested, dark);
     // Acrylic/theme/DPI changes can recreate the Win32 non-client frame. The
     // quick flyout's native contract must be the final operation, otherwise a
     // white DWM edge or taskbar application style can return after the initial
     // warm-up enforcement in `show_ready_quick`.
     #[cfg(windows)]
     if mode == WindowMode::Quick {
-        if let Err(error) = crate::win::window_style::enforce_quick_flyout(window) {
+        if let Err(error) = crate::platform::window_style::enforce_quick_flyout(window) {
             log::warn!("could not restore quick-window contract after backdrop: {error}");
         }
     }
+    // macOS emits after its main-thread AppKit operation actually completes.
+    #[cfg(not(target_os = "macos"))]
     let _ = window.emit("clipdeck:backdrop", effective);
     effective
 }

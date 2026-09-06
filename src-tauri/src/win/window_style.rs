@@ -93,6 +93,6 @@ pub fn enforce_quick_flyout(window: &WebviewWindow) -> Result<StyleSnapshot, Str
     // `SWP_FRAMECHANGED` can reset DWM's border policy. Reapply it only after
     // the final frame calculation so the flyout keeps small rounded corners
     // without the white non-client edge.
-    crate::win::backdrop::apply_quick_frame(window);
+    crate::platform::backdrop::apply_quick_frame(window);
     Ok(snapshot(hwnd))
 }

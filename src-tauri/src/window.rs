@@ -21,7 +21,7 @@ use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, Window,
 };
 
-use crate::win::{monitor, source};
+use crate::platform::{monitor, source};
 use crate::window_layout::{
     centered_in_work_area, centered_origin, fit_within, titlebar_is_reachable, PhysicalRect,
     QUICK_COMPACT_WIDTH, QUICK_EXPANDED_WIDTH, QUICK_HEIGHT, QUICK_WORK_AREA_MARGIN,
@@ -186,7 +186,7 @@ pub fn show_ready_quick(app: &AppHandle) {
     layout_quick(&window, expanded, foreground);
     if let Some(state) = app.try_state::<AppState>() {
         let settings = state.settings.read().clone();
-        let system = crate::win::appearance::read();
+        let system = crate::platform::appearance::read();
         crate::native_appearance::apply_window(&window, &settings, &system);
     }
     // Applying Acrylic can recreate non-client styles on Windows. Reassert the
@@ -202,9 +202,9 @@ pub fn show_ready_quick(app: &AppHandle) {
         log::warn!("could not remove quick window from taskbar: {error}");
     }
     #[cfg(windows)]
-    let before = crate::win::window_style::read_styles(&window);
+    let before = crate::platform::window_style::read_styles(&window);
     #[cfg(windows)]
-    let enforced = crate::win::window_style::enforce_quick_flyout(&window);
+    let enforced = crate::platform::window_style::enforce_quick_flyout(&window);
     #[cfg(windows)]
     if let Err(error) = &enforced {
         log::warn!("could not enforce quick-window Win32 styles: {error}");
@@ -212,12 +212,12 @@ pub fn show_ready_quick(app: &AppHandle) {
     let _ = window.set_always_on_top(true);
     let _ = window.show();
     #[cfg(windows)]
-    if let Err(error) = crate::win::window_style::enforce_quick_flyout(&window) {
+    if let Err(error) = crate::platform::window_style::enforce_quick_flyout(&window) {
         log::warn!("could not restore quick-window Win32 styles after show: {error}");
     }
     let _ = window.set_focus();
     #[cfg(windows)]
-    if let Err(error) = crate::win::window_style::enforce_quick_flyout(&window) {
+    if let Err(error) = crate::platform::window_style::enforce_quick_flyout(&window) {
         log::warn!("could not restore quick-window Win32 styles after focus: {error}");
     }
     #[cfg(windows)]
@@ -234,12 +234,12 @@ pub fn show_ready_quick(app: &AppHandle) {
 #[cfg(windows)]
 fn report_quick_styles(
     window: &WebviewWindow,
-    before: Result<crate::win::window_style::StyleSnapshot, String>,
-    enforced: Result<crate::win::window_style::StyleSnapshot, String>,
+    before: Result<crate::platform::window_style::StyleSnapshot, String>,
+    enforced: Result<crate::platform::window_style::StyleSnapshot, String>,
 ) {
-    let shown = crate::win::window_style::read_styles(window);
+    let shown = crate::platform::window_style::read_styles(window);
     let describe =
-        |snapshot: &Result<crate::win::window_style::StyleSnapshot, String>| match snapshot {
+        |snapshot: &Result<crate::platform::window_style::StyleSnapshot, String>| match snapshot {
             Ok(value) => value.to_string(),
             Err(error) => format!("unavailable: {error}"),
         };
@@ -253,15 +253,15 @@ fn report_quick_styles(
     let Ok(base_path) = std::env::var("CLIPDECK_READY_FILE") else {
         return;
     };
-    let field = |snapshot: &Result<crate::win::window_style::StyleSnapshot, String>| match snapshot
-    {
-        Ok(value) => serde_json::json!({
-            "hwnd": format!("0x{:X}", value.hwnd),
-            "style": format!("0x{:08X}", value.style as u32),
-            "exStyle": format!("0x{:08X}", value.ex_style as u32),
-        }),
-        Err(error) => serde_json::json!({ "error": error }),
-    };
+    let field =
+        |snapshot: &Result<crate::platform::window_style::StyleSnapshot, String>| match snapshot {
+            Ok(value) => serde_json::json!({
+                "hwnd": format!("0x{:X}", value.hwnd),
+                "style": format!("0x{:08X}", value.style as u32),
+                "exStyle": format!("0x{:08X}", value.ex_style as u32),
+            }),
+            Err(error) => serde_json::json!({ "error": error }),
+        };
     let mut path = std::path::PathBuf::from(base_path);
     path.set_extension("quick-style.json");
     let payload = serde_json::json!({

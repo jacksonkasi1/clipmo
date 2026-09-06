@@ -16,7 +16,7 @@ const apiMock = vi.hoisted(() => ({
   setLaunchAtLogin: vi.fn(),
 }));
 
-vi.mock('./lib/tauri', () => ({ api: apiMock, fileSrc: (path: string) => `asset://${path}` }));
+vi.mock('./lib/tauri', () => ({ api: apiMock, fileSrc: (path: string) => `asset://${path}`, on: vi.fn().mockResolvedValue(() => {}) }));
 
 import Settings, {
   ApplicationPicker,
@@ -89,6 +89,21 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('Settings interactions', () => {
+  it('lets Mac users select and save Solid instead of Vibrancy', async () => {
+    const platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    try {
+      const saveSettings = vi.fn().mockImplementation(async (settings: SettingsType) => settings);
+      useStore.setState({ saveSettings });
+      render(<Settings />);
+      expect(screen.getByRole('radio', { name: 'Vibrancy' }).getAttribute('aria-checked')).toBe('true');
+      fireEvent.click(screen.getByRole('radio', { name: 'Solid' }));
+      fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+      await waitFor(() => expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ backdrop: 'solid' })));
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
   it('keeps an extension draft raw until blur, then normalises it', async () => {
     const changed = vi.fn();
     const user = userEvent.setup();

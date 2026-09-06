@@ -23,6 +23,7 @@ import { useStore } from './lib/store';
 import { api, on } from './lib/tauri';
 import { applyTheme } from './lib/theme';
 import { ToastSurface } from './lib/toast';
+import { isDeleteShortcutKey } from './lib/platform';
 
 export default function App() {
   const mode = useStore((s) => s.mode);
@@ -223,7 +224,7 @@ export default function App() {
         event.preventDefault();
         const target = selectedIds.length > 1 ? selectedIds : [selectedId];
         for (const id of target) void toggleFavorite(id);
-      } else if (event.key === 'Delete' && !(modifier && event.shiftKey)) {
+      } else if (isDeleteShortcutKey(event) && !(modifier && event.shiftKey)) {
         event.preventDefault();
         if (selectedIds.length > 1) {
           void deleteSelected();
@@ -241,7 +242,7 @@ export default function App() {
       } else if (modifier && event.shiftKey && key === 'p') {
         event.preventDefault();
         void setShowPreview(!showPreview);
-      } else if (modifier && event.shiftKey && event.key === 'Delete') {
+      } else if (modifier && event.shiftKey && isDeleteShortcutKey(event)) {
         event.preventDefault();
         void api.confirm(
           'Clear all non-favorite history items? Favorites will stay pinned.',

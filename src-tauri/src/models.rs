@@ -117,13 +117,12 @@ pub struct IgnoredApp {
 impl IgnoredApp {
     pub fn from_legacy(value: &str) -> Self {
         let value = value.trim();
-        let path = std::path::Path::new(value);
-        let executable_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
+        let executable_name = value
+            .rsplit(['/', '\\'])
+            .next()
             .unwrap_or(value)
             .to_string();
-        let display_name = path
+        let display_name = std::path::Path::new(&executable_name)
             .file_stem()
             .and_then(|name| name.to_str())
             .unwrap_or(value)
@@ -133,7 +132,7 @@ impl IgnoredApp {
         Self {
             id,
             display_name,
-            executable_path: if path.components().count() > 1 {
+            executable_path: if value.contains(['/', '\\']) {
                 value.to_string()
             } else {
                 String::new()
@@ -384,7 +383,12 @@ pub enum ImageCompression {
 /// Default accelerator for the decorated application window. Deliberately
 /// distinct from the quick palette so the two actions never collide.
 fn default_full_window_hotkey() -> String {
-    "Ctrl+Alt+Shift+V".to_string()
+    if cfg!(target_os = "macos") {
+        "Super+Alt+Shift+V"
+    } else {
+        "Ctrl+Alt+Shift+V"
+    }
+    .to_string()
 }
 
 fn default_image_quality() -> u8 {
@@ -523,11 +527,16 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            settings_version: 3,
+            settings_version: 4,
             // Win+V is reserved by the OS shell and cannot be intercepted by a
             // user process, so we default to the de-facto convention used by
             // third-party clipboard managers on Windows.
-            hotkey: "Ctrl+Shift+V".to_string(),
+            hotkey: if cfg!(target_os = "macos") {
+                "Super+Shift+V"
+            } else {
+                "Ctrl+Shift+V"
+            }
+            .to_string(),
             full_window_hotkey: default_full_window_hotkey(),
             filter_shortcuts: default_filter_shortcuts(),
             max_items: 10_000,
@@ -651,7 +660,7 @@ fn default_snapshot_limit_mb() -> u32 {
 }
 
 fn default_settings_version() -> u32 {
-    3
+    4
 }
 
 fn deserialize_ignored_apps<'de, D>(deserializer: D) -> Result<Vec<IgnoredApp>, D::Error>

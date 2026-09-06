@@ -1,4 +1,14 @@
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rerun-if-changed=src/macos/native.m");
+        cc::Build::new()
+            .file("src/macos/native.m")
+            .flag("-fobjc-arc")
+            .flag("-fblocks")
+            .compile("clipmo_macos");
+        println!("cargo:rustc-link-lib=framework=AppKit");
+        println!("cargo:rustc-link-lib=framework=ApplicationServices");
+    }
     tauri_build::build();
     prepare_webview2_loader();
 }
