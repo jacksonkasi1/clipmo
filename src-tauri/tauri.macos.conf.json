@@ -50,6 +50,7 @@
     "shortDescription": "Fast, private clipboard history for macOS",
     "longDescription": "Clipmo keeps text, links, images and files one shortcut away. Local clipboard history for Intel and Apple Silicon Macs, with no telemetry.",
     "macOS": {
+      "infoPlist": "Info.plist",
       "minimumSystemVersion": "12.0",
       "signingIdentity": "-"
     },

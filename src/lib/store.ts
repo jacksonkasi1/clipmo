@@ -117,6 +117,9 @@ interface Actions {
   setLaunchAtLogin: (enabled: boolean) => Promise<Settings>;
   setIgnoredApps: (ignoredApps: Settings['ignoredApps']) => Promise<Settings>;
   regeneratePairingCode: () => Promise<Settings>;
+  closePairing: () => Promise<void>;
+  joinDevice: (code: string, targetId?: string) => Promise<void>;
+  forgetSyncDevice: (deviceId: string) => Promise<void>;
   changeStorageLocation: (path: string) => Promise<Settings>;
   setShowPreview: (show: boolean) => Promise<void>;
   setShowDetails: (show: boolean) => void;
@@ -660,6 +663,18 @@ export const useStore = create<State & Actions>((set, get) => ({
     return next;
   },
 
+  closePairing: async () => {
+    await api.closePairing();
+    await get().loadSyncState();
+  },
+  joinDevice: async (code, targetId) => {
+    try { await api.joinDevice(code, targetId); }
+    finally { await get().loadSyncState(); }
+  },
+  forgetSyncDevice: async (deviceId) => {
+    await api.forgetSyncDevice(deviceId);
+    await get().loadSyncState();
+  },
   regeneratePairingCode: async () => {
     const next = await api.regeneratePairingCode();
     set({ settings: next });

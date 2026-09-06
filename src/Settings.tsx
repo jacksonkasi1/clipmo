@@ -162,7 +162,7 @@ export default function Settings() {
     try {
       const next = await regeneratePairingCode();
       if (next?.syncPairingCode) {
-        setLocal((prev) => (prev ? { ...prev, syncPairingCode: next.syncPairingCode } : prev));
+        setLocal((prev) => (prev ? { ...prev, syncEnabled: next.syncEnabled, syncPairingCode: next.syncPairingCode } : prev));
       }
     } catch (error) {
       setMutationError(mutationErrorMessage('A new pairing code could not be created.', error));
@@ -495,7 +495,7 @@ export default function Settings() {
               onChange={(value) => update('syncDeviceColor', value)}
             />
           </Row>
-          <Row id="sync-pairing-code" label="Pairing code" description="Devices with the same code on the same network can sync (6 digits).">
+          <Row id="sync-pairing-code" label="Pairing code" description="Temporary invitation only. Add / Pair device manages connections and QR pairing.">
             <div className="pairing-code-field-group">
               <input
                 type="text"
@@ -504,10 +504,7 @@ export default function Settings() {
                 maxLength={6}
                 inputMode="numeric"
                 placeholder="000000"
-                onChange={(event) => {
-                  const val = event.target.value.replace(/\D/g, '').slice(0, 6);
-                  update('syncPairingCode', val);
-                }}
+                readOnly
                 aria-label="Pairing code"
               />
               <button

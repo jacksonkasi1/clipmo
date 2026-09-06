@@ -10,8 +10,8 @@ android {
  applicationId = "app.clipdeck.desktop"
  minSdk = 29
  targetSdk = 35
- versionCode = 10
- versionName = "0.2.11"
+ versionCode = 11
+ versionName = "0.2.12"
  }
  signingConfigs {
  create("release") {
@@ -32,7 +32,6 @@ android {
  }
  debug {
  applicationIdSuffix = ".debug"
- signingConfig = signingConfigs.getByName("release")
  }
  }
  compileOptions {
@@ -48,6 +47,7 @@ android {
 }
 
 dependencies {
+ implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
  implementation("androidx.core:core-ktx:1.15.0")
  implementation("androidx.activity:activity-compose:1.9.3")
  implementation(platform("androidx.compose:compose-bom:2024.06.00"))

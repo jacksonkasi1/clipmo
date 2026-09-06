@@ -27,7 +27,7 @@ import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-const val PROTOCOL = "clipmo-lan-v2"
+const val PROTOCOL = "clipmo-lan-v3"
 const val DISCOVERY_PORT = 47633
 const val FIRST_SYNC_PORT = 47634
 const val LAST_SYNC_PORT = 47644
@@ -88,7 +88,8 @@ data class DiscoveryMessage(
 	val protocol: String,
 	@JsonProperty("pairingCode") val pairing_code: String,
 	val device: DeviceIdentity,
-	@JsonProperty("tcpPort") val tcp_port: Int
+	@JsonProperty("tcpPort") val tcp_port: Int,
+	@JsonProperty("pairingAvailable") val pairing_available: Boolean = false,
 )
 
 data class SyncEnvelope(
@@ -100,6 +101,17 @@ data class SyncEnvelope(
 )
 
 data class SyncAck(val ok: Boolean, val error: String? = null)
+
+data class PairControl(
+    val protocol: String,
+    val kind: String,
+    val device: DeviceIdentity,
+    @JsonProperty("tcpPort") val tcp_port: Int,
+    val code: String = "",
+    val token: String,
+)
+data class PairReply(val ok: Boolean, val device: DeviceIdentity, val token: String)
+
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes(
@@ -267,8 +279,6 @@ class ClipSyncService : Service() {
 		val deviceName = intent?.getStringExtra("device_name")
 			?: preferences.getString("device_name", null)
 			?: "Android ${Build.MODEL}"
-		val pairingCode = intent?.getStringExtra("pairing_code")
-			?: preferences.getString("pairing_code", "").orEmpty()
 
 		running = true
 
@@ -277,8 +287,8 @@ class ClipSyncService : Service() {
 			loadTrustedPeers()
 			launch { bindAndListenTcp() }
 			launch { broadcastPresence(deviceId, deviceName) }
-			launch { listenForPeers(pairingCode, deviceId) }
-			launch { drainSendQueue(deviceId, deviceName, pairingCode) }
+			launch { listenForPeers(deviceId) }
+			launch { drainSendQueue(deviceId, deviceName) }
 			launch { watchLocalChanges(deviceId) }
 			launch { probePeers() }
 			if (intent?.action == ACTION_SYNC_NOW) enqueueHistoryBackfill()
@@ -394,13 +404,14 @@ class ClipSyncService : Service() {
 			client.soTimeout = IO_TIMEOUT_MS.toInt()
 			val input = DataInputStream(BufferedInputStream(client.getInputStream()))
 			val header = readFrameHeader(input) ?: return@withContext
-			val envelope = mapper.readValue(header, SyncEnvelope::class.java)
-
-			val pairingPrefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
-			val myPairing = pairingPrefs.getString("pairing_code", "") ?: ""
+            if (mapper.readTree(header).has("kind")) {
+                handleControl(client, mapper.readValue(header, PairControl::class.java))
+                return@withContext
+            }
+            val envelope = mapper.readValue(header, SyncEnvelope::class.java)
 
 			if (!running || envelope.protocol != PROTOCOL
-				|| envelope.pairing_code != myPairing
+				|| !authenticates(envelope.device.id, envelope.pairing_code)
 				|| envelope.pairing_code.isBlank()
 				|| envelope.device.id == currentDevice(
 					getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE).getString("device_id", "")!!,
@@ -408,13 +419,13 @@ class ClipSyncService : Service() {
 				).id
 				|| envelope.body.version().device_id != envelope.device.id
 				|| !validIdHash(envelope.body.idHash())
-				|| (!isTrusted(envelope.device.id) && !pairingWindowOpen())
+				|| envelope.tcp_port !in FIRST_SYNC_PORT..LAST_SYNC_PORT
 			) {
-				client.close()
-				return@withContext
-			}
+                writeResponse(client, SyncAck(false, "Device is not paired or sync frame is invalid"))
+                return@withContext
+            }
 
-			val peerAddr = InetSocketAddress(client.inetAddress.hostAddress, envelope.tcp_port)
+            val peerAddr = InetSocketAddress(client.inetAddress.hostAddress, envelope.tcp_port)
 			peers[envelope.device.id] = PeerRecord(envelope.device, peerAddr, System.currentTimeMillis())
 			rememberTrustedDevice(envelope.device, peerAddr)
 
@@ -428,11 +439,13 @@ class ClipSyncService : Service() {
 				is SyncBody.FavoriteToggle -> applyFavoriteToggle(body)
 				is SyncBody.Tombstone -> applyTombstone(body)
 			}
-			client.close()
-		} catch (e: Exception) {
-			Log.w("ClipSyncService", "handleIncoming error", e)
-			try { client.close() } catch (_: Exception) {}
-		}
+            writeResponse(client, SyncAck(true))
+        } catch (e: Exception) {
+            Log.w("ClipSyncService", "handleIncoming error", e)
+            runCatching { writeResponse(client, SyncAck(false, "Could not apply sync item")) }
+        } finally {
+            runCatching { client.close() }
+        }
 	}
 
 	private suspend fun sendToPeer(addr: InetSocketAddress, envelope: SyncEnvelope, blobs: List<File>): Boolean =
@@ -531,7 +544,7 @@ class ClipSyncService : Service() {
 		db.close()
 	}
 
-	private suspend fun drainSendQueue(deviceId: String, deviceName: String, pairingCode: String) {
+	private suspend fun drainSendQueue(deviceId: String, deviceName: String) {
 		while (running) {
 			val job = syncMutex.withLock { if (jobQueue.isEmpty()) null else jobQueue.removeFirst() }
 			if (job == null) {
@@ -542,7 +555,7 @@ class ClipSyncService : Service() {
 			val currentDev = currentDevice(deviceId, deviceName)
 			val envelope = SyncEnvelope(
 				protocol = PROTOCOL,
-				pairing_code = pairingCode,
+				pairing_code = "",
 				device = currentDev,
 				tcp_port = listenPort,
 				body = job.body
@@ -550,15 +563,18 @@ class ClipSyncService : Service() {
 
 			val targets = job.pendingPeers ?: peers.keys.toMutableSet().also { job.pendingPeers = it }
 			if (targets.isEmpty()) {
+                job.pendingPeers = null
 				syncMutex.withLock { jobQueue.addFirst(job) }
 				delay(1_000)
 				continue
 			}
 			for (peerId in targets.toList()) {
 				if (!running) break
-				val peer = peers[peerId] ?: continue
-				if (peer.address.address.isAnyLocalAddress) continue
-				if (sendToPeer(peer.address, envelope, job.blobs)) {
+                val token = peerToken(peerId)
+                if (token == null) { targets.remove(peerId); peers.remove(peerId); continue }
+                val peer = peers[peerId] ?: continue
+                if (peer.address.address.isAnyLocalAddress) continue
+                if (sendToPeer(peer.address, envelope.copy(pairing_code = token), job.blobs)) {
 					targets.remove(peerId)
 					touchDeviceSeen(peerId)
 					Log.i(
@@ -568,7 +584,8 @@ class ClipSyncService : Service() {
 				}
 			}
 			if (targets.isNotEmpty()) {
-				syncMutex.withLock { jobQueue.addFirst(job) }
+                // An offline recipient must not block newer clips to online devices.
+				syncMutex.withLock { jobQueue.addLast(job) }
 				delay(1_000)
 			}
 		}
@@ -643,7 +660,7 @@ class ClipSyncService : Service() {
 				val platform = runCatching { PlatformKind.valueOf(cursor.getString(2)) }.getOrDefault(PlatformKind.unknown)
 				val device = DeviceIdentity(cursor.getString(0), cursor.getString(1), platform, cursor.getString(3))
 				val address = InetSocketAddress(cursor.getString(4), cursor.getInt(5))
-				peers[device.id] = PeerRecord(device, address, cursor.getLong(6))
+				if (peerToken(device.id) != null) peers[device.id] = PeerRecord(device, address, 0)
 			}
 		}
 		db.close()
@@ -737,83 +754,131 @@ class ClipSyncService : Service() {
 		db.close()
 	}
 
-	private suspend fun broadcastPresence(deviceId: String, deviceName: String) {
-		var pairingCode = ""
-		val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
-		val dev = currentDevice(deviceId, deviceName)
-		val socket = DatagramSocket()
-		socket.broadcast = true
-		while (running) {
-			val code = prefs.getString("pairing_code", "") ?: ""
-			if (code != pairingCode) pairingCode = code
-			if (pairingCode.isNotEmpty() && prefs.getBoolean("sync_enabled", false)) {
-				val msg = DiscoveryMessage(
-					protocol = PROTOCOL,
-					pairing_code = pairingCode,
-					device = dev,
-					tcp_port = listenPort
-				)
-				try {
-					val bytes = mapper.writeValueAsBytes(msg)
-					val packet = DatagramPacket(bytes, bytes.size,
-						InetAddress.getByName("255.255.255.255"), DISCOVERY_PORT)
-					socket.send(packet)
-				} catch (e: Exception) {
-					Log.d("ClipSyncService", "broadcast error: ${e.message}")
-				}
-			}
-			delay(DISCOVERY_TICK_MS)
-		}
-		socket.close()
-	}
+    private suspend fun broadcastPresence(deviceId: String, deviceName: String) {
+        val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+        DatagramSocket().use { socket ->
+            socket.broadcast = true
+            while (running) {
+                if (prefs.getLong("join_until", 0) in 1..System.currentTimeMillis()) {
+                    prefs.edit().remove("join_code").remove("join_until")
+                        .putString("pairing_status", "Could not connect. Check the code, open pairing on the other device, and allow Clipmo through its firewall. All devices need the updated app.").apply()
+                }
+                if (prefs.getBoolean("sync_enabled", false) && listenPort != 0) {
+                    val msg = DiscoveryMessage(PROTOCOL, "", currentDevice(deviceId, deviceName), listenPort, pairingWindowOpen())
+                    runCatching {
+                        val bytes = mapper.writeValueAsBytes(msg)
+                        socket.send(DatagramPacket(bytes, bytes.size, InetAddress.getByName("255.255.255.255"), DISCOVERY_PORT))
+                    }
+                }
+                delay(DISCOVERY_TICK_MS)
+            }
+        }
+    }
 
-	private val buf = ByteArray(4096)
+    private suspend fun listenForPeers(myDeviceId: String) = withContext(Dispatchers.IO) {
+        val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+        DatagramSocket(null).use { socket ->
+            socket.reuseAddress = true
+            socket.broadcast = true
+            socket.bind(InetSocketAddress(DISCOVERY_PORT))
+            socket.soTimeout = 1000
+            while (running) {
+                try {
+                    // A new packet restores capacity after receiving a shorter datagram.
+                    val packet = DatagramPacket(ByteArray(4096), 4096)
+                    socket.receive(packet)
+                    val msg = mapper.readValue(packet.data.copyOf(packet.length), DiscoveryMessage::class.java)
+                    if (msg.protocol != PROTOCOL || msg.device.id == myDeviceId || msg.tcp_port !in FIRST_SYNC_PORT..LAST_SYNC_PORT) continue
+                    val address = InetSocketAddress(packet.address, msg.tcp_port)
+                    val token = peerToken(msg.device.id)
+                    val joinCode = prefs.getString("join_code", "").orEmpty()
+                    val target = prefs.getString("join_target", "").orEmpty()
+                    val joining = joinCode.length == 6 && prefs.getLong("join_until", 0) > System.currentTimeMillis()
+                        && msg.pairing_available && (target.isBlank() || target == msg.device.id)
+                    if (joining) {
+                        val joinToken = prefs.getString("join_token", "").orEmpty()
+                        if (exchangeControl(address, msg.device.id, "pair", joinCode, joinToken)) {
+                            prefs.edit().remove("join_code").remove("join_until")
+                                .putString("pairing_status", "Connected to ${msg.device.name}").apply()
+                            enqueueHistoryBackfill(msg.device.id)
+                        }
+                    } else if (token != null) {
+                        val wasOffline = peers[msg.device.id]?.let { System.currentTimeMillis() - it.lastSeenAt > 30_000 } ?: true
+                        if (exchangeControl(address, msg.device.id, "ping", "", token) && wasOffline) enqueueHistoryBackfill(msg.device.id)
+                    }
+                } catch (_: SocketTimeoutException) {
+                    // Check cancellation regularly.
+                } catch (e: Exception) {
+                    Log.d("ClipSyncService", "discovery: ${e.message}")
+                }
+            }
+        }
+    }
 
-	private suspend fun listenForPeers(myPairing: String, myDeviceId: String) =
-		withContext(Dispatchers.IO) {
-			try {
-				val sock = DatagramSocket(null)
-				sock.reuseAddress = true
-				sock.broadcast = true
-				sock.bind(InetSocketAddress(DISCOVERY_PORT))
-				sock.soTimeout = 3000
-				val packet = DatagramPacket(buf, buf.size)
-				while (running) {
-					try {
-						sock.receive(packet)
-						val data = String(packet.data, 0, packet.length, Charsets.UTF_8)
-						val msg = try {
-							mapper.readValue(data, DiscoveryMessage::class.java)
-						} catch (_: Exception) { continue }
-						if (msg.protocol != PROTOCOL) continue
-						if (msg.pairing_code != myPairing) continue
-						if (msg.device.id == myDeviceId) continue
-						if (!isTrusted(msg.device.id) && !pairingWindowOpen()) continue
-						val isNew = !peers.containsKey(msg.device.id)
-						peers[msg.device.id] = PeerRecord(
-							device = msg.device,
-							address = InetSocketAddress(
-								packet.address.hostAddress,
-								msg.tcp_port
-							),
-							lastSeenAt = System.currentTimeMillis()
-						)
-						rememberTrustedDevice(msg.device, InetSocketAddress(packet.address.hostAddress, msg.tcp_port))
-						lamport.updateAndGet { it + 1 }
-						if (isNew) {
-							serviceScope.launch { enqueueHistoryBackfill(msg.device.id) }
-						}
-					} catch (e: SocketTimeoutException) {
-						// normal, continue loop
-					} catch (e: Exception) {
-						Log.d("ClipSyncService", "listenForPeers error: ${e.message}")
-					}
-				}
-				sock.close()
-			} catch (e: Exception) {
-				Log.w("ClipSyncService", "listenForPeers fatal: ${e.message}")
-			}
-		}
+    private fun writeResponse(socket: Socket, response: Any) {
+        val bytes = mapper.writeValueAsBytes(response)
+        val output = DataOutputStream(socket.getOutputStream())
+        output.writeInt(bytes.size)
+        output.write(bytes)
+        output.flush()
+    }
+
+    private fun peerToken(id: String): String? {
+        if (!isTrusted(id)) return null
+        return getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE).getString("peer_token:$id", null)?.takeIf(::validPeerToken)
+    }
+
+    private fun authenticates(id: String, token: String): Boolean = validPeerToken(token) && peerToken(id) == token
+
+    private val trustLock = Any()
+    private var attemptsSince = 0L
+    private var pairingAttempts = 0
+
+    private suspend fun handleControl(socket: Socket, request: PairControl) {
+        val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+        val current = currentDevice(getOrCreateDeviceId(), prefs.getString("device_name", "Android ${Build.MODEL}").orEmpty())
+        val accepted = synchronized(trustLock) {
+            val valid = running && prefs.getBoolean("sync_enabled", false) && request.protocol == PROTOCOL
+                && request.device.id != current.id && request.tcp_port in FIRST_SYNC_PORT..LAST_SYNC_PORT && validPeerToken(request.token)
+            val allowed = if (request.kind == "pair") {
+                if (System.currentTimeMillis() - attemptsSince > 60_000) { attemptsSince = System.currentTimeMillis(); pairingAttempts = 0 }
+                pairingAttempts++
+                valid && pairingWindowOpen() && pairingAttempts <= 20 && request.code == prefs.getString("pairing_code", "")
+            } else valid && request.kind == "ping" && authenticates(request.device.id, request.token)
+            if (allowed) {
+                val address = InetSocketAddress(socket.inetAddress, request.tcp_port)
+                check(prefs.edit().putString("peer_token:${request.device.id}", request.token).commit())
+                rememberTrustedDevice(request.device, address, allowPair = request.kind == "pair")
+                peers[request.device.id] = PeerRecord(request.device, address, System.currentTimeMillis())
+                if (request.kind == "pair") prefs.edit().putString("pairing_status", "Connected to ${request.device.name}").apply()
+            }
+            allowed
+        }
+        writeResponse(socket, PairReply(accepted, current, if (accepted) request.token else ""))
+        if (accepted && request.kind == "pair") enqueueHistoryBackfill(request.device.id)
+    }
+
+    private fun exchangeControl(address: InetSocketAddress, id: String, kind: String, code: String, token: String): Boolean = runCatching {
+        val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+        val current = currentDevice(getOrCreateDeviceId(), prefs.getString("device_name", "Android ${Build.MODEL}").orEmpty())
+        Socket().use { socket ->
+            socket.connect(address, CONNECT_TIMEOUT_MS.toInt())
+            socket.soTimeout = 2000
+            writeResponse(socket, PairControl(PROTOCOL, kind, current, listenPort, code, token))
+            val bytes = readFrameHeader(DataInputStream(socket.getInputStream())) ?: return false
+            val reply = mapper.readValue(bytes, PairReply::class.java)
+            if (!reply.ok || reply.device.id != id || reply.token != token) return false
+            synchronized(trustLock) {
+                if (!prefs.getBoolean("sync_enabled", false)) return false
+                if (kind == "pair" && (prefs.getString("join_token", "") != token || prefs.getString("join_code", "") != code || prefs.getLong("join_until", 0) <= System.currentTimeMillis())) return false
+                if (kind != "pair" && !authenticates(id, token)) return false
+                check(prefs.edit().putString("peer_token:$id", token).commit())
+                rememberTrustedDevice(reply.device, address, allowPair = kind == "pair")
+                peers[id] = PeerRecord(reply.device, address, System.currentTimeMillis())
+            }
+        }
+        true
+    }.getOrDefault(false)
 
 	private fun applyClipUpsert(envelope: SyncEnvelope, clip: ClipSnapshot) {
 		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
@@ -1142,19 +1207,16 @@ class ClipSyncService : Service() {
 	// frames), so a reachable-but-quiet peer — Windows NICs often ship
 	// broadcasts the phone never receives — showed as offline. Probing the
 	// same TCP channel sync uses makes the badge mean "reachable right now".
-	private suspend fun probePeers() = withContext(Dispatchers.IO) {
-		val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
-		while (running) {
-			delay(PROBE_TICK_MS)
-			if (!prefs.getBoolean("sync_enabled", false)) continue
-			peers.values.toList().forEach { peer ->
-				val reachable = runCatching {
-					Socket().use { sock -> sock.connect(peer.address, CONNECT_TIMEOUT_MS.toInt()) }
-				}.isSuccess
-				if (reachable) touchDeviceSeen(peer.device.id)
-			}
-		}
-	}
+    private suspend fun probePeers() = withContext(Dispatchers.IO) {
+        while (running) {
+            delay(PROBE_TICK_MS)
+            peers.values.toList().forEach { peer ->
+                val token = peerToken(peer.device.id)
+                if (token == null) { peers.remove(peer.device.id) }
+                else exchangeControl(peer.address, peer.device.id, "ping", "", token)
+            }
+        }
+    }
 
 	private fun touchDeviceSeen(deviceId: String) {
 		runCatching {
@@ -1167,7 +1229,7 @@ class ClipSyncService : Service() {
 		}
 	}
 
-	private fun rememberTrustedDevice(device: DeviceIdentity, address: InetSocketAddress) {		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
+	private fun rememberTrustedDevice(device: DeviceIdentity, address: InetSocketAddress, allowPair: Boolean = false) {		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
 		val now = System.currentTimeMillis()
 		db.execSQL(
 			"""
@@ -1178,8 +1240,9 @@ class ClipSyncService : Service() {
 				name=excluded.name, platform=excluded.platform, color=excluded.color,
 				last_host=excluded.last_host, last_port=excluded.last_port,
 				last_seen_ms=excluded.last_seen_ms, revoked=0
+                WHERE trusted_devices.revoked=0 OR ?=1
 			""".trimIndent(),
-			arrayOf(device.id, device.name, device.platform.name, device.color, address.hostString, address.port, now, now),
+			arrayOf(device.id, device.name, device.platform.name, device.color, address.hostString, address.port, now, now, if (allowPair) 1 else 0),
 		)
 		db.close()
 	}

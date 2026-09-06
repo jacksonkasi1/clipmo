@@ -69,5 +69,6 @@
  android:exported="false"
  android:foregroundServiceType="dataSync" />
 
- </application>
+ <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="barcode_ui" />
+    </application>
 </manifest>

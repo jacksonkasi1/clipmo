@@ -263,6 +263,7 @@ pub struct SyncState {
     pub enabled: bool,
     pub device: DeviceIdentity,
     pub pairing_code: String,
+    pub pairing_until: u64,
     pub peers: Vec<SyncPeer>,
 }
 

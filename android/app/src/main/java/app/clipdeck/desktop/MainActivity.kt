@@ -52,6 +52,8 @@ class MainActivity : ComponentActivity() {
     private var syncEnabled by mutableStateOf(false)
     private var copyLiveSyncToClipboard by mutableStateOf(false)
     private var pairingCode by mutableStateOf("")
+    private var pairingStatus by mutableStateOf("")
+    private var joinPending by mutableStateOf(false)
     private var pairingModeActive by mutableStateOf(false)
     private var pairingUntilMs by mutableStateOf(0L)
     private var themeMode by mutableStateOf(ClipmoThemeMode.SYSTEM)
@@ -113,6 +115,8 @@ class MainActivity : ComponentActivity() {
                     syncEnabled = syncEnabled,
                     copyLiveSyncToClipboard = copyLiveSyncToClipboard,
                     pairingCode = pairingCode,
+                    pairingStatus = pairingStatus,
+                    joinPending = joinPending,
                     pairingModeActive = pairingModeActive,
                     pairingUntilMs = pairingUntilMs,
                     localDeviceName = getOrCreateDeviceName(),
@@ -147,6 +151,7 @@ class MainActivity : ComponentActivity() {
                 onStartPairing = ::startPairing,
                 onStopPairing = ::stopPairing,
                 onJoinDevice = ::joinDevice,
+                onScanPairing = ::scanPairing,
                 onSyncNow = ::syncNow,
                 onRefresh = ::refreshSync,
             )
@@ -218,6 +223,8 @@ class MainActivity : ComponentActivity() {
             val until = preferences.getLong(KEY_PAIRING_UNTIL, 0L)
             pairingUntilMs = until
             pairingModeActive = until > System.currentTimeMillis()
+            pairingStatus = preferences.getString("pairing_status", "").orEmpty()
+            joinPending = preferences.getLong("join_until", 0L) > System.currentTimeMillis()
         }
     }
 
@@ -231,11 +238,9 @@ class MainActivity : ComponentActivity() {
     )
 
     private fun forgetDevice(device: TrustedDeviceRecord) {
+        stopPairing()
+        preferences.edit().remove("peer_token:${device.id}").remove("join_code").remove("join_until").apply()
         store.forgetDevice(device.id)
-        if (syncEnabled) {
-            stopService(Intent(this, ClipSyncService::class.java))
-            startSyncService()
-        }
         refresh()
     }
 
@@ -251,8 +256,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun syncNow() {
-        if (!syncEnabled || pairingCode.isBlank()) {
-            Toast.makeText(this, "Enable LAN sync and enter a pairing code first", Toast.LENGTH_SHORT).show()
+        if (!syncEnabled) {
+            Toast.makeText(this, "Enable LAN sync first", Toast.LENGTH_SHORT).show()
             return
         }
         startForegroundService(
@@ -263,11 +268,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startPairing() {
-        val sanitized = pairingCode.filter { it.isDigit() }.take(PAIRING_CODE_LENGTH)
-        if (sanitized.length != PAIRING_CODE_LENGTH) {
-            Toast.makeText(this, "Pairing code must be 6 digits", Toast.LENGTH_SHORT).show()
-            return
-        }
+        pairingCode = newPairingCode(pairingCode)
+        preferences.edit().putString(KEY_PAIRING_CODE, pairingCode).apply()
         val until = System.currentTimeMillis() + PAIRING_WINDOW_MS
         preferences.edit().putLong(KEY_PAIRING_UNTIL, until).apply()
         pairingUntilMs = until
@@ -283,20 +285,32 @@ class MainActivity : ComponentActivity() {
         Toast.makeText(this, "Pairing closed", Toast.LENGTH_SHORT).show()
     }
 
+    private fun scanPairing() {
+        com.google.mlkit.vision.codescanner.GmsBarcodeScanning.getClient(this).startScan()
+            .addOnSuccessListener { barcode -> joinDevice(barcode.rawValue.orEmpty()) }
+            .addOnFailureListener {
+                Toast.makeText(this, "Scanner unavailable. Enter the six-digit code instead.", Toast.LENGTH_LONG).show()
+            }
+    }
+
     private fun joinDevice(code: String) {
-        val sanitized = code.filter { it.isDigit() }.take(PAIRING_CODE_LENGTH)
-        if (sanitized.length != PAIRING_CODE_LENGTH) {
-            Toast.makeText(this, "Pairing code must be 6 digits", Toast.LENGTH_SHORT).show()
+        val invite = parsePairingInvite(code)
+        if (invite == null) {
+            Toast.makeText(this, "Enter 6 digits or scan a Clipmo pairing QR code", Toast.LENGTH_SHORT).show()
             return
         }
-        handlePairingCodeChanged(sanitized)
-        val until = System.currentTimeMillis() + PAIRING_WINDOW_MS
-        preferences.edit().putLong(KEY_PAIRING_UNTIL, until).apply()
-        pairingUntilMs = until
-        pairingModeActive = true
+        if (invite.deviceId == getOrCreateDeviceId() || (invite.deviceId == null && invite.code == pairingCode)) {
+            Toast.makeText(this, "Use the code shown on the other device", Toast.LENGTH_SHORT).show()
+            return
+        }
+        preferences.edit().putString("join_code", invite.code)
+            .putString("join_target", invite.deviceId.orEmpty())
+            .putString("join_token", (UUID.randomUUID().toString() + UUID.randomUUID().toString()).replace("-", ""))
+            .putLong("join_until", System.currentTimeMillis() + 20_000)
+            .putString("pairing_status", "Connecting… Keep pairing open on the other device.").apply()
+        pairingStatus = "Connecting… Keep pairing open on the other device."
+        joinPending = true
         if (!syncEnabled) handleSyncChanged(true) else refreshSync()
-        syncNow()
-        Toast.makeText(this, "Joined pairing with code $sanitized", Toast.LENGTH_SHORT).show()
     }
 
     private fun copyToClipboard(clip: ClipRecord) {
@@ -357,12 +371,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleSyncChanged(enabled: Boolean) {
-        val sanitized = pairingCode.filter { it.isDigit() }.take(PAIRING_CODE_LENGTH)
-        if (enabled && sanitized.length != PAIRING_CODE_LENGTH) {
-            Toast.makeText(this, "Enter a 6-digit pairing code first", Toast.LENGTH_SHORT).show()
-            syncEnabled = false
-            return
-        }
         syncEnabled = enabled
         preferences.edit().putBoolean(KEY_SYNC_ENABLED, enabled).apply()
         if (enabled) startSyncService() else stopService(Intent(this, ClipSyncService::class.java))
@@ -376,10 +384,7 @@ class MainActivity : ComponentActivity() {
     private fun handlePairingCodeChanged(code: String) {
         pairingCode = code.filter { it.isDigit() }.take(PAIRING_CODE_LENGTH)
         preferences.edit().putString(KEY_PAIRING_CODE, pairingCode).apply()
-        if (syncEnabled) {
-            stopService(Intent(this, ClipSyncService::class.java))
-            startSyncService()
-        }
+
     }
 
     private fun handleThemeChanged(mode: ClipmoThemeMode) {
@@ -408,6 +413,10 @@ class MainActivity : ComponentActivity() {
         syncEnabled = preferences.getBoolean(KEY_SYNC_ENABLED, false)
         copyLiveSyncToClipboard = preferences.getBoolean(KEY_COPY_LIVE_SYNC_TO_CLIPBOARD, false)
         pairingCode = preferences.getString(KEY_PAIRING_CODE, "").orEmpty()
+        if (!pairingCode.matches(Regex("[0-9]{6}"))) {
+            pairingCode = newPairingCode(pairingCode)
+            preferences.edit().putString(KEY_PAIRING_CODE, pairingCode).apply()
+        }
         pairingUntilMs = preferences.getLong(KEY_PAIRING_UNTIL, 0L)
         pairingModeActive = pairingUntilMs > System.currentTimeMillis()
         themeMode = runCatching {

@@ -1,6 +1,6 @@
 {
   "name": "clipdeck",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "private": true,
   "description": "Clipmo — a fast, private clipboard history manager for Windows and macOS",
   "author": "Jackson Kasi",
@@ -28,6 +28,7 @@
     "core-js": "^3.50.0",
     "lucide-react": "^0.468.0",
     "pdfjs-dist": "^6.3.289",
+    "qrcode": "^1.5.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zustand": "^5.0.14"
@@ -38,6 +39,7 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^22.20.1",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^4.7.0",

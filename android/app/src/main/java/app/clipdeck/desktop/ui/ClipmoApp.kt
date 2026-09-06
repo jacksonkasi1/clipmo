@@ -134,6 +134,8 @@ data class ClipmoUiState(
     val syncEnabled: Boolean,
     val copyLiveSyncToClipboard: Boolean,
     val pairingCode: String,
+    val pairingStatus: String = "",
+    val joinPending: Boolean = false,
     val pairingModeActive: Boolean,
     val pairingUntilMs: Long = 0L,
     val localDeviceName: String,
@@ -167,6 +169,7 @@ fun ClipmoApp(
     onStartPairing: () -> Unit,
     onStopPairing: () -> Unit = {},
     onJoinDevice: (String) -> Unit = {},
+    onScanPairing: () -> Unit = {},
     onSyncNow: () -> Unit = {},
     onRefresh: () -> Unit = {},
 ) {
@@ -246,6 +249,7 @@ fun ClipmoApp(
                             onStartPairing = onStartPairing,
                             onStopPairing = onStopPairing,
                             onJoinDevice = onJoinDevice,
+                            onScanPairing = onScanPairing,
                             onSyncNow = onSyncNow,
                         )
                         ClipmoScreen.SETTINGS -> SettingsScreen(
@@ -801,6 +805,7 @@ private fun DevicesScreen(
     onStartPairing: () -> Unit,
     onStopPairing: () -> Unit,
     onJoinDevice: (String) -> Unit,
+    onScanPairing: () -> Unit,
     onSyncNow: () -> Unit,
 ) {
     val colors = ClipmoTheme.colors
@@ -808,7 +813,7 @@ private fun DevicesScreen(
     val type = ClipmoTheme.typography
     var joinCodeInput by rememberSaveable { mutableStateOf("") }
     val normalizedJoinCode = joinCodeInput.filter { it.isDigit() }.take(6)
-    val canJoin = normalizedJoinCode.length == 6
+    val canJoin = normalizedJoinCode.length == 6 && !state.joinPending
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -831,13 +836,13 @@ private fun DevicesScreen(
                     .padding(space.md),
             ) {
                 BasicText(
-                    "Show this code on this device to connect other devices",
+                    "Open pairing, then enter this code on the other device. Saved connections stay connected when the code changes.",
                     style = type.bodyMedium.copy(color = colors.textSecondary),
                 )
                 Spacer(Modifier.height(space.sm))
 
                 // Emphasized Pairing Code Display
-                val formattedCode = state.pairingCode.ifBlank { "------" }
+                val formattedCode = (if (state.pairingModeActive) state.pairingCode else "------")
                     .chunked(3)
                     .joinToString("  ")
 
@@ -859,7 +864,7 @@ private fun DevicesScreen(
                 if (state.pairingModeActive) {
                     Spacer(Modifier.height(space.xs))
                     BasicText(
-                        "Pairing open for 2 minutes",
+                        "Pairing closes in ${((state.pairingUntilMs - System.currentTimeMillis()).coerceAtLeast(0) / 1000)}s",
                         style = type.metadata.copy(color = colors.accent),
                     )
                 }
@@ -882,10 +887,19 @@ private fun DevicesScreen(
                             modifier = Modifier.weight(1f),
                             icon = ClipmoIconKind.PLUS,
                         ) {
-                            if (!state.syncEnabled) onSyncChanged(true)
                             onStartPairing()
                         }
                     }
+                    ClipmoButton(
+                        label = "New code",
+                        style = ClipmoButtonStyle.SECONDARY,
+                        modifier = Modifier.weight(1f),
+                        icon = ClipmoIconKind.REFRESH,
+                        onClick = onStartPairing,
+                    )
+                }
+                Spacer(Modifier.height(space.sm))
+                Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
                     ClipmoButton(
                         label = "Sync now",
                         style = ClipmoButtonStyle.SECONDARY,
@@ -919,6 +933,8 @@ private fun DevicesScreen(
                 )
                 Spacer(Modifier.height(space.sm))
 
+                ClipmoButton(label = "Scan QR code", style = ClipmoButtonStyle.SECONDARY, onClick = onScanPairing, enabled = !state.joinPending)
+                Spacer(Modifier.height(space.sm))
                 ClipmoSearchBar(
                     value = joinCodeInput,
                     hint = "Enter 6-digit code",
@@ -940,7 +956,7 @@ private fun DevicesScreen(
                         style = type.metadata.copy(color = if (joinCodeInput.isNotEmpty() && !canJoin) colors.danger else colors.textMuted),
                     )
                     ClipmoButton(
-                        label = "Connect",
+                        label = if (state.joinPending) "Connecting…" else "Connect",
                         style = if (canJoin) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.SECONDARY,
                         enabled = canJoin,
                         icon = ClipmoIconKind.LINK,
@@ -956,6 +972,10 @@ private fun DevicesScreen(
 
             Spacer(Modifier.height(space.xl))
 
+            if (state.pairingStatus.isNotBlank()) {
+                BasicText(state.pairingStatus, style = type.bodyMedium.copy(color = colors.textSecondary))
+                Spacer(Modifier.height(space.md))
+            }
             // Section 2: This Device
             BasicText(
                 "This device",
@@ -1075,23 +1095,9 @@ private fun SettingsScreen(
                 )
                 Spacer(Modifier.height(space.md))
                 BasicText(
-                    "Pairing code (6 digits)",
-                    style = ClipmoTheme.typography.label.copy(color = colors.textSecondary),
+                    "Add and remove connections in Devices. New pairing codes never disconnect saved devices.",
+                    style = ClipmoTheme.typography.bodyMedium.copy(color = colors.textSecondary),
                 )
-                Spacer(Modifier.height(space.xs))
-                ClipmoSearchBar(
-                    value = state.pairingCode,
-                    hint = "Enter pairing code",
-                    onValueChange = { onPairingCodeChanged(it.filter { ch -> ch.isDigit() }.take(6)) },
-                    searchIcon = false,
-                )
-                if (state.pairingCode.isNotEmpty() && state.pairingCode.length < 6) {
-                    Spacer(Modifier.height(space.xs))
-                    BasicText(
-                        "Must be 6 digits (${state.pairingCode.length}/6)",
-                        style = ClipmoTheme.typography.metadata.copy(color = colors.danger),
-                    )
-                }
             }
 
             Spacer(Modifier.height(space.lg))

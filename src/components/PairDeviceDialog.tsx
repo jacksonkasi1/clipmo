@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Link2, MonitorUp, RefreshCw, Wifi, X } from 'lucide-react';
 
 import { useStore } from '../lib/store';
+import QRCode from 'qrcode';
 
 interface PairDeviceDialogProps {
   open: boolean;
@@ -21,10 +22,17 @@ const PAIRING_CODE_LENGTH = 6;
 export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDeviceDialogProps) {
   const settings = useStore((state) => state.settings);
   const sync = useStore((state) => state.sync);
-  const saveSettings = useStore((state) => state.saveSettings);
+  const closePairing = useStore((state) => state.closePairing);
+  const connectDevice = useStore((state) => state.joinDevice);
+  const forgetDevice = useStore((state) => state.forgetSyncDevice);
+  const loadSyncState = useStore((state) => state.loadSyncState);
   const regeneratePairingCode = useStore((state) => state.regeneratePairingCode);
   const [joinCode, setJoinCode] = useState('');
   const [busy, setBusy] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [now, setNow] = useState(Date.now());
+  const [qr, setQr] = useState('');
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -46,40 +54,44 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
     }
   }, [open]);
 
+  const pairingCode = sync?.pairingCode ?? settings?.syncPairingCode ?? '';
+  const pairingActive = Boolean(sync?.enabled && (sync.pairingUntil ?? 0) > now);
+  const invite = `clipmo://pair?v=3&device=${encodeURIComponent(sync?.device.id ?? '')}&code=${pairingCode}`;
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+      void loadSyncState().catch(() => {});
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [open, loadSyncState]);
+  useEffect(() => {
+    let active = true;
+    setQr('');
+    if (open && pairingActive) {
+      void QRCode.toDataURL(invite, { width: 140, margin: 4, errorCorrectionLevel: 'M' })
+        .then((url) => { if (active) setQr(url); })
+        .catch(() => { if (active) setError('QR code unavailable. Use the six-digit code.'); });
+    }
+    return () => { active = false; };
+  }, [open, pairingActive, invite]);
+
   if (!open || !settings) return null;
 
-  const pairingCode = sync?.pairingCode ?? settings.syncPairingCode;
   const peers = sync?.peers ?? [];
   const normalizedJoinCode = joinCode.replace(/\D/g, '').slice(0, PAIRING_CODE_LENGTH);
   const canJoin = normalizedJoinCode.length === PAIRING_CODE_LENGTH;
 
-  const enablePairing = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const next = await saveSettings({ ...settings, syncEnabled: true });
-      onSettingsUpdated?.(next);
-    } catch (saveError) {
-      setError(mutationErrorMessage('Pairing could not be started.', saveError));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const disablePairing = async () => {
     setBusy(true);
     setError(null);
-    try {
-      const next = await saveSettings({ ...settings, syncEnabled: false });
-      onSettingsUpdated?.(next);
-    } catch (saveError) {
-      setError(mutationErrorMessage('Pairing could not be stopped.', saveError));
-    } finally {
-      setBusy(false);
-    }
+    try { await closePairing(); }
+    catch (reason) { setError(mutationErrorMessage('Pairing could not be closed.', reason)); }
+    finally { setBusy(false); }
   };
 
   const joinDevice = async () => {
+    if (busy) return;
     if (!canJoin) {
       setError('Enter the six-digit code shown on the other device.');
       inputRef.current?.focus();
@@ -87,17 +99,16 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
     }
     setBusy(true);
     setError(null);
+    setConnecting(true);
+    setNotice('');
     try {
-      const next = await saveSettings({
-        ...settings,
-        syncEnabled: true,
-        syncPairingCode: normalizedJoinCode,
-      });
-      onSettingsUpdated?.(next);
+      await connectDevice(normalizedJoinCode);
+      setNotice('Device connected. New clipboard items sync automatically.');
       setJoinCode('');
     } catch (saveError) {
       setError(mutationErrorMessage('This device could not join the pairing.', saveError));
     } finally {
+      setConnecting(false);
       setBusy(false);
     }
   };
@@ -123,6 +134,7 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
         className="pair-device-dialog"
         role="dialog"
         aria-modal="true"
+        aria-busy={busy}
         aria-labelledby="pair-device-title"
       >
         <header>
@@ -137,7 +149,7 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
         </header>
 
         <div className="pair-device-content">
-          <section className="pair-device-step" aria-labelledby="share-code-title">
+          <section className={`pair-device-step${pairingActive && qr ? ' has-qr' : ''}`} aria-labelledby="share-code-title">
             <div className="pair-device-step-heading">
               <Wifi size={17} aria-hidden />
               <div>
@@ -146,30 +158,31 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
               </div>
             </div>
             <div className="pair-device-code-row">
-              <output className="pair-device-code" aria-label={`Pairing code ${pairingCode}`}>
-                {pairingCode}
+              <output className="pair-device-code" aria-label={pairingActive ? `Pairing code ${pairingCode}` : 'Pairing closed'}>
+                {pairingActive ? pairingCode : '------'}
               </output>
               <button
                 type="button"
                 className="secondary-button"
                 disabled={busy}
-                title="Replace this code on all devices that should remain connected"
+                title="Generate a new invitation; saved connections stay connected"
                 onClick={() => void replaceCode()}
               >
                 <RefreshCw size={14} aria-hidden /> New code
               </button>
             </div>
-            {settings.syncEnabled ? (
+            {pairingActive && qr && <figure className="pair-device-qr"><img src={qr} width={140} height={140} alt="Scan this pairing invitation in Clipmo for Android" /><figcaption>Android: Devices → Scan QR code</figcaption></figure>}
+            {pairingActive ? (
               <div className="pair-device-actions-row">
                 <span className="pair-device-status-badge">
-                  <span className="pair-device-status-dot" /> Pairing active
+                  <span className="pair-device-status-dot" /> Pairing open · {Math.max(0, Math.ceil(((sync?.pairingUntil ?? 0) - now) / 1000))}s
                 </span>
                 <button type="button" className="secondary-button" disabled={busy} onClick={() => void disablePairing()}>
                   <X size={14} aria-hidden /> Close pairing
                 </button>
               </div>
             ) : (
-              <button type="button" className="primary-button" disabled={busy} onClick={() => void enablePairing()}>
+              <button type="button" className="primary-button" disabled={busy} onClick={() => void replaceCode()}>
                 <Wifi size={15} aria-hidden /> Start pairing
               </button>
             )}
@@ -182,7 +195,7 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
               <Link2 size={17} aria-hidden />
               <div>
                 <h3 id="join-code-title">Join a device that already shows a code</h3>
-                <p>Enter its six-digit code here. Both devices must use the same code.</p>
+                <p>Enter its six-digit code here. Your own code and saved connections stay unchanged.</p>
               </div>
             </div>
             <form className="pair-device-join" onSubmit={(event) => {
@@ -205,22 +218,35 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
                 }}
               />
               <button type="submit" className="primary-button" disabled={busy || !canJoin}>
-                <Link2 size={15} aria-hidden /> Connect
+                <Link2 size={15} aria-hidden /> {connecting ? 'Connecting…' : 'Connect'}
               </button>
             </form>
           </section>
 
+          <p>New codes and closing pairing keep saved devices connected. Use Remove to disconnect a device.</p>
           {peers.length > 0 && (
-            <div className="pair-device-connected" aria-live="polite">
-              <CheckCircle2 size={16} aria-hidden />
-              <span>Connected: {peers.map((peer) => peer.device.name).join(', ')}</span>
-            </div>
+            <ul className="pair-device-peers" aria-label="Saved connections">
+              {peers.map((peer) => (
+                <li key={peer.device.id}>
+                  <span>{peer.device.name} · {sync?.enabled && peer.status === 'synced' ? 'Connected' : 'Offline'}</span>
+                  <button type="button" className="secondary-button" disabled={busy}
+                    aria-label={`Remove ${peer.device.name}`} onClick={() => {
+                      setBusy(true);
+                      setError(null);
+                      void forgetDevice(peer.device.id)
+                        .catch((reason) => setError(mutationErrorMessage('Device could not be removed.', reason)))
+                        .finally(() => setBusy(false));
+                    }}>Remove</button>
+                </li>
+              ))}
+            </ul>
           )}
-          {settings.syncEnabled && peers.length === 0 && (
-            <p className="pair-device-waiting" aria-live="polite">
-              Waiting for another Clipmo device with code {pairingCode}… New clipboard items sync automatically once connected.
-            </p>
+          {connecting && <p role="status">Connecting… Keep pairing open on the other device.</p>}
+          {notice && <p role="status"><CheckCircle2 size={16} aria-hidden /> {notice}</p>}
+          {pairingActive && peers.length === 0 && !connecting && (
+            <p className="pair-device-waiting" aria-live="polite">Ready to pair. Enter this code on another device or scan the QR code in Clipmo for Android.</p>
           )}
+          <p>Use the updated Clipmo app on every device. Pair each pair of devices that should sync directly.</p>
           {error && <p className="pair-device-error" role="alert">{error}</p>}
         </div>
       </section>

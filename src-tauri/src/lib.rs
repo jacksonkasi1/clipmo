@@ -156,6 +156,9 @@ pub fn run() {
             sync::load_sync_preferences,
             sync::save_sync_preferences,
             commands::regenerate_pairing_code,
+            commands::close_pairing,
+            commands::join_device,
+            commands::forget_sync_device,
             commands::quit_app,
             native_appearance::sync_native_appearance,
         ])

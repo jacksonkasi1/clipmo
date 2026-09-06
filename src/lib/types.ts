@@ -66,6 +66,7 @@ export interface SyncState {
   enabled: boolean;
   device: DeviceIdentity;
   pairingCode: string;
+  pairingUntil?: number;
   peers: SyncPeer[];
 }
 

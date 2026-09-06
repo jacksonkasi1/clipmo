@@ -3386,3 +3386,19 @@ kbd {
 .pdf-preview-page [role="status"] { display: flex; align-items: center; gap: 8px; color: #333; overflow-wrap: anywhere; }
 .pdf-preview-caption { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .pdf-preview-caption span { font-size: 12px; opacity: .7; }
+
+.pair-device-qr { display: grid; gap: 6px; margin: 0; font-size: 11px; color: var(--text-secondary); }
+.pair-device-step.has-qr { grid-template-columns: minmax(0, 1fr) 140px; align-items: start; }
+.pair-device-step.has-qr .pair-device-step-heading { grid-column: 1 / -1; }
+.pair-device-step.has-qr .pair-device-code-row { grid-column: 1; padding-left: 0; flex-wrap: wrap; }
+.pair-device-step.has-qr .pair-device-qr { grid-column: 2; grid-row: 2 / 4; }
+.pair-device-step.has-qr .pair-device-actions-row { grid-column: 1; flex-wrap: wrap; }
+@media (max-width: 520px) {
+  .pair-device-step.has-qr { grid-template-columns: minmax(0, 1fr); }
+  .pair-device-step.has-qr .pair-device-qr { grid-column: 1; grid-row: auto; justify-self: center; }
+  .pair-device-code-row, .pair-device-join { padding-left: 0; flex-wrap: wrap; }
+}
+.pair-device-qr img { border-radius: 8px; }
+.pair-device-peers { list-style: none; padding: 0; margin: 0; }
+.pair-device-peers li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+.pair-device-dialog { max-height: calc(100vh - 48px); overflow-y: auto; }

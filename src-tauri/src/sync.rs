@@ -25,7 +25,11 @@ use crate::models::{
     StoredFile, StoredFileStatus, SyncPeer, SyncState, SyncStatus,
 };
 
-const PROTOCOL: &str = "clipmo-lan-v2";
+#[path = "sync_pairing.rs"]
+mod pairing;
+pub use pairing::new_code;
+
+const PROTOCOL: &str = "clipmo-lan-v3";
 const DISCOVERY_PORT: u16 = 47_633;
 const FIRST_SYNC_PORT: u16 = 47_634;
 const LAST_SYNC_PORT: u16 = 47_644;
@@ -149,6 +153,7 @@ pub struct SyncService {
     lamport: Arc<AtomicU64>,
     suppressions: Arc<Mutex<HashMap<String, Suppression>>>,
     listen_port: u16,
+    pairing: Arc<pairing::Pairing>,
 }
 
 impl SyncService {
@@ -164,6 +169,7 @@ impl SyncService {
             lamport: Arc::new(AtomicU64::new(now_ms().unsigned_abs())),
             suppressions: Arc::new(Mutex::new(HashMap::new())),
             listen_port: 0,
+            pairing: Arc::new(pairing::Pairing::default()),
         }
     }
 
@@ -195,7 +201,11 @@ impl SyncService {
             lamport: Arc::new(AtomicU64::new(now_ms().unsigned_abs())),
             suppressions: Arc::new(Mutex::new(HashMap::new())),
             listen_port,
+            pairing: Arc::new(pairing::Pairing::default()),
         };
+        service
+            .load_peers()
+            .map_err(|e| io::Error::other(e.to_string()))?;
 
         spawn_tcp_server(listener, service.clone(), app.clone())?;
         spawn_discovery(service.clone(), app.clone())?;
@@ -209,6 +219,7 @@ impl SyncService {
             enabled: settings.sync_enabled,
             device: settings.device_identity(),
             pairing_code: settings.sync_pairing_code.clone(),
+            pairing_until: self.pairing.until.load(Ordering::SeqCst),
             peers: self
                 .peers
                 .read()
@@ -216,7 +227,7 @@ impl SyncService {
                 .map(|peer| SyncPeer {
                     device: peer.device.clone(),
                     last_seen_at: peer.last_seen_at,
-                    status: if now_ms() - peer.last_seen_at > 30_000 {
+                    status: if !settings.sync_enabled || now_ms() - peer.last_seen_at > 30_000 {
                         SyncStatus::Offline
                     } else {
                         SyncStatus::Synced
@@ -239,15 +250,18 @@ impl SyncService {
         Ok(preferences)
     }
 
-    /// Drops connections authenticated with settings that are no longer
-    /// current. Discovery will repopulate this map with peers using the new
-    /// code, so the UI never reports an old device as live after re-pairing.
+    /// Invitation changes never alter established device credentials.
     pub fn settings_changed(&self, previous: &Settings, current: &Settings) -> bool {
-        if !sync_identity_changed(previous, current) {
-            return false;
+        if previous.sync_device_id != current.sync_device_id {
+            let ids: Vec<_> = self.peers.read().keys().cloned().collect();
+            for id in ids {
+                let _ = self.forget_peer(&id);
+            }
         }
-        self.peers.write().clear();
-        true
+        if !current.sync_enabled {
+            self.set_pairing(false);
+        }
+        sync_identity_changed(previous, current)
     }
 
     pub fn enqueue_item(&self, item: &ClipItem) {
@@ -545,18 +559,22 @@ pub async fn save_sync_preferences(
     Ok(saved)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct PeerRecord {
     device: DeviceIdentity,
     address: SocketAddr,
     last_seen_at: i64,
+    token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DiscoveryMessage {
     protocol: String,
+    #[serde(default)]
     pairing_code: String,
+    #[serde(default)]
+    pairing_available: bool,
     device: DeviceIdentity,
     tcp_port: u16,
 }
@@ -819,28 +837,32 @@ fn listen_for_peers(socket: UdpSocket, service: SyncService, app: AppHandle) {
         let current = settings.read().clone();
         if !current.sync_enabled
             || message.protocol != PROTOCOL
-            || message.pairing_code != current.sync_pairing_code
             || message.device.id == current.sync_device_id
             || message.tcp_port == 0
         {
             continue;
         }
-        let seen_at = now_ms();
-        let should_backfill = service
-            .peers
-            .read()
-            .get(&message.device.id)
-            .is_none_or(|peer| seen_at - peer.last_seen_at > 30_000);
-        service.peers.write().insert(
-            message.device.id.clone(),
-            PeerRecord {
-                device: message.device,
-                address: SocketAddr::new(source.ip(), message.tcp_port),
-                last_seen_at: seen_at,
-            },
-        );
-        if should_backfill {
-            service.enqueue_history_backfill();
+        let address = SocketAddr::new(source.ip(), message.tcp_port);
+        {
+            let mut candidates = service.pairing.candidates.write();
+            candidates.retain(|_, (_, _, seen)| now_ms() - *seen < 30_000);
+            if candidates.len() < 256 {
+                candidates.insert(
+                    message.device.id.clone(),
+                    (message.clone(), address, now_ms()),
+                );
+            }
+        }
+        let peer = service.peers.read().get(&message.device.id).cloned();
+        if let Some(peer) = peer {
+            let backfill = now_ms() - peer.last_seen_at > 30_000;
+            if service
+                .exchange_control(address, &message.device.id, "ping", "", &peer.token)
+                .is_ok()
+                && backfill
+            {
+                service.enqueue_history_backfill();
+            }
         }
         let _ = app.emit("sync-peers-updated", ());
     }
@@ -855,7 +877,8 @@ fn broadcast_presence(socket: UdpSocket, service: SyncService) {
         if current.sync_enabled {
             let message = DiscoveryMessage {
                 protocol: PROTOCOL.into(),
-                pairing_code: current.sync_pairing_code.clone(),
+                pairing_code: String::new(),
+                pairing_available: service.pairing_open(),
                 device: current.device_identity(),
                 tcp_port: service.listen_port,
             };
@@ -909,22 +932,31 @@ fn handle_incoming(
     }
     let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
-    let envelope = match read_envelope(&mut stream) {
-        Ok(envelope) => envelope,
+    let value: serde_json::Value = match pairing::read_json(&mut stream) {
+        Ok(value) => value,
         Err(error) => {
             log::debug!("invalid sync frame from {source}: {error}");
             return;
         }
     };
+    if value.get("kind").is_some() {
+        let _ = service.handle_control(value, &mut stream, source);
+        let _ = app.emit("sync-peers-updated", ());
+        return;
+    }
+    let Ok(envelope) = serde_json::from_value::<SyncEnvelope>(value) else {
+        return;
+    };
     let Some(settings) = &service.settings else {
         return;
     };
+    let _trust_guard = service.pairing.trust_lock.lock();
     let current = settings.read().clone();
     let rejection = if !current.sync_enabled {
         Some("sync is disabled")
     } else if envelope.protocol != PROTOCOL {
         Some("protocol mismatch")
-    } else if envelope.pairing_code != current.sync_pairing_code {
+    } else if !service.authenticates(&envelope.device.id, &envelope.pairing_code) {
         Some("pairing code mismatch")
     } else if envelope.device.id == current.sync_device_id {
         Some("sender matches this device")
@@ -949,6 +981,7 @@ fn handle_incoming(
             device: envelope.device.clone(),
             address: SocketAddr::new(source.ip(), envelope.tcp_port),
             last_seen_at: now_ms(),
+            token: envelope.pairing_code.clone(),
         },
     );
 
@@ -976,22 +1009,6 @@ fn write_sync_ack(stream: &mut TcpStream, ok: bool, error: Option<&str>) -> io::
     stream.write_all(&(payload.len() as u32).to_be_bytes())?;
     stream.write_all(&payload)?;
     stream.flush()
-}
-
-fn read_envelope(stream: &mut TcpStream) -> io::Result<SyncEnvelope> {
-    let mut length = [0u8; 4];
-    stream.read_exact(&mut length)?;
-    let length = u32::from_be_bytes(length) as usize;
-    if length == 0 || length > MAX_HEADER_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "sync header size is invalid",
-        ));
-    }
-    let mut header = vec![0u8; length];
-    stream.read_exact(&mut header)?;
-    serde_json::from_slice(&header)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
 }
 
 fn apply_incoming(
@@ -1345,16 +1362,36 @@ fn spawn_sender(service: SyncService) -> io::Result<()> {
             if !current.sync_enabled {
                 continue;
             }
-            let envelope = SyncEnvelope {
+            let mut envelope = SyncEnvelope {
                 protocol: PROTOCOL.into(),
                 pairing_code: current.sync_pairing_code.clone(),
                 device: current.device_identity(),
                 tcp_port: service.listen_port,
                 body: job.body.clone(),
             };
-            for peer in service.peers.read().values().cloned() {
-                if let Err(error) = send_frame(peer.address, &envelope, &job.blobs) {
-                    log::debug!("sync send to {} failed: {error}", peer.device.name);
+            let peers: Vec<_> = service.peers.read().values().cloned().collect();
+            for peer in peers {
+                if !service.authenticates(&peer.device.id, &peer.token) {
+                    continue;
+                }
+                envelope.pairing_code = peer.token.clone();
+                // A host may send the first backfill just before the joining side
+                // persists its credential. Retry transient failures, never a removed peer.
+                for attempt in 0..3 {
+                    if !service.authenticates(&peer.device.id, &peer.token)
+                        || !settings.read().sync_enabled
+                    {
+                        break;
+                    }
+                    match send_frame(peer.address, &envelope, &job.blobs) {
+                        Ok(()) => break,
+                        Err(error) => {
+                            log::debug!("sync send to {} failed: {error}", peer.device.name);
+                            if attempt < 2 {
+                                std::thread::sleep(Duration::from_millis(500));
+                            }
+                        }
+                    }
                 }
             }
         })?;
@@ -1412,7 +1449,16 @@ fn send_frame(
             remaining -= read as u64;
         }
     }
-    stream.flush()
+    stream.flush()?;
+    stream.set_read_timeout(Some(IO_TIMEOUT))?;
+    let ack: serde_json::Value = pairing::read_json(&mut stream)?;
+    if ack.get("ok").and_then(|value| value.as_bool()) != Some(true) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Peer did not accept the sync item",
+        ));
+    }
+    Ok(())
 }
 
 fn spawn_watcher(service: SyncService) -> io::Result<()> {

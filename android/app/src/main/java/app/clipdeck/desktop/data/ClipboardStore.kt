@@ -49,23 +49,7 @@ class ClipboardStore(context: Context) :
                 db.execSQL("UPDATE items SET id_hash=? WHERE id=?", arrayOf(digest, id))
             }
         }
-        val revokedAssets = mutableListOf<String>()
-        db.rawQuery(
-            """
-            SELECT asset_paths FROM items
-            WHERE origin_device IN (SELECT device_id FROM trusted_devices WHERE revoked=1)
-              AND asset_paths IS NOT NULL
-            """.trimIndent(),
-            null,
-        ).use { cursor ->
-            while (cursor.moveToNext()) {
-                cursor.getString(0)?.lineSequence()?.filter(String::isNotBlank)?.toList()?.let(revokedAssets::addAll)
-            }
-        }
-        db.execSQL(
-            "DELETE FROM items WHERE origin_device IN (SELECT device_id FROM trusted_devices WHERE revoked=1)",
-        )
-        revokedAssets.forEach(::deleteManagedAsset)
+
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -325,24 +309,8 @@ class ClipboardStore(context: Context) :
             putNull("last_host")
             putNull("last_port")
         }
-        val assets = mutableListOf<String>()
-        writableDatabase.beginTransaction()
-        try {
-            readableDatabase.rawQuery(
-                "SELECT asset_paths FROM items WHERE origin_device=? AND asset_paths IS NOT NULL",
-                arrayOf(deviceId),
-            ).use { cursor ->
-                while (cursor.moveToNext()) {
-                    cursor.getString(0)?.lineSequence()?.filter(String::isNotBlank)?.toList()?.let(assets::addAll)
-                }
-            }
-            writableDatabase.delete("items", "origin_device=?", arrayOf(deviceId))
-            writableDatabase.update("trusted_devices", values, "device_id=?", arrayOf(deviceId))
-            writableDatabase.setTransactionSuccessful()
-        } finally {
-            writableDatabase.endTransaction()
-        }
-        assets.forEach(::deleteManagedAsset)
+        writableDatabase.update("trusted_devices", values, "device_id=?", arrayOf(deviceId))
+
     }
 
     fun toggleFavorite(id: Long) {

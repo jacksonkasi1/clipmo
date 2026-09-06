@@ -1024,17 +1024,54 @@ pub async fn regenerate_pairing_code(
 ) -> Result<Settings> {
     let previous = state.settings.read().clone();
     let mut next = previous.clone();
-    next.sync_pairing_code = format!(
-        "{:06}",
-        (crate::models::now_ms().unsigned_abs() ^ u64::from(std::process::id())) % 1_000_000
-    );
+    next.sync_pairing_code = crate::sync::new_code(&previous.sync_pairing_code);
+    next.sync_enabled = true;
     state.db.save_settings(&next)?;
     *state.settings.write() = next.clone();
+    state.sync.set_pairing(true);
     state.sync.settings_changed(&previous, &next);
     apply_runtime_settings(&app, &next)?;
     let _ = app.emit("settings-updated", &next);
     let _ = app.emit("sync-peers-updated", ());
     Ok(next)
+}
+
+#[tauri::command]
+pub async fn close_pairing(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<()> {
+    state.sync.set_pairing(false);
+    let _ = app.emit("sync-peers-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn join_device(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    code: String,
+    target_id: Option<String>,
+) -> Result<()> {
+    let mut next = state.settings.read().clone();
+    next.sync_enabled = true;
+    state.db.save_settings(&next)?;
+    *state.settings.write() = next.clone();
+    let _ = app.emit("settings-updated", &next);
+    let service = state.sync.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || service.join_device(code, target_id))
+        .await
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let _ = app.emit("sync-peers-updated", ());
+    result
+}
+
+#[tauri::command]
+pub async fn forget_sync_device(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    device_id: String,
+) -> Result<()> {
+    state.sync.forget_peer(&device_id)?;
+    let _ = app.emit("sync-peers-updated", ());
+    Ok(())
 }
 
 #[tauri::command]

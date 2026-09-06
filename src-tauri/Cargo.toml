@@ -1,6 +1,6 @@
 [package]
 name = "clipdeck"
-version = "0.2.11"
+version = "0.2.12"
 description = "Clipmo clipboard history for Windows and macOS"
 authors = ["Jackson Kasi"]
 edition = "2021"
@@ -31,6 +31,7 @@ parking_lot = "0.12"
 thiserror = "2"
 log = "0.4"
 sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
 url = "2"
 sysinfo = "0.33"
 
