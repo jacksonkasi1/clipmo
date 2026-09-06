@@ -101,6 +101,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_items,
             commands::get_item,
+            commands::read_pdf_preview,
             commands::flavors_for,
             commands::copy_to_clipboard,
             commands::copy_multiple_to_clipboard,

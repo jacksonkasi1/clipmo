@@ -30,6 +30,7 @@ import {
   X,
 } from 'lucide-react';
 
+import { PdfPreview } from './PdfPreview';
 import { IconButton } from './IconButton';
 import { copySelectedItems, pasteSelectedItems } from '../lib/clipboard-actions';
 import { KindIcon } from './KindIcon';
@@ -558,7 +559,9 @@ function FilePreview({ item }: { item: ClipItem }) {
       }));
   return (
     <div className="preview-scroll file-preview">
-      {assets.map((asset) => (
+      {assets.map((asset, index) => !asset.isDirectory && /\.pdf$/i.test(asset.originalPath) ? (
+        <PdfPreview key={`${item.id}:${asset.originalPath}:${asset.storedPath}`} itemId={item.id} index={index} name={baseName(asset.originalPath)} path={asset.storedPath ?? asset.originalPath} />
+      ) : (
         <article className="file-card" key={asset.originalPath}>
           <span className="file-card-icon">
             {asset.thumbPath

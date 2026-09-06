@@ -2,7 +2,7 @@
   "name": "clipdeck",
   "version": "0.2.10",
   "private": true,
-  "description": "Clipmo \u2014 a fast, private clipboard history manager for Windows and macOS",
+  "description": "Clipmo — a fast, private clipboard history manager for Windows and macOS",
   "author": "Jackson Kasi",
   "type": "module",
   "scripts": {
@@ -26,6 +26,7 @@
     "@tauri-apps/plugin-global-shortcut": "^2.3.2",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "lucide-react": "^0.468.0",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zustand": "^5.0.14"
@@ -43,6 +44,7 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^6.4.3",
+    "vite-plugin-static-copy": "^4.1.1",
     "vitest": "^3.2.7"
   }
 }

@@ -50,6 +50,58 @@ pub async fn get_item(state: tauri::State<'_, AppState>, id: i64) -> Result<Clip
     state.db.get(id)?.ok_or(Error::NotFound("clipboard item"))
 }
 
+/// Read only a PDF belonging to a clipboard item, without exposing arbitrary paths.
+#[tauri::command]
+pub async fn read_pdf_preview(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    index: usize,
+) -> Result<tauri::ipc::Response> {
+    let item = state.db.get_required(id)?;
+    if item.kind != ItemKind::Files {
+        return Err(Error::Other("This item is not a file".into()));
+    }
+    let path = if item.file_assets.is_empty() {
+        item.files.get(index).cloned()
+    } else {
+        item.file_assets
+            .get(index)
+            .filter(|asset| !asset.is_directory)
+            .map(|asset| {
+                asset
+                    .stored_path
+                    .clone()
+                    .unwrap_or_else(|| asset.original_path.clone())
+            })
+    }
+    .ok_or(Error::NotFound("PDF file"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Read;
+        let path = std::path::Path::new(&path);
+        if !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+        {
+            return Err(Error::Other("This file is not a PDF".into()));
+        }
+        const MAX_BYTES: u64 = 50 * 1024 * 1024;
+        let file = std::fs::File::open(path)?;
+        if !file.metadata()?.is_file() {
+            return Err(Error::Other("This file is not a PDF".into()));
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > MAX_BYTES {
+            return Err(Error::Other(
+                "PDF previews support files up to 50 MB".into(),
+            ));
+        }
+        Ok(tauri::ipc::Response::new(bytes))
+    })
+    .await
+    .map_err(|error| Error::Other(error.to_string()))?
+}
+
 #[tauri::command]
 pub async fn flavors_for(state: tauri::State<'_, AppState>, id: i64) -> Result<FlavorBundle> {
     let item = state.db.get_required(id)?;

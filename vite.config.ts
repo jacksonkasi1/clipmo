@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config'
+import { viteStaticCopy } from 'vite-plugin-static-copy'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath } from 'node:url'
@@ -7,7 +8,17 @@ import { fileURLToPath } from 'node:url'
 const DEV_PORT = 1420
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    // Serve and bundle PDF resources locally for offline desktop previews.
+    viteStaticCopy({
+      targets: ['cmaps', 'standard_fonts', 'wasm'].map((directory) => ({
+        src: `node_modules/pdfjs-dist/${directory}`,
+        dest: 'pdfjs',
+      })),
+    }),
+  ],
 
   test: {
     include: ['src/**/*.test.{ts,tsx}'],
