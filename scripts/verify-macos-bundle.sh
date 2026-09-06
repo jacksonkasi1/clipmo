@@ -11,7 +11,7 @@ case "$target" in
   *) echo "Unsupported target: $target" >&2; exit 1 ;;
 esac
 test -x "$binary"
-lipo -verify_arch "$architecture" "$binary"
+lipo "$binary" -verify_arch "$architecture"
 codesign --verify --deep --strict --verbose=2 "$app"
 version=$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).version')
 test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$version"
