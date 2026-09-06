@@ -4,27 +4,39 @@
   <img src="assets/logo-256.png" alt="Clipmo logo" width="200" height="200" />
 </p>
 
-**Fast, private clipboard history for Windows and macOS.** Clipmo uses a Fluent surface
-that feels at home on Windows 11, with a compact quick window and a full history
-window for previewing and editing clipboard items.
+**Fast, private clipboard history for Windows and macOS.** Clipmo uses native
+Windows Acrylic/Mica and macOS vibrancy, with a compact quick window and a full
+history window for previewing and editing clipboard items.
 
-> Press **Ctrl + Shift + V** anywhere to summon the quick window, type to filter,
+> Press **Ctrl + Shift + V** on Windows or **Command + Shift + V** on Mac to summon
+> the quick window, type to filter,
 > use the arrow keys to navigate, and press **Enter** to paste back to the app you
 > were using.
 
 ## Download
 
-The Windows installer and macOS Intel/Apple Silicon builds are published on the
+Windows, macOS Intel/Apple Silicon, and Android builds are published on the
 [Releases](https://github.com/jacksonkasi1/clipmo/releases/latest) page.
 
 [![Latest release](https://img.shields.io/github/v/release/jacksonkasi1/clipmo?label=Clipmo&sort=semver)](https://github.com/jacksonkasi1/clipmo/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%2011-0078d4)](https://github.com/jacksonkasi1/clipmo/releases/latest)
+[![macOS](https://img.shields.io/badge/macOS-Intel%20%7C%20Apple%20Silicon-333333)](https://github.com/jacksonkasi1/clipmo/releases/latest)
 [![License](https://img.shields.io/github/license/jacksonkasi1/clipmo)](LICENSE)
 
-**Direct download — [Clipmo 0.2.4 x64-setup.exe](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.4/Clipmo_0.2.4_x64-setup.exe)**
-(SHA-256 `320803D2EED3B129CE4806F3338F7B8E9E6E0B2C8DE94E5FE1AFD203BD752D12` — signed NSIS installer, ~2.26 MB)
+**Clipmo 0.2.10 downloads**
 
-The installer bootstraps WebView2 on machines that do not already have it, then
+| Platform | Download | Checksums |
+| --- | --- | --- |
+| macOS — Apple Silicon (M-series) | [ARM64 DMG](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/Clipmo_0.2.10_arm64.dmg) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/Clipmo_0.2.10_arm64.sha256) |
+| macOS — Intel | [x86_64 DMG](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/Clipmo_0.2.10_x86_64.dmg) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/Clipmo_0.2.10_x86_64.sha256) |
+| Windows — x64 | [Windows installer](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/Clipmo_0.2.10_x64-setup.exe) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/SHA256SUMS.txt) |
+| Android | [APK](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/Clipmo_0.2.10_android.apk) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/SHA256SUMS.txt) |
+
+The Mac downloads include native vibrancy and are also available as app ZIPs.
+See the [release notes](https://github.com/jacksonkasi1/clipmo/releases/tag/v0.2.10)
+for build provenance, verification, and platform signing details.
+
+The Windows installer bootstraps WebView2 on machines that do not already have it, then
 creates a Start Menu shortcut, a desktop tray entry, and the `Ctrl + Shift + V`
 quick-window global hotkey. Existing Clipdeck installations are upgraded in
 place; the legacy `app.clipdeck.desktop-*` identifier and storage path are
@@ -52,6 +64,8 @@ For older builds and the full changelog, see
 - **Windows 11 visuals** — Acrylic for the quick flyout, Mica for full windows,
   native accent/theme integration, small rounded quick-window corners, and no
   visible DWM border around the flyout.
+- **macOS glass** — native vibrancy on Intel and Apple Silicon, light/dark themes,
+  and a saved Vibrancy/Solid choice in Settings → Appearance → Window material.
 - **Fast startup** — pre-created warm windows, a dedicated Win32 clipboard
   listener, virtualized history rendering, and file-backed image thumbnails.
 - **No telemetry.** Clipboard history stays on the device unless the user enables
@@ -61,11 +75,11 @@ For older builds and the full changelog, see
 
 | Tool | Version |
 | --- | --- |
-| OS | Windows 11 recommended |
+| OS | Windows 11 recommended, or macOS 12+ on Intel/Apple Silicon |
 | Rust | 1.85 or newer |
 | Node.js | 22.12 or newer |
-| Visual Studio | Desktop development with C++ + Windows 11 SDK |
-| WebView2 | Included with Windows 11; otherwise the installer bootstraps it |
+| Visual Studio (Windows development) | Desktop development with C++ + Windows 11 SDK |
+| WebView2 (Windows) | Included with Windows 11; otherwise the installer bootstraps it |
 
 macOS builds require macOS 12 or newer, on either Intel or Apple Silicon.
 Development requires the Xcode Command Line Tools (`xcode-select --install`),
@@ -101,8 +115,15 @@ use native AppKit vibrancy (Sidebar for history/settings, Popover for quick past
 with a Solid option in Appearance settings. Light/dark themes follow the native
 window appearance; macOS Reduce Transparency is respected by AppKit. The initial
 opaque Mac build migrates to vibrancy once. Windows Acrylic/Mica remain unchanged.
-App icons use
-generic glyphs. Data lives in `~/Library/Application Support/app.clipdeck.desktop/`.
+App icons use generic glyphs. Data lives in
+`~/Library/Application Support/app.clipdeck.desktop/`.
+
+To update an existing Mac installation, quit Clipmo and replace the app in
+Applications with the new copy. History and preferences are kept separately and
+survive the update. Vibrancy turns on automatically when upgrading from the
+initial opaque Mac build. If glass is disabled, check **Settings → Appearance →
+Window material** and the macOS **Accessibility → Display → Reduce transparency**
+preference; Clipmo respects that system preference.
 
 ## macOS builds and release verification
 
@@ -120,7 +141,10 @@ Tauri automatically merges `src-tauri/tauri.macos.conf.json` on macOS.
 The macOS workflow runs on native Intel and Apple Silicon runners, checks frontend
 tests/build, Rust formatting/Clippy/tests, native clipboard round trips on an
 isolated pasteboard, app signatures and CPU architecture, DMG integrity, and the
-packaged main/quick windows' WebKit readiness handshakes.
+packaged main/quick windows' WebKit readiness handshakes. It also verifies an
+active AppKit effect behind transparent WebKit surfaces and captures screenshots
+over a colored background. Only hosted CI runners have Reduce Transparency
+disabled for this visual test; local user accessibility preferences are untouched.
 Paste into a different application and the Accessibility grant still require a
 manual desktop check; CI does not grant privacy permissions.
 
@@ -187,7 +211,8 @@ clipmo/
     │   ├── window.rs         Quick/full window lifecycle
     │   ├── db.rs             SQLite + FTS5 + retention
     │   ├── clipboard/        Listener, readers, writer, classifier
-    │   └── win/              DWM, source detection, paste, appearance
+    │   ├── win/              DWM, source detection, paste, appearance
+    │   └── macos/            AppKit pasteboard, paste, appearance, vibrancy
     ├── icons/                Window and tray icons
     ├── tauri.conf.json       Product, binary, bundle, and window configuration
     └── Cargo.toml
@@ -198,26 +223,36 @@ clipmo/
 **Ctrl + Shift + V.** Win+V is reserved by Windows, so Clipmo uses the common
 third-party clipboard-manager shortcut.
 
+On macOS, use **Command + Shift + V** for quick history and
+**Command + Option + Shift + V** for the full window.
+
 ## Architecture notes
 
 ### Clipboard listener
 
-The listener runs on a dedicated thread with a hidden top-level window and uses
+On Windows, the listener runs on a dedicated thread with a hidden top-level window and uses
 `AddClipboardFormatListener`. Each update checks sensitive-data opt-out formats,
 reads supported clipboard formats, classifies the content, computes a stable
 hash, and hands the result to the persistence layer.
 
 ### Paste back to the previous app
 
-Clipmo captures the previously focused HWND before opening, restores that window
+On Windows, Clipmo captures the previously focused HWND before opening, restores that window
 on paste, and sends a native Ctrl+V input sequence after releasing held modifier
 keys.
+
+On macOS, Clipmo remembers the previous application's PID, activates it, and
+sends Command+V after checking Accessibility permission.
 
 ### Window materials
 
 The native layer uses `window-vibrancy` for Acrylic/Mica and DWM attributes for
 dark mode, corner clipping, shadows, and border policy. Unsupported attributes
 fail gracefully on older Windows builds.
+
+On macOS, AppKit supplies Sidebar/Popover vibrancy behind transparent WebKit
+windows. Effect updates run on the main thread and replace the previous effect
+view, so repeated theme changes do not stack blur layers. Solid disables the effect.
 
 ## Upgrade compatibility
 
@@ -228,7 +263,7 @@ names, installer assets, tray text, and release titles use Clipmo.
 
 ## Privacy
 
-Clipmo reads local Windows appearance settings and clipboard data. It does not
+Clipmo reads local operating-system appearance settings and clipboard data. It does not
 send telemetry. Entries marked as excluded from clipboard history by password
 managers or Windows are discarded before database persistence.
 
