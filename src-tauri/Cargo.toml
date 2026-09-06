@@ -16,7 +16,7 @@ tauri-build = { version = "2", features = [] }
 cc = "1"
 
 [dependencies]
-tauri = { version = "2.11", features = ["protocol-asset", "tray-icon", "image-png"] }
+tauri = { version = "2.11", features = ["protocol-asset", "tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-global-shortcut = "2.3"
 tauri-plugin-autostart = "2.5"
 tauri-plugin-single-instance = "2.4"
@@ -39,7 +39,6 @@ window-vibrancy = "0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 base64 = "0.22"
-tauri = { version = "2.11", features = ["macos-private-api"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
