@@ -79,6 +79,13 @@ jobs:
         run: bash scripts/verify-macos-bundle.sh ${{ matrix.target }}
       - name: Smoke-test packaged WebKit main and quick windows
         run: python3 scripts/smoke-test-macos.py src-tauri/target/${{ matrix.target }}/release/bundle/macos/Clipmo.app/Contents/MacOS/clipmo
+      - name: Upload packaged-window screenshots
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: clipmo-smoke-${{ matrix.target }}
+          path: artifacts/smoke/*
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v7
         with:
           name: clipmo-macos-${{ matrix.target }}

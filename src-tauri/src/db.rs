@@ -1609,7 +1609,10 @@ mod tests {
     #[test]
     fn settings_round_trip() {
         let db = Db::open_in_memory().unwrap();
-        assert_eq!(db.load_settings().unwrap().hotkey, "Ctrl+Shift+V");
+        assert_eq!(
+            db.load_settings().unwrap().hotkey,
+            Settings::default().hotkey
+        );
 
         let settings = Settings {
             hotkey: "Ctrl+Alt+C".into(),

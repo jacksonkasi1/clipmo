@@ -16,10 +16,11 @@ pub fn install(app: &mut App) -> tauri::Result<()> {
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Clipmo", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
+    let quit_separator = PredefinedMenuItem::separator(app)?;
 
     let menu = Menu::with_items(
         app,
-        &[&quick, &show, &separator, &settings, &separator, &quit],
+        &[&quick, &show, &separator, &settings, &quit_separator, &quit],
     )?;
 
     TrayIconBuilder::with_id("clipmo-tray")

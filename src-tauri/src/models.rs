@@ -117,13 +117,12 @@ pub struct IgnoredApp {
 impl IgnoredApp {
     pub fn from_legacy(value: &str) -> Self {
         let value = value.trim();
-        let path = std::path::Path::new(value);
-        let executable_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
+        let executable_name = value
+            .rsplit(['/', '\\'])
+            .next()
             .unwrap_or(value)
             .to_string();
-        let display_name = path
+        let display_name = std::path::Path::new(&executable_name)
             .file_stem()
             .and_then(|name| name.to_str())
             .unwrap_or(value)
@@ -133,7 +132,7 @@ impl IgnoredApp {
         Self {
             id,
             display_name,
-            executable_path: if path.components().count() > 1 {
+            executable_path: if value.contains(['/', '\\']) {
                 value.to_string()
             } else {
                 String::new()

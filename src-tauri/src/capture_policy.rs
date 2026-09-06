@@ -106,11 +106,8 @@ pub fn normalize_ignored_apps(apps: &[IgnoredApp]) -> Vec<IgnoredApp> {
 
 pub fn source_matches_ignored(source: &SourceApp, ignored: &IgnoredApp) -> bool {
     let source_path = normalize_identity(&source.exe_path);
-    let source_name = Path::new(&source.exe_path)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(normalize_identity)
-        .unwrap_or_default();
+    // Identities may have been imported from Windows on a Mac (or vice versa).
+    let source_name = source_path.rsplit('\\').next().unwrap_or_default();
     let ignored_path = normalize_identity(&ignored.executable_path);
     let ignored_name = normalize_identity(&ignored.executable_name);
     let ignored_display = normalize_identity(&ignored.display_name);
@@ -126,18 +123,15 @@ pub fn source_matches_ignored(source: &SourceApp, ignored: &IgnoredApp) -> bool 
 /// Pure parent-chain policy used by Windows source resolution and portable tests.
 /// A WebView process maps only to the first non-WebView, non-broker ancestor.
 pub fn webview_host_index(raw_executable: &str, ancestors: &[String]) -> Option<usize> {
-    let raw_name = Path::new(raw_executable)
-        .file_name()
-        .and_then(|value| value.to_str())
+    let raw_name = raw_executable
+        .rsplit(['/', '\\'])
+        .next()
         .unwrap_or(raw_executable);
     if !is_webview_name(raw_name) {
         return None;
     }
     ancestors.iter().position(|path| {
-        let name = Path::new(path)
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or(path);
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
         !is_webview_name(name) && !is_broker_name(name)
     })
 }

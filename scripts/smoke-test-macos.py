@@ -3,9 +3,11 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sqlite3
 import sys
 import tempfile
 import time
+import uuid
 
 binary = Path(sys.argv[1]).resolve()
 for mode, args in [("main", []), ("quick", ["--show-quick"])]:
@@ -32,6 +34,28 @@ for mode, args in [("main", []), ("quick", ["--show-quick"])]:
                         else:
                             assert value["searchFocused"]
                         print(f"PASS: packaged {mode} window rendered and ready")
+                        if os.environ.get("GITHUB_ACTIONS") == "true":
+                            screenshots = Path("artifacts/smoke")
+                            screenshots.mkdir(parents=True, exist_ok=True)
+                            subprocess.run(["screencapture", "-x", str(screenshots / f"{mode}.png")], check=True)
+                            if mode == "main":
+                                # Hosted runner only: exercise the running listener and SQLite sink.
+                                # Activate another app so Clipmo's own-source exclusion does not apply.
+                                subprocess.run(["open", "-a", "TextEdit"], check=True)
+                                time.sleep(3)
+                                token = f"Clipmo macOS capture smoke {uuid.uuid4()}"
+                                subprocess.run(["pbcopy"], input=token.encode(), check=True)
+                                db = Path.home() / "Library/Application Support/app.clipdeck.desktop/clipdeck.db"
+                                capture_deadline = time.monotonic() + 15
+                                while time.monotonic() < capture_deadline:
+                                    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as connection:
+                                        captured = connection.execute("SELECT content FROM items WHERE content = ?", (token,)).fetchone()
+                                    if captured:
+                                        print("PASS: running macOS listener persisted the clipboard change")
+                                        break
+                                    time.sleep(0.25)
+                                else:
+                                    raise RuntimeError("running listener did not persist the clipboard change")
                         break
                     time.sleep(0.5)
                 else:
