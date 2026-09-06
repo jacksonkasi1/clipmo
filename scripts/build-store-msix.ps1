@@ -8,7 +8,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 $manifestPath = Join-Path $repoRoot 'store\Package.appxmanifest'
 $artifactRoot = Join-Path $repoRoot 'artifacts\store'
 $stageRoot = Join-Path $artifactRoot 'stage-x64'
-$outputName = if ($DevelopmentSigned) { 'Clipmo_0.2.10.0_x64-dev.msix' } else { 'Clipmo_0.2.10.0_x64.msix' }
+$outputName = if ($DevelopmentSigned) { 'Clipmo_0.2.11.0_x64-dev.msix' } else { 'Clipmo_0.2.11.0_x64.msix' }
 $outputPath = Join-Path $artifactRoot $outputName
 $targetTriple = if ($env:STORE_WINDOWS_TARGET) { $env:STORE_WINDOWS_TARGET } else { 'x86_64-pc-windows-msvc' }
 if ($targetTriple -notin @('x86_64-pc-windows-msvc', 'x86_64-pc-windows-gnu')) {

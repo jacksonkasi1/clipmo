@@ -23,17 +23,17 @@ Windows, macOS Intel/Apple Silicon, and Android builds are published on the
 [![macOS](https://img.shields.io/badge/macOS-Intel%20%7C%20Apple%20Silicon-333333)](https://github.com/jacksonkasi1/clipmo/releases/latest)
 [![License](https://img.shields.io/github/license/jacksonkasi1/clipmo)](LICENSE)
 
-**Clipmo 0.2.10 downloads**
+**Clipmo 0.2.11 downloads**
 
 | Platform | Download | Checksums |
 | --- | --- | --- |
-| macOS — Apple Silicon (M-series) | [ARM64 DMG](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/Clipmo_0.2.10_arm64.dmg) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/Clipmo_0.2.10_arm64.sha256) |
-| macOS — Intel | [x86_64 DMG](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/Clipmo_0.2.10_x86_64.dmg) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/Clipmo_0.2.10_x86_64.sha256) |
-| Windows — x64 | [Windows installer](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/Clipmo_0.2.10_x64-setup.exe) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/SHA256SUMS.txt) |
-| Android | [APK](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/Clipmo_0.2.10_android.apk) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.10/SHA256SUMS.txt) |
+| macOS — Apple Silicon (M-series) | [ARM64 DMG](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/Clipmo_0.2.11_arm64.dmg) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/Clipmo_0.2.11_arm64.sha256) |
+| macOS — Intel | [x86_64 DMG](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/Clipmo_0.2.11_x86_64.dmg) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/Clipmo_0.2.11_x86_64.sha256) |
+| Windows — x64 | [Windows installer](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/Clipmo_0.2.11_x64-setup.exe) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/SHA256SUMS.txt) |
+| Android | [APK](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/Clipmo_0.2.11_android.apk) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/SHA256SUMS.txt) |
 
 The Mac downloads include native vibrancy and are also available as app ZIPs.
-See the [release notes](https://github.com/jacksonkasi1/clipmo/releases/tag/v0.2.10)
+See the [release notes](https://github.com/jacksonkasi1/clipmo/releases/tag/v0.2.11)
 for build provenance, verification, and platform signing details.
 
 The Windows installer bootstraps WebView2 on machines that do not already have it, then
@@ -150,7 +150,7 @@ manual desktop check; CI does not grant privacy permissions.
 
 For new `v*` tags, Mac assets are appended after the Windows workflow creates the
 release. To add Mac downloads to an existing release, run **macOS build and release**
-from the branch containing this support and set `release_tag` to `v0.2.10` (or the
+from the branch containing this support and set `release_tag` to `v0.2.11` (or the
 matching source version). A blank input only builds downloadable CI artifacts.
 Both architectures must pass before publishing; existing Windows/Android assets
 are preserved. A backfill uses the selected branch's source, not the old tag's
