@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ read: vi.fn(), getDocument: vi.fn(), getPage: vi.fn(), render: vi.fn(), destroy: vi.fn(), cancel: vi.fn() }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), getDocument: vi.fn(), getPage: vi.fn(), render: vi.fn(), destroy: vi.fn(), cancel: vi.fn(), terminate: vi.fn(), workerDestroy: vi.fn() }));
 vi.mock('../lib/tauri', () => ({ api: { readPdfPreview: mocks.read, revealItem: vi.fn() } }));
-vi.mock('pdfjs-dist', () => ({ GlobalWorkerOptions: {}, getDocument: mocks.getDocument }));
+vi.mock('../lib/pdf-renderer', () => ({ CompatWorker: class { terminate = mocks.terminate; }, PDFWorker: class { destroy = mocks.workerDestroy; }, getDocument: mocks.getDocument }));
 import { PdfPreview } from './PdfPreview';
 beforeEach(() => {
   vi.resetAllMocks();
@@ -43,4 +43,6 @@ it('releases the document and render task when selection changes', async () => {
   view.unmount();
   expect(mocks.cancel).toHaveBeenCalledOnce();
   expect(mocks.destroy).toHaveBeenCalledOnce();
+  expect(mocks.workerDestroy).toHaveBeenCalledOnce();
+  expect(mocks.terminate).toHaveBeenCalledOnce();
 });

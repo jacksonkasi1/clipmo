@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { PDFDocumentLoadingTask, RenderTask } from 'pdfjs-dist';
+import type { PDFDocumentLoadingTask, PDFWorker, RenderTask } from 'pdfjs-dist';
 import { FolderOpen, LoaderCircle } from 'lucide-react';
 import { api } from '../lib/tauri';
 import { IconButton } from './IconButton';
@@ -14,17 +14,26 @@ export function PdfPreview({ itemId, index, name, path }: {
   useEffect(() => {
     let disposed = false;
     let loading: PDFDocumentLoadingTask | undefined;
+    let workerPort: Worker | undefined;
+    let worker: PDFWorker | undefined;
     let rendering: RenderTask | undefined;
     let passwordProtected = false;
     setReady(false);
     setStatus('Loading PDF preview…');
     void (async () => {
       const [pdfjs, bytes] = await Promise.all([
-        import('pdfjs-dist'), api.readPdfPreview(itemId, index),
+        // WKWebView may lack Iterator helpers even on supported macOS versions.
+        // Keep both the renderer and its worker on PDF.js's compatibility build.
+        import('../lib/pdf-renderer'), api.readPdfPreview(itemId, index),
       ]);
       if (disposed) return;
-      pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).href;
+      // Bundle the worker into a blob: WKWebView cannot import tauri:// modules
+      // inside a worker, even though the main document can load them.
+      workerPort = new pdfjs.CompatWorker();
+      // @ts-expect-error PDF.js declares port as null, but accepts a Worker at runtime.
+      worker = new pdfjs.PDFWorker({ port: workerPort });
       loading = pdfjs.getDocument({
+        worker,
         data: new Uint8Array(bytes),
         cMapUrl: '/pdfjs/cmaps/',
         cMapPacked: true,
@@ -56,7 +65,9 @@ export function PdfPreview({ itemId, index, name, path }: {
     return () => {
       disposed = true;
       rendering?.cancel();
-      void loading?.destroy();
+      void loading?.destroy().catch(() => undefined);
+      worker?.destroy();
+      workerPort?.terminate();
     };
   }, [itemId, index, path]);
 
