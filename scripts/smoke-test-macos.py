@@ -12,11 +12,16 @@ import uuid
 
 binary = Path(sys.argv[1]).resolve()
 if os.environ.get("GITHUB_ACTIONS") == "true":
+    # Hosted runner images disable graphic effects by default. Exercise actual
+    # blur in screenshots; never change accessibility preferences on a user's Mac.
+    subprocess.run(["defaults", "write", "com.apple.universalaccess", "reduceTransparency", "-bool", "false"], check=True)
     fixture_binary = Path(tempfile.gettempdir()) / "clipmo-vibrancy-backdrop"
     subprocess.run(["clang", "-fobjc-arc", "-framework", "AppKit", "scripts/macos-vibrancy-backdrop.m", "-o", str(fixture_binary)], check=True)
     fixture = subprocess.Popen([str(fixture_binary)])
     atexit.register(fixture.terminate)
     time.sleep(1)
+    if fixture.poll() is not None:
+        raise RuntimeError("Vibrancy background fixture could not start")
 
 for mode, args in [("main", []), ("quick", ["--show-quick"])]:
     with tempfile.TemporaryDirectory(prefix="clipmo-smoke-") as directory:

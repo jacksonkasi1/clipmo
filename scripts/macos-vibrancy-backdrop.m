@@ -17,6 +17,10 @@
 int main(void) {
     @autoreleasepool {
         NSApplication *app = NSApplication.sharedApplication;
+        if (NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceTransparency) {
+            fprintf(stderr, "Reduce Transparency is still enabled on the CI runner\n");
+            return 1;
+        }
         [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
         NSWindow *window = [[NSWindow alloc] initWithContentRect:NSScreen.mainScreen.frame
             styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
