@@ -10,15 +10,15 @@ android {
  applicationId = "app.clipdeck.desktop"
  minSdk = 29
  targetSdk = 35
- versionCode = 11
- versionName = "0.2.12"
+ versionCode = 12
+ versionName = "0.2.13"
  }
  signingConfigs {
  create("release") {
- storeFile = rootProject.file(System.getenv("ANDROID_KEYSTORE_PATH") ?: "debug.keystore")
- storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: "android"
- keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: "androiddebugkey"
- keyPassword = System.getenv("ANDROID_KEY_PASSWORD") ?: "android"
+ storeFile = rootProject.file(System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() } ?: "debug.keystore")
+ storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: "android"
+ keyAlias = System.getenv("ANDROID_KEY_ALIAS")?.takeIf { it.isNotBlank() } ?: "androiddebugkey"
+ keyPassword = System.getenv("ANDROID_KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: "android"
  }
  }
  buildTypes {
@@ -41,6 +41,7 @@ android {
  kotlinOptions { jvmTarget = "17" }
  buildFeatures {
  compose = true
+ buildConfig = true
  viewBinding = false
  }
  composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }

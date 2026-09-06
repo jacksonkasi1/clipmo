@@ -42,6 +42,31 @@ pub fn new_code(previous: &str) -> String {
 }
 
 impl SyncService {
+    pub(super) fn local_pairing_address(&self) -> Option<String> {
+        if self.listen_port == 0 {
+            return None;
+        }
+        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+        socket.set_broadcast(true).ok()?;
+        // Select the LAN route without sending a packet.
+        socket.connect((Ipv4Addr::BROADCAST, DISCOVERY_PORT)).ok()?;
+        let ip = socket.local_addr().ok()?.ip();
+        if ip.is_unspecified() || ip.is_loopback() {
+            return None;
+        }
+        Some(SocketAddr::new(ip, self.listen_port).to_string())
+    }
+
+    pub(super) fn compatibility_warning(&self) -> Option<String> {
+        let old = self
+            .pairing
+            .candidates
+            .read()
+            .values()
+            .any(|(message, _, seen)| now_ms() - *seen < 15_000 && message.protocol != PROTOCOL);
+        old.then(|| "An incompatible Clipmo device is nearby. Install Clipmo 0.2.12 or newer on every device; published 0.2.11 cannot pair with this app.".into())
+    }
+
     pub fn pairing_open(&self) -> bool {
         self.pairing.until.load(Ordering::SeqCst) > now_ms() as u64
     }
@@ -145,6 +170,8 @@ impl SyncService {
         let epoch = self.pairing.join_epoch.fetch_add(1, Ordering::SeqCst) + 1;
         let deadline = now_ms() + 20_000;
         let mut attempted = HashMap::new();
+        let mut last_error = None;
+        let mut saw_compatible = false;
         while now_ms() < deadline {
             if !self.settings.as_ref().unwrap().read().sync_enabled
                 || self.pairing.join_epoch.load(Ordering::SeqCst) != epoch
@@ -155,6 +182,12 @@ impl SyncService {
             for (candidate, address, seen) in candidates {
                 if now_ms() >= deadline || self.pairing.join_epoch.load(Ordering::SeqCst) != epoch {
                     break;
+                }
+                if candidate.protocol != PROTOCOL {
+                    continue;
+                }
+                if now_ms() - seen <= 10_000 {
+                    saw_compatible = true;
                 }
                 if now_ms() - seen > 10_000
                     || !candidate.pairing_available
@@ -168,17 +201,24 @@ impl SyncService {
                     continue;
                 }
                 attempted.insert(candidate.device.id.clone(), now_ms());
-                if self
-                    .exchange_control(address, &candidate.device.id, "pair", &code, &token)
-                    .is_ok()
-                {
-                    self.enqueue_history_backfill();
-                    return Ok(());
+                match self.exchange_control(address, &candidate.device.id, "pair", &code, &token) {
+                    Ok(()) => {
+                        self.enqueue_history_backfill();
+                        return Ok(());
+                    }
+                    Err(error) => last_error = Some(error.kind()),
                 }
             }
             std::thread::sleep(Duration::from_millis(250));
         }
-        Err(Error::Other("Could not connect. Open pairing on the other device, check its current code, and allow Clipmo through the firewall. All devices need this version of Clipmo.".into()))
+        let message = match last_error {
+            Some(io::ErrorKind::PermissionDenied) => "The other device rejected this invitation. Choose New code on that device and enter it here before it expires.",
+            Some(_) => "A compatible device was found but did not complete the connection. Allow incoming Clipmo connections through its firewall and try a fresh code.",
+            None if !saw_compatible && self.compatibility_warning().is_some() => "Only an incompatible Clipmo device was found. Install Clipmo 0.2.12 or newer on every device. Published 0.2.11 uses an incompatible pairing protocol.",
+            None if saw_compatible => "A compatible device was found but pairing is closed. Choose New code on that device, then enter its code here.",
+            None => "No compatible device was discovered. Keep both apps open on the same Wi-Fi, enable LAN sync, and choose New code on the other device. Android can scan the QR code to connect directly.",
+        };
+        Err(Error::Other(message.into()))
     }
 
     pub(super) fn exchange_control(
@@ -315,6 +355,26 @@ pub(super) fn read_json<T: serde::de::DeserializeOwned>(stream: &mut TcpStream) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incompatible_discovery_is_diagnostic_not_trust_and_expires() {
+        let service = device("mac");
+        let message = DiscoveryMessage {
+            protocol: "clipmo-lan-v2".into(),
+            pairing_code: "123456".into(),
+            pairing_available: false,
+            device: Settings::default().device_identity(),
+            tcp_port: FIRST_SYNC_PORT,
+        };
+        service.pairing.candidates.write().insert(
+            "old".into(),
+            (message, "192.168.1.2:47634".parse().unwrap(), now_ms()),
+        );
+        assert!(service.compatibility_warning().unwrap().contains("0.2.11"));
+        assert!(service.peers.read().is_empty());
+        service.pairing.candidates.write().get_mut("old").unwrap().2 -= 16_000;
+        assert!(service.compatibility_warning().is_none());
+    }
 
     fn device(id: &str) -> SyncService {
         let mut service = SyncService::inactive();

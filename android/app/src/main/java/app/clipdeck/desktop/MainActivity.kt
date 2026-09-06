@@ -303,7 +303,9 @@ class MainActivity : ComponentActivity() {
             Toast.makeText(this, "Use the code shown on the other device", Toast.LENGTH_SHORT).show()
             return
         }
-        preferences.edit().putString("join_code", invite.code)
+        preferences.edit().putString("join_address", invite.address.orEmpty())
+            .remove("join_error").remove("join_compatible").remove("join_legacy")
+            .putString("join_code", invite.code)
             .putString("join_target", invite.deviceId.orEmpty())
             .putString("join_token", (UUID.randomUUID().toString() + UUID.randomUUID().toString()).replace("-", ""))
             .putLong("join_until", System.currentTimeMillis() + 20_000)

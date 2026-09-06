@@ -760,8 +760,19 @@ class ClipSyncService : Service() {
             socket.broadcast = true
             while (running) {
                 if (prefs.getLong("join_until", 0) in 1..System.currentTimeMillis()) {
+                    val reason = prefs.getString("join_error", null) ?: when {
+                        prefs.getBoolean("join_compatible", false) -> "A compatible device was found but pairing is closed. Choose New code on that device and enter it here."
+                        prefs.getBoolean("join_legacy", false) -> "Only an incompatible Clipmo device was found. Install Clipmo 0.2.12 or newer on every device. Published 0.2.11 cannot pair with this app."
+                        else -> "No compatible device was discovered. Keep both apps open on the same Wi-Fi with LAN sync enabled. Scan a fresh desktop QR code to connect directly."
+                    }
                     prefs.edit().remove("join_code").remove("join_until")
-                        .putString("pairing_status", "Could not connect. Check the code, open pairing on the other device, and allow Clipmo through its firewall. All devices need the updated app.").apply()
+                        .putString("pairing_status", reason).apply()
+                }
+                val direct = prefs.getString("join_address", "").orEmpty()
+                val target = prefs.getString("join_target", "").orEmpty()
+                if (prefs.getLong("join_until", 0) > System.currentTimeMillis() && target.isNotBlank() && validPairingAddress(direct)) {
+                    val parts = direct.split(":")
+                    attemptJoin(InetSocketAddress(parts[0], parts[1].toInt()), target)
                 }
                 if (prefs.getBoolean("sync_enabled", false) && listenPort != 0) {
                     val msg = DiscoveryMessage(PROTOCOL, "", currentDevice(deviceId, deviceName), listenPort, pairingWindowOpen())
@@ -788,7 +799,12 @@ class ClipSyncService : Service() {
                     val packet = DatagramPacket(ByteArray(4096), 4096)
                     socket.receive(packet)
                     val msg = mapper.readValue(packet.data.copyOf(packet.length), DiscoveryMessage::class.java)
-                    if (msg.protocol != PROTOCOL || msg.device.id == myDeviceId || msg.tcp_port !in FIRST_SYNC_PORT..LAST_SYNC_PORT) continue
+                    if (msg.device.id == myDeviceId || msg.tcp_port !in FIRST_SYNC_PORT..LAST_SYNC_PORT) continue
+                    if (msg.protocol != PROTOCOL) {
+                        if (prefs.getLong("join_until", 0) > System.currentTimeMillis()) prefs.edit().putBoolean("join_legacy", true).apply()
+                        continue
+                    }
+                    if (prefs.getLong("join_until", 0) > System.currentTimeMillis()) prefs.edit().putBoolean("join_compatible", true).apply()
                     val address = InetSocketAddress(packet.address, msg.tcp_port)
                     val token = peerToken(msg.device.id)
                     val joinCode = prefs.getString("join_code", "").orEmpty()
@@ -796,12 +812,7 @@ class ClipSyncService : Service() {
                     val joining = joinCode.length == 6 && prefs.getLong("join_until", 0) > System.currentTimeMillis()
                         && msg.pairing_available && (target.isBlank() || target == msg.device.id)
                     if (joining) {
-                        val joinToken = prefs.getString("join_token", "").orEmpty()
-                        if (exchangeControl(address, msg.device.id, "pair", joinCode, joinToken)) {
-                            prefs.edit().remove("join_code").remove("join_until")
-                                .putString("pairing_status", "Connected to ${msg.device.name}").apply()
-                            enqueueHistoryBackfill(msg.device.id)
-                        }
+                        attemptJoin(address, msg.device.id)
                     } else if (token != null) {
                         val wasOffline = peers[msg.device.id]?.let { System.currentTimeMillis() - it.lastSeenAt > 30_000 } ?: true
                         if (exchangeControl(address, msg.device.id, "ping", "", token) && wasOffline) enqueueHistoryBackfill(msg.device.id)
@@ -821,6 +832,26 @@ class ClipSyncService : Service() {
         output.writeInt(bytes.size)
         output.write(bytes)
         output.flush()
+    }
+
+    private val joinLock = java.util.concurrent.locks.ReentrantLock()
+
+    private suspend fun attemptJoin(address: InetSocketAddress, id: String) {
+        // Discovery and direct QR retry may run together; only one handshake at a time.
+        if (!joinLock.tryLock()) return
+        var connected = false
+        try {
+            val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+            val code = prefs.getString("join_code", "").orEmpty()
+            val token = prefs.getString("join_token", "").orEmpty()
+            if (code.length != 6 || prefs.getLong("join_until", 0) <= System.currentTimeMillis()) return
+            if (exchangeControl(address, id, "pair", code, token)) {
+                prefs.edit().remove("join_code").remove("join_until").remove("join_address")
+                    .putString("pairing_status", "Connected to ${peers[id]?.device?.name ?: "device"}").apply()
+                connected = true
+            }
+        } finally { joinLock.unlock() }
+        if (connected) enqueueHistoryBackfill(id)
     }
 
     private fun peerToken(id: String): String? {
@@ -867,7 +898,10 @@ class ClipSyncService : Service() {
             writeResponse(socket, PairControl(PROTOCOL, kind, current, listenPort, code, token))
             val bytes = readFrameHeader(DataInputStream(socket.getInputStream())) ?: return false
             val reply = mapper.readValue(bytes, PairReply::class.java)
-            if (!reply.ok || reply.device.id != id || reply.token != token) return false
+            if (!reply.ok || reply.device.id != id || reply.token != token) {
+                if (kind == "pair") prefs.edit().putString("join_error", "The other device rejected this invitation. Choose New code on that device and try again before it expires.").apply()
+                return false
+            }
             synchronized(trustLock) {
                 if (!prefs.getBoolean("sync_enabled", false)) return false
                 if (kind == "pair" && (prefs.getString("join_token", "") != token || prefs.getString("join_code", "") != code || prefs.getLong("join_until", 0) <= System.currentTimeMillis())) return false
@@ -878,6 +912,10 @@ class ClipSyncService : Service() {
             }
         }
         true
+    }.onFailure {
+        if (kind == "pair") getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE).edit()
+            .putString("join_error", "The device did not complete the connection. Check that Clipmo is open and allowed through its firewall, then try a fresh invitation.").apply()
+        Log.d("ClipSyncService", "Control $kind failed: ${it.javaClass.simpleName}")
     }.getOrDefault(false)
 
 	private fun applyClipUpsert(envelope: SyncEnvelope, clip: ClipSnapshot) {

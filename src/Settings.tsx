@@ -45,6 +45,7 @@ import { getPlatform } from './lib/platform';
 import { APP_SHORTCUTS, shortcutKeys } from './lib/shortcuts';
 import { FILTER_SHORTCUTS, resolvedFilterShortcuts } from './lib/filter-shortcuts';
 import { applyTheme } from './lib/theme';
+import { version } from '../package.json';
 
 const HISTORY_KINDS = [
   { key: 'text', kind: 'text', label: 'Text', icon: Type },
@@ -279,7 +280,7 @@ export default function Settings() {
         <span className="settings-app-icon"><Settings2 size={21} aria-hidden /></span>
         <div>
           <h1>Clipmo settings</h1>
-          <p>Appearance, capture, storage, and history controls</p>
+          <p>Version {version} · Pairing v3</p>
         </div>
       </header>
 

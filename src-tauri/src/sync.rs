@@ -220,6 +220,8 @@ impl SyncService {
             device: settings.device_identity(),
             pairing_code: settings.sync_pairing_code.clone(),
             pairing_until: self.pairing.until.load(Ordering::SeqCst),
+            local_address: self.local_pairing_address(),
+            compatibility_warning: self.compatibility_warning(),
             peers: self
                 .peers
                 .read()
@@ -836,7 +838,6 @@ fn listen_for_peers(socket: UdpSocket, service: SyncService, app: AppHandle) {
         };
         let current = settings.read().clone();
         if !current.sync_enabled
-            || message.protocol != PROTOCOL
             || message.device.id == current.sync_device_id
             || message.tcp_port == 0
         {
@@ -852,6 +853,9 @@ fn listen_for_peers(socket: UdpSocket, service: SyncService, app: AppHandle) {
                     (message.clone(), address, now_ms()),
                 );
             }
+        }
+        if message.protocol != PROTOCOL {
+            continue;
         }
         let peer = service.peers.read().get(&message.device.id).cloned();
         if let Some(peer) = peer {

@@ -10,6 +10,7 @@ import { CheckCircle2, Link2, MonitorUp, RefreshCw, Wifi, X } from 'lucide-react
 
 import { useStore } from '../lib/store';
 import QRCode from 'qrcode';
+import { version } from '../../package.json';
 
 interface PairDeviceDialogProps {
   open: boolean;
@@ -56,7 +57,7 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
 
   const pairingCode = sync?.pairingCode ?? settings?.syncPairingCode ?? '';
   const pairingActive = Boolean(sync?.enabled && (sync.pairingUntil ?? 0) > now);
-  const invite = `clipmo://pair?v=3&device=${encodeURIComponent(sync?.device.id ?? '')}&code=${pairingCode}`;
+  const invite = `clipmo://pair?v=3&device=${encodeURIComponent(sync?.device.id ?? '')}&code=${pairingCode}${sync?.localAddress ? `&address=${encodeURIComponent(sync.localAddress)}` : ''}`;
   useEffect(() => {
     if (!open) return;
     const timer = window.setInterval(() => {
@@ -141,7 +142,7 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
           <span className="pair-device-heading-icon"><MonitorUp size={19} aria-hidden /></span>
           <div>
             <h2 id="pair-device-title">Add another device</h2>
-            <p>Connect Clipmo desktops or mobile devices on the same local network.</p>
+            <p>Clipmo {version} · Update every device to 0.2.12 or newer before pairing.</p>
           </div>
           <button type="button" className="icon-button" aria-label="Close add device" onClick={onClose}>
             <X size={16} aria-hidden />
@@ -149,6 +150,7 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
         </header>
 
         <div className="pair-device-content">
+          {sync?.compatibilityWarning && <p role="status">{sync.compatibilityWarning}</p>}
           <section className={`pair-device-step${pairingActive && qr ? ' has-qr' : ''}`} aria-labelledby="share-code-title">
             <div className="pair-device-step-heading">
               <Wifi size={17} aria-hidden />

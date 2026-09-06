@@ -5,6 +5,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PairingProtocolTest {
+    @Test fun qrDirectAddressAcceptsLanEndpointsAndRejectsOtherTargets() {
+        val prefix = "clipmo://pair?v=3&device=mac-1&code=012345&address="
+        assertEquals("192.168.1.16:47634", parsePairingInvite(prefix + "192.168.1.16%3A47634")?.address)
+        for (invalid in listOf("127.0.0.1:47634", "example.com:47634", "8.8.8.8:47634", "192.168.1.16:80", "192.168.999.1:47634")) {
+            assertNull(parsePairingInvite(prefix + invalid))
+        }
+    }
+
     @Test fun acceptsCodesAndVersionedQrInvitesWithoutChangingTheirMeaning() {
         assertEquals(PairingInvite("012345"), parsePairingInvite("012345"))
         assertEquals(PairingInvite("012345", "mac-1"), parsePairingInvite("clipmo://pair?v=3&device=mac-1&code=012345"))

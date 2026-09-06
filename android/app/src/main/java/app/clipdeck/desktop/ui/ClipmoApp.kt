@@ -1016,7 +1016,7 @@ private fun DevicesScreen(
                 ClipmoEmptyState(
                     title = if (state.syncEnabled) "Looking for devices" else "LAN sync is off",
                     message = if (state.syncEnabled) {
-                        "Open Clipmo on your PC or other phones with the same pairing code."
+                        "Install Clipmo 0.2.12 or newer on both devices. Choose New code on the other device, then enter it here or scan its QR code."
                     } else {
                         "Tap 'Pair device' or enable sync in Settings to link devices."
                     },
@@ -1061,6 +1061,9 @@ private fun SettingsScreen(
         contentPadding = PaddingValues(horizontal = space.md, vertical = space.sm),
     ) {
         item {
+            BasicText("Clipmo ${app.clipdeck.desktop.BuildConfig.VERSION_NAME} · Pairing v3",
+                style = ClipmoTheme.typography.bodyMedium.copy(color = colors.textSecondary))
+            Spacer(Modifier.height(space.md))
             ClipmoSettingsGroup(title = "Clipboard") {
                 ClipmoSettingsToggle(
                     title = "Clipboard monitoring",
@@ -2858,4 +2861,3 @@ private fun clipPreview(clip: ClipRecord): String = when (clip.kind) {
         if (it.length > CLIP_PREVIEW_MAX_CHARS) it.take(CLIP_PREVIEW_MAX_CHARS).trimEnd() + "…" else it
     }
 }
-

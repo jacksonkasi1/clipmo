@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useStore } from '../lib/store';
 import { PairDeviceDialog } from './PairDeviceDialog';
+import QRCode from 'qrcode';
 
 const settings: Settings = {
   settingsVersion: 2,
@@ -67,6 +68,13 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('PairDeviceDialog', () => {
+  it('includes the direct LAN endpoint in QR and displays incompatible-device guidance', async () => {
+    useStore.setState({ sync: { ...useStore.getState().sync!, localAddress: '192.168.1.16:47634', compatibilityWarning: 'Update the older Windows app.' } });
+    render(<PairDeviceDialog open onClose={vi.fn()} />);
+    expect(screen.getByText('Update the older Windows app.')).toBeTruthy();
+    await waitFor(() => expect(QRCode.toDataURL).toHaveBeenCalledWith(expect.stringContaining('&address=192.168.1.16%3A47634'), expect.anything()));
+  });
+
   it('joins without replacing the local invitation or claiming success before acknowledgement', async () => {
     let finish!: () => void;
     joinDevice.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
