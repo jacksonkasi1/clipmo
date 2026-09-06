@@ -30,6 +30,7 @@ import {
   X,
 } from 'lucide-react';
 
+import { PdfPreview } from './PdfPreview';
 import { IconButton } from './IconButton';
 import { copySelectedItems, pasteSelectedItems } from '../lib/clipboard-actions';
 import { KindIcon } from './KindIcon';
@@ -388,14 +389,14 @@ function TextPreview({ item, onEdit }: { item: ClipItem; onEdit: () => void }) {
   );
 }
 
-function ImagePreview({ item }: { item: ClipItem }) {
+function ImagePreview({ item, source }: { item: ClipItem; source?: string }) {
   const [fullscreen, setFullscreen] = useState(false);
 
   if (!item.image) {
     return <PreviewFailure title={item.preview} message="The image preview is unavailable." />;
   }
 
-  const imageSrc = fileSrc(item.image.path);
+  const imageSrc = source ?? fileSrc(item.image.path);
 
   return (
     <>
@@ -558,7 +559,11 @@ function FilePreview({ item }: { item: ClipItem }) {
       }));
   return (
     <div className="preview-scroll file-preview">
-      {assets.map((asset) => (
+      {assets.map((asset, index) => !asset.isDirectory && /\.pdf$/i.test(asset.originalPath) ? (
+        <PdfPreview key={`${item.id}:${asset.originalPath}:${asset.storedPath}`} itemId={item.id} index={index} name={baseName(asset.originalPath)} path={asset.storedPath ?? asset.originalPath} />
+      ) : !asset.isDirectory && imageFileMime(asset.originalPath) ? (
+        <FileImagePreview key={`${item.id}:${asset.originalPath}:${asset.storedPath}`} item={item} index={index} path={asset.storedPath ?? asset.originalPath} name={baseName(asset.originalPath)} mime={imageFileMime(asset.originalPath)!} />
+      ) : (
         <article className="file-card" key={asset.originalPath}>
           <span className="file-card-icon">
             {asset.thumbPath
@@ -596,6 +601,57 @@ function FilePreview({ item }: { item: ClipItem }) {
       ))}
     </div>
   );
+}
+
+function imageFileMime(path: string): string | null {
+  const extension = path.split('.').at(-1)?.toLowerCase() ?? '';
+  return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', bmp: 'image/bmp', gif: 'image/gif', avif: 'image/avif', ico: 'image/x-icon' } as Record<string, string>)[extension] ?? null;
+}
+
+function FileImagePreview({ item, index, path, name, mime }: {
+  item: ClipItem; index: number; path: string; name: string; mime: string;
+}) {
+  const [preview, setPreview] = useState<{ source: string; width: number; height: number } | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let disposed = false;
+    let source: string | undefined;
+    const image = new Image();
+    setPreview(null);
+    setFailed(false);
+    void api.readImageFilePreview(item.id, index).then((bytes) => {
+      if (disposed) return;
+      source = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: mime }));
+      image.onload = () => {
+        if (disposed) return;
+        setPreview({ source: source!, width: image.naturalWidth, height: image.naturalHeight });
+        if (document.documentElement.dataset.pdfSmoke === 'true') {
+          try {
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.min(256, image.naturalWidth);
+          canvas.height = Math.min(256, image.naturalHeight);
+          const context = canvas.getContext('2d')!;
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+          let ink = 0;
+          for (let i = 0; i < pixels.length; i += 4) if (pixels[i]! < 200 && pixels[i + 3]! > 0) ink++;
+          void api.reportPdfPreviewTest({ success: true, itemId: item.id, ink, width: image.naturalWidth, height: image.naturalHeight });
+          } catch (error) { void api.reportPdfPreviewTest({ success: false, itemId: item.id, error: String(error), stage: 'pixels' }); }
+        }
+      };
+      image.onerror = () => { if (!disposed) { setFailed(true); if (document.documentElement.dataset.pdfSmoke === 'true') void api.reportPdfPreviewTest({ success: false, itemId: item.id, error: 'Image decode failed' }); } };
+      image.src = source;
+    }).catch((error) => { if (!disposed) { setFailed(true); if (document.documentElement.dataset.pdfSmoke === 'true') void api.reportPdfPreviewTest({ success: false, itemId: item.id, error: String(error), stage: 'read' }); } });
+    return () => {
+      disposed = true;
+      image.onload = null;
+      image.onerror = null;
+      if (source) URL.revokeObjectURL(source);
+    };
+  }, [item.id, index, path, mime]);
+  if (failed) return <PreviewFailure title={name} message="The image file preview is unavailable." />;
+  if (!preview) return <div className="preview-empty" role="status"><LoaderCircle size={22} className="spin" aria-hidden /><span>Loading image preview…</span></div>;
+  return <ImagePreview source={preview.source} item={{ ...item, preview: name, image: { path, thumbPath: '', width: preview.width, height: preview.height } }} />;
 }
 
 function LinkPreview({ item, onEdit }: { item: ClipItem; onEdit: () => void }) {

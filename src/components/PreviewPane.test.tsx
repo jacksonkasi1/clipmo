@@ -1,13 +1,14 @@
 /** @vitest-environment jsdom */
 import type { ClipItem } from '../lib/types';
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const apiMock = vi.hoisted(() => ({
   copyToClipboard: vi.fn(),
   copyMultipleToClipboard: vi.fn(),
   pasteActive: vi.fn(),
+  readImageFilePreview: vi.fn(),
   pasteMultipleActive: vi.fn(),
   editItem: vi.fn(),
   setFavorite: vi.fn(),
@@ -130,6 +131,7 @@ function selectItem(item: ClipItem, extras: Partial<Pick<ClipItem, 'id'>>[] = []
 beforeEach(() => {
   apiMock.copyToClipboard.mockReset().mockResolvedValue(undefined);
   apiMock.pasteActive.mockReset().mockResolvedValue(undefined);
+  apiMock.readImageFilePreview.mockReset().mockImplementation(() => new Promise(() => {}));
   apiMock.editItem.mockReset().mockResolvedValue(TEXT_ITEM);
   apiMock.setFavorite.mockReset().mockResolvedValue(undefined);
   apiMock.deleteItem.mockReset().mockResolvedValue(undefined);
@@ -162,7 +164,8 @@ beforeEach(() => {
 afterEach(() => {
   // Drain any document-level listeners left behind by OverflowMenu's
   // open state, so the next test starts with a clean DOM.
-  document.body.innerHTML = '';
+  cleanup();
+  vi.unstubAllGlobals();
 });
 
 describe('PreviewPane SourceIndicator', () => {
@@ -432,5 +435,44 @@ describe('PreviewPane ImagePreview and Fullscreen Modal', () => {
     await waitFor(() => {
       expect(apiMock.copyToClipboard).toHaveBeenCalledWith(IMAGE_ITEM.id, 'original');
     });
+  });
+});
+
+describe('image files in PreviewPane', () => {
+  it.each(['array-buffer', 'number-array'])('shows a full image preview from %s and keeps copying the original file', async (transport) => {
+    const revoke = vi.fn();
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:file-image'), revokeObjectURL: revoke }));
+    vi.stubGlobal('Image', class {
+      naturalWidth = 640;
+      naturalHeight = 480;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    });
+    const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    apiMock.readImageFilePreview.mockResolvedValue(transport === 'array-buffer' ? bytes.buffer : Array.from(bytes));
+    selectItem(FILE_ITEM);
+    const view = render(<PreviewPane />);
+    await screen.findByText('640 × 480 pixels');
+    const blob = vi.mocked(URL.createObjectURL).mock.calls[0]![0] as Blob;
+    const decoded = await new Promise<ArrayBuffer>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.readAsArrayBuffer(blob);
+    });
+    expect(new Uint8Array(decoded)).toEqual(bytes);
+    expect(screen.getByRole('img', { name: 'OG_images.png' }).getAttribute('src')).toBe('blob:file-image');
+    expect(screen.queryByText('C:/fake/OG_images.png')).toBeNull();
+    fireEvent.click(screen.getByLabelText('View full screen'));
+    fireEvent.click(screen.getByRole('dialog').querySelector('button[aria-label="Copy to clipboard"]')!);
+    expect(apiMock.copyToClipboard).toHaveBeenCalledWith(FILE_ITEM.id, 'original');
+    view.unmount();
+    expect(revoke).toHaveBeenCalledWith('blob:file-image');
+  });
+  it('shows a fallback for an unreadable image file', async () => {
+    apiMock.readImageFilePreview.mockRejectedValue('missing');
+    selectItem(FILE_ITEM);
+    render(<PreviewPane />);
+    await screen.findByText('The image file preview is unavailable.');
   });
 });

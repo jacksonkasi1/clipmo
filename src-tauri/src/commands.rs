@@ -50,6 +50,84 @@ pub async fn get_item(state: tauri::State<'_, AppState>, id: i64) -> Result<Clip
     state.db.get(id)?.ok_or(Error::NotFound("clipboard item"))
 }
 
+/// Read only a PDF belonging to a clipboard item, without exposing arbitrary paths.
+#[tauri::command]
+pub async fn read_pdf_preview(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    index: usize,
+) -> Result<tauri::ipc::Response> {
+    read_file_preview(&state, id, index, false).await
+}
+
+#[tauri::command]
+pub async fn read_image_file_preview(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    index: usize,
+) -> Result<tauri::ipc::Response> {
+    read_file_preview(&state, id, index, true).await
+}
+
+async fn read_file_preview(
+    state: &AppState,
+    id: i64,
+    index: usize,
+    image: bool,
+) -> Result<tauri::ipc::Response> {
+    let item = state.db.get_required(id)?;
+    if item.kind != ItemKind::Files {
+        return Err(Error::Other("This item is not a file".into()));
+    }
+    let path = if item.file_assets.is_empty() {
+        item.files.get(index).cloned()
+    } else {
+        item.file_assets
+            .get(index)
+            .filter(|asset| !asset.is_directory)
+            .map(|asset| {
+                asset
+                    .stored_path
+                    .clone()
+                    .unwrap_or_else(|| asset.original_path.clone())
+            })
+    }
+    .ok_or(Error::NotFound("preview file"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Read;
+        let path = std::path::Path::new(&path);
+        let extension = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default();
+        let allowed = if image {
+            ["png", "jpg", "jpeg", "webp", "bmp", "gif", "avif", "ico"]
+                .iter()
+                .any(|ext| extension.eq_ignore_ascii_case(ext))
+        } else {
+            extension.eq_ignore_ascii_case("pdf")
+        };
+        if !allowed {
+            return Err(Error::Other("This file type cannot be previewed".into()));
+        }
+        const MAX_BYTES: u64 = 50 * 1024 * 1024;
+        let file = std::fs::File::open(path)?;
+        if !file.metadata()?.is_file() {
+            return Err(Error::Other("This is not a regular file".into()));
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > MAX_BYTES {
+            return Err(Error::Other(
+                "File previews support files up to 50 MB".into(),
+            ));
+        }
+        Ok(tauri::ipc::Response::new(bytes))
+    })
+    .await
+    .map_err(|error| Error::Other(error.to_string()))?
+}
+
 #[tauri::command]
 pub async fn flavors_for(state: tauri::State<'_, AppState>, id: i64) -> Result<FlavorBundle> {
     let item = state.db.get_required(id)?;
@@ -709,6 +787,34 @@ pub async fn signal_frontend_ready(
         serde_json::to_vec(&payload).map_err(|error| Error::Other(error.to_string()))?,
     )?;
     std::fs::rename(temporary, path)?;
+    if window.label() == crate::window::MAIN_LABEL {
+        if let Ok(id) = std::env::var("CLIPDECK_PDF_SMOKE_ID")
+            .unwrap_or_default()
+            .parse::<i64>()
+        {
+            window.eval(&format!(
+                "window.dispatchEvent(new CustomEvent('clipmo:pdf-smoke', {{ detail: {id} }}))"
+            ))?;
+        }
+    }
+    Ok(())
+}
+
+/// Optional local smoke-test output; callers cannot choose an output path.
+#[tauri::command]
+pub async fn report_pdf_preview_test(result: serde_json::Value) -> Result<()> {
+    let Ok(base) = std::env::var("CLIPDECK_READY_FILE") else {
+        return Ok(());
+    };
+    if std::env::var("CLIPDECK_PDF_SMOKE_ID").is_err() {
+        return Ok(());
+    }
+    let path = std::path::PathBuf::from(base).with_extension("pdf.json");
+    let payload = serde_json::json!({ "processId": std::process::id(), "result": result });
+    std::fs::write(
+        path,
+        serde_json::to_vec(&payload).map_err(|error| Error::Other(error.to_string()))?,
+    )?;
     Ok(())
 }
 

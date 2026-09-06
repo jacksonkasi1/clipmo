@@ -69,6 +69,8 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+      - name: Render PDF preview in native WebKit without modern Promise/Iterator APIs
+        run: node --experimental-strip-types scripts/test-pdf-webkit.mjs
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets --target ${{ matrix.target }} -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets --target ${{ matrix.target }} -- --test-threads=1
       - name: Test native pasteboard without touching the system clipboard

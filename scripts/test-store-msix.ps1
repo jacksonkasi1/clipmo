@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $artifactRoot = Join-Path $repoRoot 'artifacts\store'
-$packagePath = Join-Path $artifactRoot 'Clipmo_0.2.10.0_x64-dev.msix'
+$packagePath = Join-Path $artifactRoot 'Clipmo_0.2.11.0_x64-dev.msix'
 $certificatePath = Join-Path $artifactRoot 'development-certificate\devcert.pfx'
 $installedByTest = $false
 $certificateAddedByTest = $false

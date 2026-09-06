@@ -3378,3 +3378,11 @@ kbd {
 }
 
 /* Hit areas in the flyout come from `--icon-hit` on `.app-frame.is-quick`. */
+
+.pdf-preview { width: 100%; min-width: 0; }
+.pdf-preview-page { background: #e6e6e6; border-radius: 8px; padding: 16px; min-height: 200px; display: flex; justify-content: center; align-items: center; }
+.pdf-preview-page canvas { max-width: 100%; height: auto; box-shadow: 0 2px 12px #0002; }
+.pdf-preview-page canvas[hidden] { display: none; }
+.pdf-preview-page [role="status"] { display: flex; align-items: center; gap: 8px; color: #333; overflow-wrap: anywhere; }
+.pdf-preview-caption { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.pdf-preview-caption span { font-size: 12px; opacity: .7; }

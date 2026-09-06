@@ -11,7 +11,7 @@ standalone installer.
 - Publisher display name: `Jackson Kasi`
 - Store ID: `9P4FBGKV4GWC`
 - Package family name: `JacksonKasi.Clipmo_f5z2yr12kw8xg`
-- Version: `0.2.10.0`
+- Version: `0.2.11.0`
 - Architecture: `x64`
 
 ## Build
@@ -26,7 +26,7 @@ The command builds the production frontend and x64 MSVC Tauri executable,
 stages only the runtime payload, and creates the unsigned Store upload at:
 
 ```text
-artifacts/store/Clipmo_0.2.10.0_x64.msix
+artifacts/store/Clipmo_0.2.11.0_x64.msix
 ```
 
 The Microsoft Store signs the uploaded package. Do not sign this artifact.

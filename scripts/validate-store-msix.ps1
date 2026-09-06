@@ -19,7 +19,7 @@ try {
     $identity = $manifest.Package.Identity
     if ($identity.Name -ne 'JacksonKasi.Clipmo') { throw "Unexpected identity name: $($identity.Name)" }
     if ($identity.Publisher -ne 'CN=B2D26A62-1D06-419E-B12A-D945916C46FD') { throw "Unexpected publisher: $($identity.Publisher)" }
-    if ($identity.Version -ne '0.2.10.0') { throw "Unexpected version: $($identity.Version)" }
+    if ($identity.Version -ne '0.2.11.0') { throw "Unexpected version: $($identity.Version)" }
     if ($identity.ProcessorArchitecture -ne 'x64') { throw "Unexpected architecture: $($identity.ProcessorArchitecture)" }
     if (-not $archive.GetEntry('clipmo.exe')) { throw 'MSIX is missing clipmo.exe.' }
     $hasPackageSignature = $null -ne $archive.GetEntry('AppxSignature.p7x')

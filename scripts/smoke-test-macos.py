@@ -57,6 +57,25 @@ for mode, args in [("main", []), ("quick", ["--show-quick"])]:
                         assert effect["material"] == (6 if mode == "quick" else 7), native
                         assert effect["state"] == 1 and effect["blendingMode"] == 0, native
                         print(f"PASS: packaged {mode} has active behind-window vibrancy and transparent WebKit")
+                        if mode == "main" and os.environ.get("CLIPDECK_PDF_SMOKE_ID"):
+                            pdf_path = ready.with_suffix(".pdf.json")
+                            pdf_deadline = time.monotonic() + 45
+                            while time.monotonic() < pdf_deadline:
+                                if pdf_path.exists():
+                                    try:
+                                        pdf = json.loads(pdf_path.read_text())
+                                    except json.JSONDecodeError:
+                                        time.sleep(0.1)
+                                        continue
+                                    assert pdf["processId"] == app.pid, pdf
+                                    result = pdf["result"]
+                                    assert result["itemId"] == int(os.environ["CLIPDECK_PDF_SMOKE_ID"]), pdf
+                                    assert result["success"] and result["ink"] > 0, pdf
+                                    print(f"PASS: packaged file preview rendered {result['width']} x {result['height']} with {result['ink']} visible pixels")
+                                    break
+                                time.sleep(0.2)
+                            else:
+                                raise RuntimeError("Packaged PDF preview did not finish")
                         if os.environ.get("GITHUB_ACTIONS") == "true":
                             screenshots = Path("artifacts/smoke")
                             screenshots.mkdir(parents=True, exist_ok=True)
