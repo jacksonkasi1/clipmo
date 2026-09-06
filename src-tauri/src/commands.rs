@@ -792,7 +792,7 @@ pub async fn signal_frontend_ready(
             .unwrap_or_default()
             .parse::<i64>()
         {
-            window.eval(&format!(
+            window.eval(format!(
                 "window.dispatchEvent(new CustomEvent('clipmo:pdf-smoke', {{ detail: {id} }}))"
             ))?;
         }
