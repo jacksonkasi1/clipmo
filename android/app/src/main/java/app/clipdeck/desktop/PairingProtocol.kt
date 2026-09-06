@@ -9,6 +9,8 @@ data class PairingInvite(val code: String, val deviceId: String? = null, val add
 internal fun parsePairingInvite(value: String): PairingInvite? {
     val text = value.trim()
     if (text.matches(Regex("[0-9]{6}"))) return PairingInvite(text)
+    val direct = text.split("@", limit = 2)
+    if (direct.size == 2 && direct[0].matches(Regex("[0-9]{6}")) && validPairingAddress(direct[1])) return PairingInvite(direct[0], address = direct[1])
     return runCatching {
         val uri = URI(text)
         require(uri.scheme == "clipmo" && uri.host == "pair")

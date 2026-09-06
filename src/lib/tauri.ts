@@ -115,7 +115,7 @@ export const api = {
   syncHistoryNow: () => invoke<number>('sync_history_now'),
   regeneratePairingCode: () => invoke<Settings>('regenerate_pairing_code'),
   closePairing: () => invoke<void>('close_pairing'),
-  joinDevice: (code: string, targetId?: string) => invoke<void>('join_device', { code, targetId: targetId ?? null }),
+  joinDevice: (code: string, targetId?: string, address?: string) => invoke<void>('join_device', { code, targetId: targetId ?? null, address: address ?? null }),
   forgetSyncDevice: (deviceId: string) => invoke<void>('forget_sync_device', { deviceId }),
   quitApp: () => invoke<void>('quit_app'),
   listInstalledApps: (refresh = false) => invoke<ApplicationInfo[]>('list_installed_apps', { refresh }),

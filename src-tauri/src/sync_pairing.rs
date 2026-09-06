@@ -143,7 +143,12 @@ impl SyncService {
                 .is_some_and(|peer| peer.token == token)
     }
 
-    pub fn join_device(&self, code: String, target_id: Option<String>) -> Result<()> {
+    pub fn join_device(
+        &self,
+        code: String,
+        target_id: Option<String>,
+        address: Option<String>,
+    ) -> Result<()> {
         if code.len() != 6 || !code.bytes().all(|ch| ch.is_ascii_digit()) {
             return Err(Error::Other("Enter a six-digit code".into()));
         }
@@ -153,6 +158,12 @@ impl SyncService {
             .ok_or_else(|| Error::Other("Sync unavailable".into()))?
             .read()
             .clone();
+        let direct = address.filter(|s| !s.trim().is_empty()).map(|value| {
+            value.trim().parse::<SocketAddr>().ok().filter(|addr| {
+                matches!(addr.ip(), IpAddr::V4(ip) if ip.is_private() || ip.is_link_local())
+                    && (FIRST_SYNC_PORT..=LAST_SYNC_PORT).contains(&addr.port())
+            }).ok_or_else(|| Error::Other("Enter the LAN address shown on the other device, for example 192.168.1.4:47634".into()))
+        }).transpose()?;
         if code == current.sync_pairing_code
             && target_id
                 .as_deref()
@@ -178,7 +189,36 @@ impl SyncService {
             {
                 break;
             }
-            let candidates: Vec<_> = self.pairing.candidates.read().values().cloned().collect();
+            let mut candidates: Vec<_> = self.pairing.candidates.read().values().cloned().collect();
+            // A known address remains useful when routers suppress UDP discovery.
+            for peer in self.peers.read().values() {
+                candidates.push((
+                    DiscoveryMessage {
+                        protocol: PROTOCOL.into(),
+                        pairing_code: String::new(),
+                        pairing_available: true,
+                        device: peer.device.clone(),
+                        tcp_port: peer.address.port(),
+                    },
+                    peer.address,
+                    now_ms(),
+                ));
+            }
+            if let Some(address) = direct {
+                let mut device = current.device_identity();
+                device.id = target_id.clone().unwrap_or_default();
+                candidates = vec![(
+                    DiscoveryMessage {
+                        protocol: PROTOCOL.into(),
+                        pairing_code: String::new(),
+                        pairing_available: true,
+                        device,
+                        tcp_port: address.port(),
+                    },
+                    address,
+                    now_ms(),
+                )];
+            }
             for (candidate, address, seen) in candidates {
                 if now_ms() >= deadline || self.pairing.join_epoch.load(Ordering::SeqCst) != epoch {
                     break;
@@ -239,12 +279,16 @@ impl SyncService {
             code: code.into(),
             token: token.into(),
         };
-        let mut stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT)?;
-        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+        let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(3))?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         write_json(&mut stream, &request)?;
         let reply: ControlReply = read_json(&mut stream)?;
-        if !reply.ok || reply.device.id != id || reply.token != token {
+        if !reply.ok
+            || (!id.is_empty() && reply.device.id != id)
+            || reply.device.id == current.sync_device_id
+            || reply.token != token
+        {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "Pairing or device authentication failed",
@@ -394,6 +438,39 @@ mod tests {
         })));
         service.listen_port = FIRST_SYNC_PORT;
         service
+    }
+
+    #[test]
+    fn repairing_a_saved_device_works_without_udp_discovery() {
+        let client = device("client");
+        let host = device("host");
+        host.set_pairing(true);
+        let code = host
+            .settings
+            .as_ref()
+            .unwrap()
+            .read()
+            .sync_pairing_code
+            .clone();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        client
+            .save_peer(&PeerRecord {
+                device: host.settings.as_ref().unwrap().read().device_identity(),
+                address,
+                last_seen_at: 0,
+                token: "a".repeat(64),
+            })
+            .unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, source) = listener.accept().unwrap();
+            let request = read_json(&mut stream).unwrap();
+            host.handle_control(request, &mut stream, source).unwrap();
+        });
+        assert!(client.pairing.candidates.read().is_empty());
+        client.join_device(code, None, None).unwrap();
+        worker.join().unwrap();
+        assert_ne!(client.peers.read()["host"].token, "a".repeat(64));
     }
 
     // Real framed TCP exchanges exercise both request/response and durable trust.

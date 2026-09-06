@@ -29,6 +29,7 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
   const loadSyncState = useStore((state) => state.loadSyncState);
   const regeneratePairingCode = useStore((state) => state.regeneratePairingCode);
   const [joinCode, setJoinCode] = useState('');
+  const [joinAddress, setJoinAddress] = useState('');
   const [busy, setBusy] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [notice, setNotice] = useState('');
@@ -103,7 +104,8 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
     setConnecting(true);
     setNotice('');
     try {
-      await connectDevice(normalizedJoinCode);
+      if (joinAddress.trim()) await connectDevice(normalizedJoinCode, undefined, joinAddress.trim());
+      else await connectDevice(normalizedJoinCode);
       setNotice('Device connected. New clipboard items sync automatically.');
       setJoinCode('');
     } catch (saveError) {
@@ -173,6 +175,7 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
                 <RefreshCw size={14} aria-hidden /> New code
               </button>
             </div>
+            {sync?.localAddress && <p>This device’s LAN address: <code>{sync.localAddress}</code></p>}
             {pairingActive && qr && <figure className="pair-device-qr"><img src={qr} width={140} height={140} alt="Scan this pairing invitation in Clipmo for Android" /><figcaption>Android: Devices → Scan QR code</figcaption></figure>}
             {pairingActive ? (
               <div className="pair-device-actions-row">
@@ -200,6 +203,9 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
                 <p>Enter its six-digit code here. Your own code and saved connections stay unchanged.</p>
               </div>
             </div>
+            <label>Can’t discover the device? Enter its LAN address (optional)
+              <input value={joinAddress} onChange={(event) => setJoinAddress(event.target.value)} placeholder="192.168.1.4:47634" aria-label="Other device LAN address" />
+            </label>
             <form className="pair-device-join" onSubmit={(event) => {
               event.preventDefault();
               void joinDevice();

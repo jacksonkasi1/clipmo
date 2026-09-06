@@ -1049,6 +1049,7 @@ pub async fn join_device(
     state: tauri::State<'_, AppState>,
     code: String,
     target_id: Option<String>,
+    address: Option<String>,
 ) -> Result<()> {
     let mut next = state.settings.read().clone();
     next.sync_enabled = true;
@@ -1056,9 +1057,10 @@ pub async fn join_device(
     *state.settings.write() = next.clone();
     let _ = app.emit("settings-updated", &next);
     let service = state.sync.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || service.join_device(code, target_id))
-        .await
-        .map_err(|e| Error::Other(e.to_string()))?;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || service.join_device(code, target_id, address))
+            .await
+            .map_err(|e| Error::Other(e.to_string()))?;
     let _ = app.emit("sync-peers-updated", ());
     result
 }

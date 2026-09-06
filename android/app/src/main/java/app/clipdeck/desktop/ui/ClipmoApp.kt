@@ -140,6 +140,7 @@ data class ClipmoUiState(
     val pairingUntilMs: Long = 0L,
     val localDeviceName: String,
     val localDeviceId: String,
+    val localAddress: String = "",
     val themeMode: ClipmoThemeMode,
     val trustedDevices: List<TrustedDeviceRecord>,
     val collections: List<String>,
@@ -812,6 +813,7 @@ private fun DevicesScreen(
     val space = ClipmoTheme.spacing
     val type = ClipmoTheme.typography
     var joinCodeInput by rememberSaveable { mutableStateOf("") }
+    var joinAddressInput by rememberSaveable { mutableStateOf("") }
     val normalizedJoinCode = joinCodeInput.filter { it.isDigit() }.take(6)
     val canJoin = normalizedJoinCode.length == 6 && !state.joinPending
 
@@ -934,6 +936,9 @@ private fun DevicesScreen(
                 Spacer(Modifier.height(space.sm))
 
                 ClipmoButton(label = "Scan QR code", style = ClipmoButtonStyle.SECONDARY, onClick = onScanPairing, enabled = !state.joinPending)
+                BasicText("This device: ${state.localAddress}", style = type.metadata.copy(color = colors.textSecondary))
+                Spacer(Modifier.height(space.sm))
+                ClipmoSearchBar(value = joinAddressInput, hint = "Other device address (optional): 192.168.1.16:47634", onValueChange = { joinAddressInput = it.trim() }, searchIcon = false)
                 Spacer(Modifier.height(space.sm))
                 ClipmoSearchBar(
                     value = joinCodeInput,
@@ -962,7 +967,7 @@ private fun DevicesScreen(
                         icon = ClipmoIconKind.LINK,
                         onClick = {
                             if (canJoin) {
-                                onJoinDevice(normalizedJoinCode)
+                                onJoinDevice(normalizedJoinCode + if (joinAddressInput.isBlank()) "" else "@${joinAddressInput.trim()}")
                                 joinCodeInput = ""
                             }
                         },

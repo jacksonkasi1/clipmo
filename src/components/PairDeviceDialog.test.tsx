@@ -68,6 +68,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('PairDeviceDialog', () => {
+  it('submits a direct address with the other device code', async () => {
+    const user = userEvent.setup();
+    render(<PairDeviceDialog open onClose={vi.fn()} />);
+    await user.type(screen.getByLabelText('Other device LAN address'), '192.168.1.4:47634');
+    await user.type(screen.getByLabelText('Pairing code from another device'), '654321');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+    expect(joinDevice).toHaveBeenCalledWith('654321', undefined, '192.168.1.4:47634');
+  });
   it('includes the direct LAN endpoint in QR and displays incompatible-device guidance', async () => {
     useStore.setState({ sync: { ...useStore.getState().sync!, localAddress: '192.168.1.16:47634', compatibilityWarning: 'Update the older Windows app.' } });
     render(<PairDeviceDialog open onClose={vi.fn()} />);

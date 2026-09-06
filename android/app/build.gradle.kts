@@ -49,6 +49,8 @@ android {
 
 dependencies {
  implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+ // The scanner brings an old Fragment transitively; ActivityResult needs 1.3+.
+ implementation("androidx.fragment:fragment:1.8.5")
  implementation("androidx.core:core-ktx:1.15.0")
  implementation("androidx.activity:activity-compose:1.9.3")
  implementation(platform("androidx.compose:compose-bom:2024.06.00"))

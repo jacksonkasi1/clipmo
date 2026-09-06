@@ -120,7 +120,13 @@ class MainActivity : ComponentActivity() {
                     pairingModeActive = pairingModeActive,
                     pairingUntilMs = pairingUntilMs,
                     localDeviceName = getOrCreateDeviceName(),
-                    localDeviceId = getOrCreateDeviceId(),
+                        localDeviceId = getOrCreateDeviceId(),
+                        localAddress = runCatching {
+                            val ip = java.net.NetworkInterface.getNetworkInterfaces().toList()
+                                .flatMap { it.inetAddresses.toList() }
+                                .firstOrNull { it is java.net.Inet4Address && it.isSiteLocalAddress }?.hostAddress
+                            if (ip == null) "Wi-Fi unavailable" else "$ip:${preferences.getInt("listen_port", 47634)}"
+                        }.getOrDefault("Wi-Fi unavailable"),
                     themeMode = themeMode,
                     trustedDevices = trustedDevices,
                     collections = collections,

@@ -887,9 +887,22 @@ fn broadcast_presence(socket: UdpSocket, service: SyncService) {
                 tcp_port: service.listen_port,
             };
             if let Ok(bytes) = serde_json::to_vec(&message) {
-                let target = SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), DISCOVERY_PORT);
-                if let Err(error) = socket.send_to(&bytes, target) {
-                    log::debug!("sync discovery broadcast failed: {error}");
+                let mut targets = vec![Ipv4Addr::BROADCAST];
+                for interface in if_addrs::get_if_addrs().unwrap_or_default() {
+                    if let if_addrs::IfAddr::V4(v4) = interface.addr {
+                        if !v4.ip.is_loopback() {
+                            if let Some(broadcast) = v4.broadcast {
+                                targets.push(broadcast);
+                            }
+                        }
+                    }
+                }
+                targets.sort();
+                targets.dedup();
+                for ip in targets {
+                    if let Err(error) = socket.send_to(&bytes, (ip, DISCOVERY_PORT)) {
+                        log::debug!("sync discovery broadcast failed: {error}");
+                    }
                 }
             }
         }
