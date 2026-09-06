@@ -102,6 +102,7 @@ pub fn run() {
             commands::list_items,
             commands::get_item,
             commands::read_pdf_preview,
+            commands::read_image_file_preview,
             commands::report_pdf_preview_test,
             commands::flavors_for,
             commands::copy_to_clipboard,

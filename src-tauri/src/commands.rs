@@ -57,6 +57,24 @@ pub async fn read_pdf_preview(
     id: i64,
     index: usize,
 ) -> Result<tauri::ipc::Response> {
+    read_file_preview(&state, id, index, false).await
+}
+
+#[tauri::command]
+pub async fn read_image_file_preview(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    index: usize,
+) -> Result<tauri::ipc::Response> {
+    read_file_preview(&state, id, index, true).await
+}
+
+async fn read_file_preview(
+    state: &AppState,
+    id: i64,
+    index: usize,
+    image: bool,
+) -> Result<tauri::ipc::Response> {
     let item = state.db.get_required(id)?;
     if item.kind != ItemKind::Files {
         return Err(Error::Other("This item is not a file".into()));
@@ -74,26 +92,34 @@ pub async fn read_pdf_preview(
                     .unwrap_or_else(|| asset.original_path.clone())
             })
     }
-    .ok_or(Error::NotFound("PDF file"))?;
+    .ok_or(Error::NotFound("preview file"))?;
     tauri::async_runtime::spawn_blocking(move || {
         use std::io::Read;
         let path = std::path::Path::new(&path);
-        if !path
+        let extension = path
             .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
-        {
-            return Err(Error::Other("This file is not a PDF".into()));
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default();
+        let allowed = if image {
+            ["png", "jpg", "jpeg", "webp", "bmp", "gif", "avif", "ico"]
+                .iter()
+                .any(|ext| extension.eq_ignore_ascii_case(ext))
+        } else {
+            extension.eq_ignore_ascii_case("pdf")
+        };
+        if !allowed {
+            return Err(Error::Other("This file type cannot be previewed".into()));
         }
         const MAX_BYTES: u64 = 50 * 1024 * 1024;
         let file = std::fs::File::open(path)?;
         if !file.metadata()?.is_file() {
-            return Err(Error::Other("This file is not a PDF".into()));
+            return Err(Error::Other("This is not a regular file".into()));
         }
         let mut bytes = Vec::new();
         file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
         if bytes.len() as u64 > MAX_BYTES {
             return Err(Error::Other(
-                "PDF previews support files up to 50 MB".into(),
+                "File previews support files up to 50 MB".into(),
             ));
         }
         Ok(tauri::ipc::Response::new(bytes))

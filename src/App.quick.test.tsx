@@ -21,6 +21,7 @@ const apiMock = vi.hoisted(() => ({
   saveSettings: vi.fn(),
   setPreviewVisible: vi.fn(),
   pasteActive: vi.fn(),
+  pasteMultipleActive: vi.fn(),
   copyToClipboard: vi.fn(),
   setFavorite: vi.fn(),
   setItemTags: vi.fn(),
@@ -171,6 +172,7 @@ beforeEach(() => {
   apiMock.saveSettings.mockReset().mockImplementation(async (next: typeof baseSettings) => next);
   apiMock.setPreviewVisible.mockReset().mockResolvedValue(true);
   apiMock.pasteActive.mockReset().mockResolvedValue(undefined);
+  apiMock.pasteMultipleActive.mockReset().mockResolvedValue(undefined);
   apiMock.copyToClipboard.mockReset().mockResolvedValue(undefined);
   apiMock.setFavorite.mockReset().mockResolvedValue(undefined);
   apiMock.setItemTags.mockReset().mockResolvedValue(fileItem);
@@ -345,5 +347,18 @@ describe('App quick-view clipboard sync', () => {
       expect(ids).toContain(123);
       expect(ids).toContain(456);
     });
+  });
+});
+
+describe('Enter with multiple clipboard items', () => {
+  it.each(['files', 'image', 'text'] as const)('pastes every selected %s item through the same command as the icon', async (kind) => {
+    const first = { ...fileItem, id: 701, kind };
+    const second = { ...fileItem, id: 702, kind };
+    useStore.setState({ mode: 'full', items: [first, second], selectedId: 702, selectedIds: [701, 702], settings: { ...baseSettings, pasteOnEnter: true }, showCommands: false });
+    render(<App />);
+    const search = screen.getByRole('searchbox');
+    fireEvent.keyDown(search, { key: 'Enter' });
+    await waitFor(() => expect(apiMock.pasteMultipleActive).toHaveBeenCalledWith([701, 702], 'original'));
+    expect(apiMock.pasteActive).not.toHaveBeenCalled();
   });
 });

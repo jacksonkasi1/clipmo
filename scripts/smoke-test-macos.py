@@ -71,7 +71,7 @@ for mode, args in [("main", []), ("quick", ["--show-quick"])]:
                                     result = pdf["result"]
                                     assert result["itemId"] == int(os.environ["CLIPDECK_PDF_SMOKE_ID"]), pdf
                                     assert result["success"] and result["ink"] > 0, pdf
-                                    print(f"PASS: packaged PDF preview rendered {result['width']} x {result['height']} with {result['ink']} visible pixels")
+                                    print(f"PASS: packaged file preview rendered {result['width']} x {result['height']} with {result['ink']} visible pixels")
                                     break
                                 time.sleep(0.2)
                             else:
