@@ -206,6 +206,7 @@ impl SyncService {
         service
             .load_peers()
             .map_err(|e| io::Error::other(e.to_string()))?;
+        *service.pairing.diagnostic_path.write() = Some(data_dir.join("pairing-diagnostics.jsonl"));
 
         spawn_tcp_server(listener, service.clone(), app.clone())?;
         spawn_discovery(service.clone(), app.clone())?;

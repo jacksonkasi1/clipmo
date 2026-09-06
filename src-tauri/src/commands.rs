@@ -568,6 +568,7 @@ pub async fn save_settings(
     // path mutation through the general settings form.
     let previous = state.settings.read().clone();
     let previous_autostart = autostart_enabled(&app)?;
+    settings.preserve_pairing_fields(&previous);
     settings.storage_path = previous.storage_path.clone();
     settings.file_include_extensions =
         crate::capture_policy::normalize_extensions(&settings.file_include_extensions);

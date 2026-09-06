@@ -1,6 +1,6 @@
 [package]
 name = "clipdeck"
-version = "0.2.13"
+version = "0.2.14"
 description = "Clipmo clipboard history for Windows and macOS"
 authors = ["Jackson Kasi"]
 edition = "2021"

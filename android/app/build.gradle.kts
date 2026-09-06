@@ -10,8 +10,8 @@ android {
  applicationId = "app.clipdeck.desktop"
  minSdk = 29
  targetSdk = 35
- versionCode = 12
- versionName = "0.2.13"
+ versionCode = 13
+ versionName = "0.2.14"
  }
  signingConfigs {
  create("release") {

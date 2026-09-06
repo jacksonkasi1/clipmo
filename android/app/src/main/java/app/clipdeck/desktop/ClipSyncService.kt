@@ -110,7 +110,9 @@ data class PairControl(
     val code: String = "",
     val token: String,
 )
-data class PairReply(val ok: Boolean, val device: DeviceIdentity, val token: String)
+@com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+data class PairReply(val ok: Boolean, val device: DeviceIdentity, val token: String, val error: String? = null)
 
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")

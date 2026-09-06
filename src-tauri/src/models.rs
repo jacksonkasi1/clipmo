@@ -572,6 +572,12 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// These fields belong to the native pairing commands, not a stale settings form.
+    pub fn preserve_pairing_fields(&mut self, current: &Self) {
+        self.sync_device_id = current.sync_device_id.clone();
+        self.sync_pairing_code = current.sync_pairing_code.clone();
+    }
+
     pub fn device_identity(&self) -> DeviceIdentity {
         DeviceIdentity {
             id: self.sync_device_id.clone(),
@@ -693,6 +699,25 @@ where
 #[cfg(test)]
 mod settings_tests {
     use super::*;
+
+    #[test]
+    fn stale_settings_cannot_replace_a_current_invitation_or_identity() {
+        let current = Settings {
+            sync_pairing_code: "654321".into(),
+            sync_device_id: "mac-current".into(),
+            ..Settings::default()
+        };
+        let mut stale = Settings {
+            sync_pairing_code: "123456".into(),
+            sync_device_id: "old-id".into(),
+            sync_device_name: "My Mac".into(),
+            ..Settings::default()
+        };
+        stale.preserve_pairing_fields(&current);
+        assert_eq!(stale.sync_pairing_code, "654321");
+        assert_eq!(stale.sync_device_id, "mac-current");
+        assert_eq!(stale.sync_device_name, "My Mac");
+    }
 
     #[test]
     fn default_settings_use_safe_file_exclusions() {

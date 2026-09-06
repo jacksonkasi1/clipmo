@@ -10,6 +10,8 @@ pub(super) struct Pairing {
     pub until: AtomicU64,
     pub candidates: RwLock<HashMap<String, (DiscoveryMessage, SocketAddr, i64)>>,
     attempts: Mutex<(i64, u32)>,
+    pub diagnostic_path: RwLock<Option<PathBuf>>,
+    diagnostic_lock: Mutex<()>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -30,6 +32,8 @@ struct ControlReply {
     ok: bool,
     device: DeviceIdentity,
     token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 pub fn new_code(previous: &str) -> String {
@@ -181,7 +185,7 @@ impl SyncService {
         let epoch = self.pairing.join_epoch.fetch_add(1, Ordering::SeqCst) + 1;
         let deadline = now_ms() + 20_000;
         let mut attempted = HashMap::new();
-        let mut last_error = None;
+        let mut failures = Vec::new();
         let mut saw_compatible = false;
         while now_ms() < deadline {
             if !self.settings.as_ref().unwrap().read().sync_enabled
@@ -246,17 +250,39 @@ impl SyncService {
                         self.enqueue_history_backfill();
                         return Ok(());
                     }
-                    Err(error) => last_error = Some(error.kind()),
+                    Err(error) => {
+                        let name = if direct.is_some() {
+                            address.to_string()
+                        } else {
+                            format!(
+                                "{} ({:?})",
+                                candidate.device.name.chars().take(48).collect::<String>(),
+                                candidate.device.platform
+                            )
+                        };
+                        let detail = if error.kind() == io::ErrorKind::PermissionDenied {
+                            error.to_string()
+                        } else {
+                            "did not complete the connection".into()
+                        };
+                        let failure = format!("{name}: {detail}");
+                        if failures.len() < 4 && !failures.contains(&failure) {
+                            failures.push(failure);
+                        }
+                    }
                 }
             }
             std::thread::sleep(Duration::from_millis(250));
         }
-        let message = match last_error {
-            Some(io::ErrorKind::PermissionDenied) => "The other device rejected this invitation. Choose New code on that device and enter it here before it expires.",
-            Some(_) => "A compatible device was found but did not complete the connection. Allow incoming Clipmo connections through its firewall and try a fresh code.",
-            None if !saw_compatible && self.compatibility_warning().is_some() => "Only an incompatible Clipmo device was found. Install Clipmo 0.2.12 or newer on every device. Published 0.2.11 uses an incompatible pairing protocol.",
-            None if saw_compatible => "A compatible device was found but pairing is closed. Choose New code on that device, then enter its code here.",
-            None => "No compatible device was discovered. Keep both apps open on the same Wi-Fi, enable LAN sync, and choose New code on the other device. Android can scan the QR code to connect directly.",
+        if !failures.is_empty() {
+            return Err(Error::Other(format!("Could not pair. {}. If this is not the device you meant, use its address under Connection help.", failures.join("; "))));
+        }
+        let message = if !saw_compatible && self.compatibility_warning().is_some() {
+            "Only an incompatible Clipmo device was found. Install the latest Clipmo on every device."
+        } else if saw_compatible {
+            "A compatible device was found but pairing is closed. Choose New code on that device, then enter its code here."
+        } else {
+            "No compatible device was discovered. Use the other device’s LAN address under Connection help, or scan its QR code."
         };
         Err(Error::Other(message.into()))
     }
@@ -284,14 +310,19 @@ impl SyncService {
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         write_json(&mut stream, &request)?;
         let reply: ControlReply = read_json(&mut stream)?;
-        if !reply.ok
-            || (!id.is_empty() && reply.device.id != id)
+        if !reply.ok {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                rejection_message(reply.error.as_deref()),
+            ));
+        }
+        if (!id.is_empty() && reply.device.id != id)
             || reply.device.id == current.sync_device_id
             || reply.token != token
         {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "Pairing or device authentication failed",
+                "responded with an unexpected device identity or credential",
             ));
         }
         let _guard = self.pairing.trust_lock.lock();
@@ -325,25 +356,38 @@ impl SyncService {
         let _guard = self.pairing.trust_lock.lock();
         let request: Control = serde_json::from_value(value).map_err(io::Error::other)?;
         let current = self.settings.as_ref().unwrap().read().clone();
-        let valid = current.sync_enabled
-            && request.protocol == PROTOCOL
-            && request.device.id != current.sync_device_id
-            && request.tcp_port != 0
-            && valid_token(&request.token);
         let authenticated = self.authenticates(&request.device.id, &request.token);
-        let accepted = if request.kind == "pair" {
+        let error = if !current.sync_enabled {
+            Some("sync_disabled")
+        } else if request.protocol != PROTOCOL {
+            Some("protocol_mismatch")
+        } else if request.device.id == current.sync_device_id {
+            Some("duplicate_identity")
+        } else if request.tcp_port == 0 || !valid_token(&request.token) {
+            Some("invalid_request")
+        } else if request.kind == "pair" {
             let mut attempts = self.pairing.attempts.lock();
             if now_ms() - attempts.0 > 60_000 {
                 *attempts = (now_ms(), 0);
             }
             attempts.1 += 1;
-            valid
-                && self.pairing_open()
-                && attempts.1 <= 20
-                && request.code == current.sync_pairing_code
+            if !self.pairing_open() {
+                Some("pairing_closed")
+            } else if attempts.1 > 20 {
+                Some("rate_limited")
+            } else if request.code != current.sync_pairing_code {
+                Some("code_mismatch")
+            } else {
+                None
+            }
         } else {
-            valid && request.kind == "ping" && authenticated
+            if request.kind == "ping" && authenticated {
+                None
+            } else {
+                Some("not_paired")
+            }
         };
+        let accepted = error.is_none();
         if accepted {
             self.save_peer(&PeerRecord {
                 device: request.device.clone(),
@@ -352,6 +396,13 @@ impl SyncService {
                 token: request.token.clone(),
             })
             .map_err(|e| io::Error::other(e.to_string()))?;
+        }
+        if request.kind == "pair" {
+            self.record_pairing_outcome(
+                source,
+                request.device.platform,
+                error.unwrap_or("accepted"),
+            );
         }
         write_json(
             stream,
@@ -363,6 +414,7 @@ impl SyncService {
                 } else {
                     String::new()
                 },
+                error: error.map(str::to_string),
             },
         )?;
         // Only backfill after the response is flushed, so both sides can persist trust first.
@@ -370,6 +422,51 @@ impl SyncService {
             self.enqueue_history_backfill();
         }
         Ok(())
+    }
+
+    fn record_pairing_outcome(
+        &self,
+        source: SocketAddr,
+        platform: crate::models::PlatformKind,
+        outcome: &str,
+    ) {
+        let Some(path) = self.pairing.diagnostic_path.read().clone() else {
+            return;
+        };
+        let _guard = self.pairing.diagnostic_lock.lock();
+        let truncate = std::fs::metadata(&path).is_ok_and(|m| m.len() > 64 * 1024);
+        let mut options = std::fs::OpenOptions::new();
+        options
+            .create(true)
+            .write(true)
+            .append(!truncate)
+            .truncate(truncate);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        if let Ok(mut file) = options.open(path) {
+            // Never record invitation codes, credentials, device names, or clipboard content.
+            let record = serde_json::json!({"at": now_ms(), "source": source.ip().to_string(), "platform": platform, "outcome": outcome, "appVersion": env!("CARGO_PKG_VERSION")});
+            let _ = writeln!(file, "{record}");
+        }
+    }
+}
+
+fn rejection_message(reason: Option<&str>) -> &'static str {
+    match reason {
+        Some("sync_disabled") => "LAN sync is turned off",
+        Some("protocol_mismatch") => "uses an incompatible pairing protocol",
+        Some("duplicate_identity") => "has the same saved device identity as this app",
+        Some("invalid_request") => "received an invalid pairing request",
+        Some("pairing_closed") => {
+            "pairing is closed or the invitation expired; choose New code there"
+        }
+        Some("rate_limited") => "too many attempts; choose New code there to reset pairing",
+        Some("code_mismatch") => "the entered code does not match its current invitation",
+        Some("not_paired") => "the saved connection is no longer accepted",
+        _ => "rejected the invitation without reporting a reason",
     }
 }
 
@@ -399,6 +496,78 @@ pub(super) fn read_json<T: serde::de::DeserializeOwned>(stream: &mut TcpStream) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rejection(host: &SyncService, code: &str, id: &str) -> ControlReply {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let server = host.clone();
+        let worker = std::thread::spawn(move || {
+            let (mut socket, source) = listener.accept().unwrap();
+            let request = read_json(&mut socket).unwrap();
+            server.handle_control(request, &mut socket, source).unwrap();
+        });
+        let mut identity = Settings::default().device_identity();
+        identity.id = id.into();
+        write_json(
+            &mut stream,
+            &Control {
+                protocol: PROTOCOL.into(),
+                kind: "pair".into(),
+                device: identity,
+                tcp_port: FIRST_SYNC_PORT,
+                code: code.into(),
+                token: "a".repeat(64),
+            },
+        )
+        .unwrap();
+        let reply = read_json(&mut stream).unwrap();
+        worker.join().unwrap();
+        reply
+    }
+
+    #[test]
+    fn rejection_reports_exact_reason_without_logging_secrets() {
+        let host = device("host");
+        host.settings.as_ref().unwrap().write().sync_pairing_code = "123456".into();
+        let path = std::env::temp_dir().join(format!(
+            "clipmo-pairing-test-{}.jsonl",
+            uuid::Uuid::new_v4()
+        ));
+        *host.pairing.diagnostic_path.write() = Some(path.clone());
+        assert_eq!(
+            rejection(&host, "654321", "client").error.as_deref(),
+            Some("pairing_closed")
+        );
+        host.set_pairing(true);
+        assert_eq!(
+            rejection(&host, "654321", "client").error.as_deref(),
+            Some("code_mismatch")
+        );
+        assert_eq!(
+            rejection(&host, "123456", "host").error.as_deref(),
+            Some("duplicate_identity")
+        );
+        *host.pairing.attempts.lock() = (now_ms(), 20);
+        assert_eq!(
+            rejection(&host, "123456", "client").error.as_deref(),
+            Some("rate_limited")
+        );
+        assert!(host.peers.read().is_empty());
+        let log = std::fs::read_to_string(&path).unwrap();
+        assert!(log.contains("code_mismatch"));
+        assert!(
+            !log.contains("123456") && !log.contains("654321") && !log.contains(&"a".repeat(64))
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn older_control_replies_remain_compatible() {
+        let value = serde_json::json!({"ok": false, "device": Settings::default().device_identity(), "token": ""});
+        let reply: ControlReply = serde_json::from_value(value).unwrap();
+        assert!(reply.error.is_none());
+        assert!(rejection_message(None).contains("without reporting"));
+    }
 
     #[test]
     fn incompatible_discovery_is_diagnostic_not_trust_and_expires() {
