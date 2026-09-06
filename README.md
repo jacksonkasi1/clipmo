@@ -97,7 +97,11 @@ The native pasteboard captures text, HTML/RTF, PNG/TIFF images, and Finder file
 URLs every 200 ms, skipping password-manager concealed/transient markers and its
 own writes. Very short-lived clipboard changes between polls can be missed.
 Source attribution uses the foreground application at capture time. Mac windows
-use solid surfaces; Windows Acrylic/Mica remain Windows-specific. App icons use
+use native AppKit vibrancy (Sidebar for history/settings, Popover for quick paste),
+with a Solid option in Appearance settings. Light/dark themes follow the native
+window appearance; macOS Reduce Transparency is respected by AppKit. The initial
+opaque Mac build migrates to vibrancy once. Windows Acrylic/Mica remain unchanged.
+App icons use
 generic glyphs. Data lives in `~/Library/Application Support/app.clipdeck.desktop/`.
 
 ## macOS builds and release verification

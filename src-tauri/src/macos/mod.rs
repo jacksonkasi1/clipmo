@@ -18,6 +18,8 @@ unsafe extern "C" {
     fn clipmo_apps(installed: i32) -> *mut c_char;
     #[cfg(not(test))]
     fn clipmo_dark() -> i32;
+    #[cfg(not(test))]
+    fn clipmo_backdrop_snapshot(window: *mut std::ffi::c_void) -> *mut c_char;
 }
 
 /// The native bridge returns UTF-8 JSON with independent malloc ownership.
@@ -138,13 +140,59 @@ pub mod appearance {
 }
 #[cfg(not(test))]
 pub mod backdrop {
-    pub fn apply(
-        _window: &tauri::WebviewWindow,
-        _backdrop: crate::models::Backdrop,
-        _dark: bool,
-    ) -> crate::models::Backdrop {
-        // Opaque windows use public macOS APIs and remain readable in every theme.
-        crate::models::Backdrop::Solid
+    use crate::models::Backdrop;
+    use tauri::Emitter;
+
+    pub fn apply(window: &tauri::WebviewWindow, backdrop: Backdrop, _dark: bool) -> Backdrop {
+        let target = window.clone();
+        // AppKit requires the main thread, including changes from Settings IPC.
+        // Clear first so theme/focus changes cannot stack visual effect views.
+        if let Err(error) = window.run_on_main_thread(move || {
+            use window_vibrancy::{
+                apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+            };
+            let result = clear_vibrancy(&target).and_then(|_| {
+                if backdrop == Backdrop::Solid {
+                    Ok(())
+                } else {
+                    let material = if target.label() == "quick" {
+                        NSVisualEffectMaterial::Popover
+                    } else {
+                        NSVisualEffectMaterial::Sidebar
+                    };
+                    apply_vibrancy(&target, material, Some(NSVisualEffectState::Active), None)
+                }
+            });
+            let effective = match result {
+                Ok(()) => backdrop,
+                Err(error) => {
+                    log::warn!("could not apply macOS vibrancy: {error}");
+                    Backdrop::Solid
+                }
+            };
+            let _ = target.emit("clipdeck:backdrop", effective);
+            if let (Ok(base), Ok(native)) =
+                (std::env::var("CLIPDECK_READY_FILE"), target.ns_window())
+            {
+                let snapshot: Option<serde_json::Value> =
+                    unsafe { super::take_json(super::clipmo_backdrop_snapshot(native)) };
+                if let Some(mut snapshot) = snapshot {
+                    snapshot["processId"] = serde_json::json!(std::process::id());
+                    snapshot["backdrop"] = serde_json::json!(effective);
+                    let path = std::path::PathBuf::from(base)
+                        .with_extension(format!("vibrancy.{}.json", target.label()));
+                    let temporary = path.with_extension("tmp");
+                    if std::fs::write(&temporary, snapshot.to_string()).is_ok() {
+                        let _ = std::fs::rename(temporary, path);
+                    }
+                }
+            }
+        }) {
+            log::warn!("could not schedule macOS vibrancy: {error}");
+            let _ = window.emit("clipdeck:backdrop", Backdrop::Solid);
+            return Backdrop::Solid;
+        }
+        backdrop
     }
 }
 #[cfg(not(test))]

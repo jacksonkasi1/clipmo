@@ -136,6 +136,8 @@ fn apply_surface(window: &WebviewWindow, settings: &Settings, dark: bool) -> Bac
             log::warn!("could not restore quick-window contract after backdrop: {error}");
         }
     }
+    // macOS emits after its main-thread AppKit operation actually completes.
+    #[cfg(not(target_os = "macos"))]
     let _ = window.emit("clipdeck:backdrop", effective);
     effective
 }

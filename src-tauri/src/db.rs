@@ -838,6 +838,16 @@ CREATE TABLE IF NOT EXISTS collections (
             value["settingsVersion"] = serde_json::json!(3);
         }
 
+        if stored_version < 4 {
+            // The first Mac build forced Solid and offered no material setting.
+            // Enable native vibrancy once; later explicit Solid choices survive.
+            #[cfg(target_os = "macos")]
+            {
+                value["backdrop"] = serde_json::json!("acrylic");
+            }
+            value["settingsVersion"] = serde_json::json!(4);
+        }
+
         sanitize_settings_enums(&mut value);
         let defaults = serde_json::to_value(Settings::default())
             .map_err(|error| crate::error::Error::Other(error.to_string()))?;
@@ -1643,7 +1653,36 @@ mod tests {
         );
         assert_eq!(loaded.hotkey, "Alt+V");
         assert_eq!(loaded.max_items, 17);
-        assert_eq!(loaded.settings_version, 3);
+        assert_eq!(loaded.settings_version, 4);
+    }
+
+    #[test]
+    fn backdrop_migration_enables_mac_vibrancy_once() {
+        let db = Db::open_in_memory().unwrap();
+        let old = Settings {
+            settings_version: 3,
+            backdrop: crate::models::Backdrop::Solid,
+            hotkey: "Alt+V".into(),
+            ..Default::default()
+        };
+        db.save_settings(&old).unwrap();
+        let mut migrated = db.load_settings().unwrap();
+        assert_eq!(migrated.settings_version, 4);
+        assert_eq!(migrated.hotkey, "Alt+V");
+        assert_eq!(
+            migrated.backdrop,
+            if cfg!(target_os = "macos") {
+                crate::models::Backdrop::Acrylic
+            } else {
+                crate::models::Backdrop::Solid
+            }
+        );
+        migrated.backdrop = crate::models::Backdrop::Solid;
+        db.save_settings(&migrated).unwrap();
+        assert_eq!(
+            db.load_settings().unwrap().backdrop,
+            crate::models::Backdrop::Solid
+        );
     }
 
     #[test]

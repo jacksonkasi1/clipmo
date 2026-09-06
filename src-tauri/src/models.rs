@@ -527,7 +527,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            settings_version: 3,
+            settings_version: 4,
             // Win+V is reserved by the OS shell and cannot be intercepted by a
             // user process, so we default to the de-facto convention used by
             // third-party clipboard managers on Windows.
@@ -553,11 +553,7 @@ impl Default for Settings {
             image_quality: default_image_quality(),
             storage_path: None,
             ignored_apps: Vec::new(),
-            backdrop: if cfg!(target_os = "macos") {
-                Backdrop::Solid
-            } else {
-                Backdrop::Acrylic
-            },
+            backdrop: Backdrop::Acrylic,
             theme: ThemeMode::System,
             paste_on_enter: true,
             launch_at_login: false,
@@ -664,7 +660,7 @@ fn default_snapshot_limit_mb() -> u32 {
 }
 
 fn default_settings_version() -> u32 {
-    3
+    4
 }
 
 fn deserialize_ignored_apps<'de, D>(deserializer: D) -> Result<Vec<IgnoredApp>, D::Error>

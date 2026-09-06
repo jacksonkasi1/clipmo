@@ -1,5 +1,6 @@
 """Launch the packaged app and require its real React/WebKit readiness handshake."""
 import json
+import atexit
 import os
 from pathlib import Path
 import subprocess
@@ -10,6 +11,13 @@ import time
 import uuid
 
 binary = Path(sys.argv[1]).resolve()
+if os.environ.get("GITHUB_ACTIONS") == "true":
+    fixture_binary = Path(tempfile.gettempdir()) / "clipmo-vibrancy-backdrop"
+    subprocess.run(["clang", "-fobjc-arc", "-framework", "AppKit", "scripts/macos-vibrancy-backdrop.m", "-o", str(fixture_binary)], check=True)
+    fixture = subprocess.Popen([str(fixture_binary)])
+    atexit.register(fixture.terminate)
+    time.sleep(1)
+
 for mode, args in [("main", []), ("quick", ["--show-quick"])]:
     with tempfile.TemporaryDirectory(prefix="clipmo-smoke-") as directory:
         ready = Path(directory) / "ready.json"
@@ -34,9 +42,21 @@ for mode, args in [("main", []), ("quick", ["--show-quick"])]:
                         else:
                             assert value["searchFocused"]
                         print(f"PASS: packaged {mode} window rendered and ready")
+                        native_path = ready.with_suffix(f".vibrancy.{mode}.json")
+                        native = json.loads(native_path.read_text())
+                        assert native["processId"] == app.pid
+                        assert not native["windowOpaque"], native
+                        assert native["webviews"] and all(not view["opaque"] for view in native["webviews"]), native
+                        assert len(native["effects"]) == 1, native
+                        effect = native["effects"][0]
+                        assert effect["material"] == (6 if mode == "quick" else 7), native
+                        assert effect["state"] == 1 and effect["blendingMode"] == 0, native
+                        print(f"PASS: packaged {mode} has active behind-window vibrancy and transparent WebKit")
                         if os.environ.get("GITHUB_ACTIONS") == "true":
                             screenshots = Path("artifacts/smoke")
                             screenshots.mkdir(parents=True, exist_ok=True)
+                            (screenshots / f"{mode}-vibrancy.json").write_text(json.dumps(native, indent=2))
+                            time.sleep(2)
                             subprocess.run(["screencapture", "-x", str(screenshots / f"{mode}.png")], check=True)
                             if mode == "main":
                                 # Hosted runner only: exercise the running listener and SQLite sink.

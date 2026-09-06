@@ -18,6 +18,29 @@ static char *json(id value) {
 }
 void clipmo_free(char *value) { free(value); }
 
+// Runtime verification reads the actual AppKit hierarchy, not the requested setting.
+static void inspect_backdrop(NSView *view, NSMutableArray *effects, NSMutableArray *webviews) {
+    if ([view isKindOfClass:NSVisualEffectView.class]) {
+        NSVisualEffectView *effect = (NSVisualEffectView *)view;
+        [effects addObject:@{@"material": @(effect.material), @"state": @(effect.state),
+            @"blendingMode": @(effect.blendingMode)}];
+    }
+    if ([view isKindOfClass:NSClassFromString(@"WKWebView")]) {
+        [webviews addObject:@{@"opaque": @(view.opaque)}];
+    }
+    for (NSView *child in view.subviews) inspect_backdrop(child, effects, webviews);
+}
+char *clipmo_backdrop_snapshot(void *pointer) {
+    @autoreleasepool {
+        NSWindow *window = (__bridge NSWindow *)pointer;
+        NSMutableArray *effects = [NSMutableArray array];
+        NSMutableArray *webviews = [NSMutableArray array];
+        inspect_backdrop(window.contentView, effects, webviews);
+        return json(@{@"windowOpaque": @(window.opaque), @"effects": effects,
+            @"webviews": webviews});
+    }
+}
+
 int64_t clipmo_change_count(const char *name) {
     @autoreleasepool { return board(name).changeCount; }
 }

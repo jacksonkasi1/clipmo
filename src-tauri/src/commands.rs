@@ -1602,7 +1602,7 @@ pub fn show_settings_window(app: &AppHandle) -> std::result::Result<(), String> 
             .skip_taskbar(true)
             .center()
             .visible(false);
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let builder = builder.transparent(true);
     let window = builder.build().map_err(|e| e.to_string())?;
     let state: tauri::State<AppState> = app.state();

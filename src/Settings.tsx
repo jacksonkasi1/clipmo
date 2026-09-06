@@ -40,7 +40,7 @@ import { DeviceBadge } from './components/DeviceBadge';
 import { PairDeviceDialog } from './components/PairDeviceDialog';
 import { SyncPreferencesPanel } from './components/SyncPreferencesPanel';
 import { useStore } from './lib/store';
-import { api, fileSrc } from './lib/tauri';
+import { api, fileSrc, on } from './lib/tauri';
 import { getPlatform } from './lib/platform';
 import { APP_SHORTCUTS, shortcutKeys } from './lib/shortcuts';
 import { FILTER_SHORTCUTS, resolvedFilterShortcuts } from './lib/filter-shortcuts';
@@ -102,6 +102,13 @@ export default function Settings() {
     applyTheme(local?.theme ?? 'system', appearance);
     document.documentElement.dataset.backdrop = local?.backdrop ?? 'acrylic';
   }, [local?.theme, local?.backdrop, appearance]);
+
+  useEffect(() => {
+    const unlisten = on<Backdrop>('clipdeck:backdrop', (effective) => {
+      document.documentElement.dataset.backdrop = effective;
+    });
+    return () => { void unlisten.then((stop) => stop()); };
+  }, []);
 
   useEffect(() => {
     const jumpToCategory = (event: KeyboardEvent) => {
@@ -299,6 +306,16 @@ export default function Settings() {
               options={[
                 { value: 'mica', label: 'Mica' },
                 { value: 'acrylic', label: 'Acrylic' },
+                { value: 'solid', label: 'Solid' },
+              ]}
+            />
+          </Row>}
+          {getPlatform() === 'macos' && <Row id="window-material" label="Window material" description="Vibrancy softly blurs the desktop behind Clipmo. Solid disables transparency.">
+            <Segmented<Backdrop>
+              value={local.backdrop === 'solid' ? 'solid' : 'acrylic'}
+              onChange={(value) => update('backdrop', value)}
+              options={[
+                { value: 'acrylic', label: 'Vibrancy' },
                 { value: 'solid', label: 'Solid' },
               ]}
             />
