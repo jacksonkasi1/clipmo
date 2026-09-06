@@ -193,21 +193,7 @@ impl SyncService {
             {
                 break;
             }
-            let mut candidates: Vec<_> = self.pairing.candidates.read().values().cloned().collect();
-            // A known address remains useful when routers suppress UDP discovery.
-            for peer in self.peers.read().values() {
-                candidates.push((
-                    DiscoveryMessage {
-                        protocol: PROTOCOL.into(),
-                        pairing_code: String::new(),
-                        pairing_available: true,
-                        device: peer.device.clone(),
-                        tcp_port: peer.address.port(),
-                    },
-                    peer.address,
-                    now_ms(),
-                ));
-            }
+            let mut candidates = self.join_candidates(target_id.as_deref());
             if let Some(address) = direct {
                 let mut device = current.device_identity();
                 device.id = target_id.clone().unwrap_or_default();
@@ -251,6 +237,11 @@ impl SyncService {
                         return Ok(());
                     }
                     Err(error) => {
+                        // Repeating a rejected code cannot help and consumes the host's
+                        // attempt limit. A fresh Connect action may try a fresh code.
+                        if error.kind() == io::ErrorKind::PermissionDenied {
+                            attempted.insert(candidate.device.id.clone(), deadline);
+                        }
                         let name = if direct.is_some() {
                             address.to_string()
                         } else {
@@ -285,6 +276,37 @@ impl SyncService {
             "No compatible device was discovered. Use the other device’s LAN address under Connection help, or scan its QR code."
         };
         Err(Error::Other(message.into()))
+    }
+
+    fn join_candidates(&self, target_id: Option<&str>) -> Vec<(DiscoveryMessage, SocketAddr, i64)> {
+        let mut candidates: Vec<_> = self
+            .pairing
+            .candidates
+            .read()
+            .values()
+            .filter(|(message, _, _)| target_id.is_none_or(|id| id == message.device.id))
+            .cloned()
+            .collect();
+        // A saved connection is not an invitation. Only use its address when
+        // the caller explicitly selected that identity (for example via QR).
+        if let Some(peer) = target_id.and_then(|id| self.peers.read().get(id).cloned()) {
+            if !candidates.iter().any(|(message, _, seen)| {
+                message.device.id == peer.device.id && now_ms() - seen <= 10_000
+            }) {
+                candidates.push((
+                    DiscoveryMessage {
+                        protocol: PROTOCOL.into(),
+                        pairing_code: String::new(),
+                        pairing_available: true,
+                        device: peer.device,
+                        tcp_port: peer.address.port(),
+                    },
+                    peer.address,
+                    now_ms(),
+                ));
+            }
+        }
+        candidates
     }
 
     pub(super) fn exchange_control(
@@ -637,9 +659,96 @@ mod tests {
             host.handle_control(request, &mut stream, source).unwrap();
         });
         assert!(client.pairing.candidates.read().is_empty());
-        client.join_device(code, None, None).unwrap();
+        client.join_device(code, Some("host".into()), None).unwrap();
         worker.join().unwrap();
         assert_ne!(client.peers.read()["host"].token, "a".repeat(64));
+    }
+
+    #[test]
+    fn code_only_pairing_does_not_contact_an_uninvited_saved_device() {
+        let client = device("mac");
+        let host = device("windows");
+        host.set_pairing(true);
+        let code = host
+            .settings
+            .as_ref()
+            .unwrap()
+            .read()
+            .sync_pairing_code
+            .clone();
+        let unrelated = TcpListener::bind("127.0.0.1:0").unwrap();
+        unrelated.set_nonblocking(true).unwrap();
+        let android = device("android");
+        client
+            .save_peer(&PeerRecord {
+                device: android.settings.as_ref().unwrap().read().device_identity(),
+                address: unrelated.local_addr().unwrap(),
+                last_seen_at: now_ms(),
+                token: "b".repeat(64),
+            })
+            .unwrap();
+        assert!(client.join_candidates(None).is_empty());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        client.pairing.candidates.write().insert(
+            "windows".into(),
+            (
+                DiscoveryMessage {
+                    protocol: PROTOCOL.into(),
+                    pairing_code: String::new(),
+                    pairing_available: true,
+                    device: host.settings.as_ref().unwrap().read().device_identity(),
+                    tcp_port: listener.local_addr().unwrap().port(),
+                },
+                listener.local_addr().unwrap(),
+                now_ms(),
+            ),
+        );
+        let worker = std::thread::spawn(move || {
+            let (mut stream, source) = listener.accept().unwrap();
+            let request = read_json(&mut stream).unwrap();
+            host.handle_control(request, &mut stream, source).unwrap();
+        });
+        client.join_device(code, None, None).unwrap();
+        worker.join().unwrap();
+        assert_eq!(
+            unrelated.accept().unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        assert_eq!(client.peers.read()["android"].token, "b".repeat(64));
+        assert!(client.peers.read().contains_key("windows"));
+    }
+
+    #[test]
+    fn saved_address_does_not_override_a_fresh_closed_invitation() {
+        let client = device("mac");
+        let host = device("windows");
+        let identity = host.settings.as_ref().unwrap().read().device_identity();
+        let address = "192.168.1.2:47634".parse().unwrap();
+        client
+            .save_peer(&PeerRecord {
+                device: identity.clone(),
+                address,
+                last_seen_at: now_ms(),
+                token: "c".repeat(64),
+            })
+            .unwrap();
+        client.pairing.candidates.write().insert(
+            "windows".into(),
+            (
+                DiscoveryMessage {
+                    protocol: PROTOCOL.into(),
+                    pairing_code: String::new(),
+                    pairing_available: false,
+                    device: identity,
+                    tcp_port: FIRST_SYNC_PORT,
+                },
+                address,
+                now_ms(),
+            ),
+        );
+        let candidates = client.join_candidates(Some("windows"));
+        assert_eq!(candidates.len(), 1);
+        assert!(!candidates[0].0.pairing_available);
     }
 
     // Real framed TCP exchanges exercise both request/response and durable trust.
