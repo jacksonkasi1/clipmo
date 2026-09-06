@@ -1592,19 +1592,19 @@ pub fn show_settings_window(app: &AppHandle) -> std::result::Result<(), String> 
         existing.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
     }
-    let window =
+    let builder =
         WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
             .title("Clipmo settings")
             .inner_size(800.0, 680.0)
             .min_inner_size(680.0, 560.0)
             .resizable(true)
             .decorations(true)
-            .transparent(true)
             .skip_taskbar(true)
             .center()
-            .visible(false)
-            .build()
-            .map_err(|e| e.to_string())?;
+            .visible(false);
+    #[cfg(windows)]
+    let builder = builder.transparent(true);
+    let window = builder.build().map_err(|e| e.to_string())?;
     let state: tauri::State<AppState> = app.state();
     let settings = state.settings.read().clone();
     let system = crate::platform::appearance::read();

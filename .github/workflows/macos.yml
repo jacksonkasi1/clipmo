@@ -52,6 +52,7 @@ jobs:
         with:
           workspaces: src-tauri -> target
           key: ${{ matrix.target }}
+          cache-on-failure: true
       - run: npm ci --no-audit
       - name: Validate release version
         env:

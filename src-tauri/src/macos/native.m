@@ -106,7 +106,7 @@ int clipmo_activate(int pid) {
     @autoreleasepool {
         if (pid <= 0 || pid == getpid()) return 0;
         NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
-        return app && !app.terminated && [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+        return app && !app.terminated && [app activateWithOptions:0];
     }
 }
 int clipmo_paste(int pid) {
@@ -129,7 +129,7 @@ int clipmo_paste(int pid) {
     return 1;
 }
 
-static NSDictionary *identity(NSBundle *bundle, NSString *executable, NSString *name) {
+static NSDictionary *identity(NSString *executable, NSString *name) {
     return @{@"id": [@"exe:" stringByAppendingString:executable],
         @"displayName": name ?: executable.lastPathComponent,
         @"executablePath": executable, @"executableName": executable.lastPathComponent};
@@ -139,7 +139,7 @@ char *clipmo_apps(int installed) {
         NSMutableDictionary *apps = [NSMutableDictionary dictionary];
         for (NSRunningApplication *app in NSWorkspace.sharedWorkspace.runningApplications) {
             if (app.activationPolicy != NSApplicationActivationPolicyRegular || !app.executableURL.path) continue;
-            NSMutableDictionary *value = [identity([NSBundle bundleWithURL:app.bundleURL], app.executableURL.path, app.localizedName) mutableCopy];
+            NSMutableDictionary *value = [identity(app.executableURL.path, app.localizedName) mutableCopy];
             value[@"running"] = @YES; value[@"installed"] = @(app.bundleURL != nil);
             apps[app.executableURL.path] = value;
         }
@@ -153,7 +153,7 @@ char *clipmo_apps(int installed) {
                     NSBundle *bundle = [NSBundle bundleWithURL:url];
                     NSString *exe = bundle.executablePath;
                     if (!exe || apps[exe]) continue;
-                    NSMutableDictionary *value = [identity(bundle, exe, [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"] ?: url.lastPathComponent.stringByDeletingPathExtension) mutableCopy];
+                    NSMutableDictionary *value = [identity(exe, [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"] ?: url.lastPathComponent.stringByDeletingPathExtension) mutableCopy];
                     value[@"running"] = @NO; value[@"installed"] = @YES; apps[exe] = value;
                 }
             }
