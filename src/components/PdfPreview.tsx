@@ -29,9 +29,18 @@ export function PdfPreview({ itemId, index, name, path }: {
       if (disposed) return;
       // Bundle the worker into a blob: WKWebView cannot import tauri:// modules
       // inside a worker, even though the main document can load them.
-      workerPort = new pdfjs.CompatWorker();
-      // @ts-expect-error PDF.js declares port as null, but accepts a Worker at runtime.
-      worker = new pdfjs.PDFWorker({ port: workerPort });
+      try {
+        workerPort = new pdfjs.CompatWorker();
+        // @ts-expect-error PDF.js declares port as null, but accepts a Worker at runtime.
+        worker = new pdfjs.PDFWorker({ port: workerPort });
+      } catch (error) {
+        if (!(error instanceof DOMException) || error.name !== 'SecurityError') throw error;
+        workerPort?.terminate();
+        workerPort = undefined;
+        await pdfjs.prepareMainThreadWorker();
+        if (disposed) return;
+        worker = new pdfjs.PDFWorker();
+      }
       loading = pdfjs.getDocument({
         worker,
         data: new Uint8Array(bytes),
@@ -56,10 +65,17 @@ export function PdfPreview({ itemId, index, name, path }: {
       rendering = page.render({ canvas, viewport, background: 'white' });
       await rendering.promise;
       if (!disposed) {
+        if (documentIsPdfSmoke()) {
+          const pixels = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
+          let ink = 0;
+          for (let i = 0; i < pixels.length; i += 4) if (pixels[i]! < 200 && pixels[i + 3]! > 0) ink++;
+          void api.reportPdfPreviewTest({ success: true, itemId, ink, width: canvas.width, height: canvas.height });
+        }
         setReady(true);
         setStatus(`Page 1 of ${document.numPages}`);
       }
     })().catch((error: unknown) => {
+      if (!disposed && documentIsPdfSmoke()) void api.reportPdfPreviewTest({ success: false, itemId, error: String(error), stack: error instanceof Error ? error.stack : null });
       if (!disposed && !passwordProtected) setStatus(`PDF preview unavailable. ${String(error)}`);
     });
     return () => {
@@ -83,4 +99,8 @@ export function PdfPreview({ itemId, index, name, path }: {
       </div>
     </article>
   );
+}
+
+function documentIsPdfSmoke() {
+  return window.document.documentElement.dataset.pdfSmoke === 'true';
 }

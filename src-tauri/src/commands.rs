@@ -761,6 +761,34 @@ pub async fn signal_frontend_ready(
         serde_json::to_vec(&payload).map_err(|error| Error::Other(error.to_string()))?,
     )?;
     std::fs::rename(temporary, path)?;
+    if window.label() == crate::window::MAIN_LABEL {
+        if let Ok(id) = std::env::var("CLIPDECK_PDF_SMOKE_ID")
+            .unwrap_or_default()
+            .parse::<i64>()
+        {
+            window.eval(&format!(
+                "window.dispatchEvent(new CustomEvent('clipmo:pdf-smoke', {{ detail: {id} }}))"
+            ))?;
+        }
+    }
+    Ok(())
+}
+
+/// Optional local smoke-test output; callers cannot choose an output path.
+#[tauri::command]
+pub async fn report_pdf_preview_test(result: serde_json::Value) -> Result<()> {
+    let Ok(base) = std::env::var("CLIPDECK_READY_FILE") else {
+        return Ok(());
+    };
+    if std::env::var("CLIPDECK_PDF_SMOKE_ID").is_err() {
+        return Ok(());
+    }
+    let path = std::path::PathBuf::from(base).with_extension("pdf.json");
+    let payload = serde_json::json!({ "processId": std::process::id(), "result": result });
+    std::fs::write(
+        path,
+        serde_json::to_vec(&payload).map_err(|error| Error::Other(error.to_string()))?,
+    )?;
     Ok(())
 }
 

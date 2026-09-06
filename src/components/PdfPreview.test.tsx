@@ -1,14 +1,15 @@
 /** @vitest-environment jsdom */
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ read: vi.fn(), getDocument: vi.fn(), getPage: vi.fn(), render: vi.fn(), destroy: vi.fn(), cancel: vi.fn(), terminate: vi.fn(), workerDestroy: vi.fn() }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), getDocument: vi.fn(), getPage: vi.fn(), render: vi.fn(), destroy: vi.fn(), cancel: vi.fn(), terminate: vi.fn(), workerDestroy: vi.fn(), createWorker: vi.fn(), prepareMainThreadWorker: vi.fn() }));
 vi.mock('../lib/tauri', () => ({ api: { readPdfPreview: mocks.read, revealItem: vi.fn() } }));
-vi.mock('../lib/pdf-renderer', () => ({ CompatWorker: class { terminate = mocks.terminate; }, PDFWorker: class { destroy = mocks.workerDestroy; }, getDocument: mocks.getDocument }));
+vi.mock('../lib/pdf-renderer', () => ({ CompatWorker: class { constructor() { mocks.createWorker(); } terminate = mocks.terminate; }, PDFWorker: class { destroy = mocks.workerDestroy; }, getDocument: mocks.getDocument, prepareMainThreadWorker: mocks.prepareMainThreadWorker }));
 import { PdfPreview } from './PdfPreview';
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.read.mockResolvedValue(new ArrayBuffer(8));
   mocks.destroy.mockResolvedValue(undefined);
+  mocks.prepareMainThreadWorker.mockResolvedValue(undefined);
   mocks.render.mockReturnValue({ promise: Promise.resolve(), cancel: mocks.cancel });
   mocks.getPage.mockResolvedValue({ getViewport: ({ scale }: { scale: number }) => ({ width: 600 * scale, height: 800 * scale }), render: mocks.render });
   mocks.getDocument.mockReturnValue({ promise: Promise.resolve({ getPage: mocks.getPage, numPages: 3 }), destroy: mocks.destroy });
@@ -45,4 +46,11 @@ it('releases the document and render task when selection changes', async () => {
   expect(mocks.destroy).toHaveBeenCalledOnce();
   expect(mocks.workerDestroy).toHaveBeenCalledOnce();
   expect(mocks.terminate).toHaveBeenCalledOnce();
+});
+
+it('renders through the loopback worker when the app blocks browser workers', async () => {
+  mocks.createWorker.mockImplementation(() => { throw new DOMException('Blocked', 'SecurityError'); });
+  render(<PdfPreview itemId={7} index={0} name="Report.pdf" path="/Report.pdf" />);
+  await screen.findByText('Page 1 of 3');
+  expect(mocks.prepareMainThreadWorker).toHaveBeenCalledOnce();
 });

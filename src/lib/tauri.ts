@@ -48,6 +48,7 @@ async function openClipmoSettings(): Promise<void> {
 export const api = {
   listItems: (query: ListQuery) => invoke<ClipItem[]>('list_items', { query }),
   getItem: (id: number) => invoke<ClipItem>('get_item', { id }),
+  reportPdfPreviewTest: (result: Record<string, unknown>) => invoke<void>('report_pdf_preview_test', { result }),
   readPdfPreview: (id: number, index: number) => invoke<ArrayBuffer>('read_pdf_preview', { id, index }),
   flavorsFor: (id: number) => invoke<FlavorBundle>('flavors_for', { id }),
   copyToClipboard: (id: number, flavor: PasteFlavor) =>

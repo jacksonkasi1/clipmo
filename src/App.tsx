@@ -63,6 +63,19 @@ export default function App() {
   const [collectionsOpen, setCollectionsOpen] = useState(false);
 
   useEffect(() => {
+    const runPdfSmoke = (event: Event) => {
+      const id = (event as CustomEvent<number>).detail;
+      if (!Number.isSafeInteger(id)) return;
+      document.documentElement.dataset.pdfSmoke = 'true';
+      void api.getItem(id).then((item) => useStore.setState({
+        items: [item], selectedId: id, selectedIds: [id], showPreview: true,
+      }));
+    };
+    window.addEventListener('clipmo:pdf-smoke', runPdfSmoke);
+    return () => window.removeEventListener('clipmo:pdf-smoke', runPdfSmoke);
+  }, []);
+
+  useEffect(() => {
     document.documentElement.dataset.mode = mode;
     document.title = mode === 'quick' ? 'Clipmo quick clipboard' : 'Clipmo';
   }, [mode]);

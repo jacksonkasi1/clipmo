@@ -34,6 +34,8 @@ const nativeIterator = typeof globalThis.Iterator;
 // Also guard against regression on newer CI hosts which already implement it.
 delete globalThis.Iterator;
 delete Promise.withResolvers;
+// Reproduce sandboxed WKWebView's SecurityError during worker creation.
+globalThis.Worker = class { constructor() { throw new DOMException('Worker blocked by app sandbox', 'SecurityError'); } };
 api.readPdfPreview = async () => Uint8Array.from(atob('${Buffer.from(pdf).toString('base64')}'), char => char.charCodeAt(0)).buffer;
 const report = value => window.webkit.messageHandlers.result.postMessage(value);
 new MutationObserver(() => {
