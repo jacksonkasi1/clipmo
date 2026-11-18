@@ -80,6 +80,7 @@ export const api = {
   knownSources: () => invoke<SourceApp[]>('known_sources'),
   applyFilterAction: (scope: FilterScope, action: BulkFilterAction) =>
     invoke<void>('apply_filter_action', { scope, action }),
+  activeHotkeys: () => invoke<[boolean, boolean]>('active_hotkeys'),
   loadSettings: () => invoke<Settings>('load_settings'),
   saveSettings: (settings: Settings) =>
     invoke<Settings>('save_settings', { settings }),

@@ -124,6 +124,13 @@ export default function Settings() {
     return () => window.removeEventListener('keydown', jumpToCategory);
   }, []);
 
+  const [hotkeyActive, setHotkeyActive] = useState<[boolean, boolean] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve().then(() => api.activeHotkeys()).then((value) => { if (!cancelled) setHotkeyActive(value); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [local?.hotkey, local?.fullWindowHotkey]);
+
   if (!local) return <SettingsLoading />;
 
   const update = <Key extends keyof SettingsType>(key: Key, value: SettingsType[Key]) => {
@@ -169,6 +176,10 @@ export default function Settings() {
       setMutationError(mutationErrorMessage('A new pairing code could not be created.', error));
     }
   };
+
+  const inactiveNote = (index: 0 | 1) => (hotkeyActive && !hotkeyActive[index]
+    ? ' This shortcut is not currently registered with the system, so it may be in use by another app. Pick a different one.'
+    : '');
 
   const configuredFilterShortcuts = resolvedFilterShortcuts(local.filterShortcuts);
   const shortcutConflict = findShortcutConflict([
@@ -544,14 +555,14 @@ export default function Settings() {
           <Row
             id="global-hotkey"
             label="Quick clipboard"
-            description={`Opens the compact clipboard flyout. ${SHORTCUT_RECORDER_DESCRIPTION}`}
+            description={`Opens the compact clipboard flyout. ${SHORTCUT_RECORDER_DESCRIPTION}${inactiveNote(0)}`}
           >
             <ShortcutRecorder value={local.hotkey} onChange={(value) => update('hotkey', value)} />
           </Row>
           <Row
             id="full-window-hotkey"
             label="Open full Clipmo"
-            description={`Opens the full application window. ${SHORTCUT_RECORDER_DESCRIPTION}`}
+            description={`Opens the full application window. ${SHORTCUT_RECORDER_DESCRIPTION}${inactiveNote(1)}`}
           >
             <ShortcutRecorder
               value={local.fullWindowHotkey}
