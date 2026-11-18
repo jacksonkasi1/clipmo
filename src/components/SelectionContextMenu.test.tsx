@@ -3,7 +3,7 @@
 import type { ClipItem } from '../lib/types';
 
 // ** import lib
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useStore } from '../lib/store';
@@ -88,5 +88,77 @@ describe('SelectionContextMenu', () => {
     const remove = screen.getByText('Remove from collection').closest('details');
     expect(remove?.textContent).toContain('work');
     expect(remove?.textContent).not.toContain('personal');
+  });
+
+  it('opens a submenu on hover and keeps it open until a short delay after leaving', () => {
+    vi.useFakeTimers();
+    try {
+      render(<SelectionContextMenu x={40} y={40} onClose={vi.fn()} />);
+      const add = screen.getByText('Add to collection').closest('details')!;
+      expect(add.open).toBe(false);
+
+      fireEvent.pointerEnter(add);
+      expect(add.open).toBe(false);
+      act(() => { vi.advanceTimersByTime(150); });
+      expect(add.open).toBe(true);
+
+      fireEvent.pointerLeave(add);
+      act(() => { vi.advanceTimersByTime(100); });
+      expect(add.open).toBe(true);
+      fireEvent.pointerEnter(add);
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(add.open).toBe(true);
+
+      fireEvent.pointerLeave(add);
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(add.open).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a pointer that passes through quickly and closes on hovering another item', () => {
+    vi.useFakeTimers();
+    try {
+      render(<SelectionContextMenu x={40} y={40} onClose={vi.fn()} />);
+      const add = screen.getByText('Add to collection').closest('details')!;
+      const remove = screen.getByText('Remove from collection').closest('details')!;
+
+      fireEvent.pointerEnter(add);
+      act(() => { vi.advanceTimersByTime(50); });
+      fireEvent.pointerLeave(add);
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(add.open).toBe(false);
+
+      fireEvent.pointerEnter(add);
+      act(() => { vi.advanceTimersByTime(150); });
+      expect(add.open).toBe(true);
+      fireEvent.pointerLeave(add);
+      fireEvent.pointerEnter(remove);
+      act(() => { vi.advanceTimersByTime(150); });
+      expect(remove.open).toBe(true);
+      expect(add.open).toBe(false);
+
+      fireEvent.pointerEnter(screen.getByRole('menuitem', { name: 'Star' }));
+      expect(remove.open).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps click and ArrowRight/ArrowLeft working on submenu triggers', () => {
+    render(<SelectionContextMenu x={40} y={40} onClose={vi.fn()} />);
+    const add = screen.getByText('Add to collection');
+    const details = add.closest('details')!;
+
+    fireEvent.click(add);
+    expect(details.open).toBe(true);
+    fireEvent.click(add);
+    expect(details.open).toBe(false);
+
+    fireEvent.keyDown(add, { key: 'ArrowRight' });
+    expect(details.open).toBe(true);
+    fireEvent.keyDown(add, { key: 'ArrowLeft' });
+    expect(details.open).toBe(false);
   });
 });

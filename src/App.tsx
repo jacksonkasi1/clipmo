@@ -110,6 +110,18 @@ export default function App() {
     };
   }, [mode]);
 
+  // The full window is also revealed by the global shortcut; give it the same
+  // focus hand-off so arrows/Enter work immediately without a click.
+  useEffect(() => {
+    if (mode === 'quick') return;
+    const unlisten = on<void>('clipdeck:full-opened', () => {
+      window.dispatchEvent(new CustomEvent('clipmo:focus-search'));
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [mode]);
+
   useEffect(() => {
     applyTheme(settings?.theme ?? 'system', appearance);
     document.documentElement.dataset.backdrop = settings?.backdrop ?? 'acrylic';

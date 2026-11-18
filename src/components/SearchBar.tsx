@@ -21,6 +21,7 @@ import { isSearchActive, visibleHeaderActions } from '../lib/header-actions';
 import { useStore } from '../lib/store';
 import { api } from '../lib/tauri';
 import { toast } from '../lib/toast';
+import { focusNativeWebview } from '../lib/webview-focus';
 import { getPlatform, getShortcutLabel } from '../lib/platform';
 
 export function SearchBar({ onAddDevice }: { onAddDevice?: () => void }) {
@@ -80,6 +81,10 @@ export function SearchBar({ onAddDevice }: { onAddDevice?: () => void }) {
 
   useEffect(() => {
     const focusSearch = () => {
+      // Quick View is opened by a global shortcut while another app owns the
+      // keyboard; make sure the webview itself, not just the input, is first
+      // responder so Up/Down/Enter reach the window keydown handler.
+      void focusNativeWebview();
       ref.current?.focus();
       ref.current?.select();
       if (mode === 'quick') {

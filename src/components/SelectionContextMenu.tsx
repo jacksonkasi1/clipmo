@@ -1,9 +1,17 @@
 // ** import lib
 import { FolderPlus, FolderX, Star, StarOff, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 
 import { useStore } from '../lib/store';
+
+type SubmenuId = 'add' | 'remove';
+
+/** Grace period so brief pointer drift outside a submenu does not collapse it. */
+const SUBMENU_CLOSE_DELAY_MS = 250;
+/** Hover-intent delay so sweeping the pointer across the menu does not flash submenus. */
+const SUBMENU_OPEN_DELAY_MS = 120;
 
 interface Props {
   x: number;
@@ -28,6 +36,84 @@ export function SelectionContextMenu({ x, y, onClose }: Props) {
     () => collections.filter((collection) => selected.some((item) => item.tags.includes(collection.name))),
     [collections, selected],
   );
+
+  const [openSubmenu, setOpenSubmenu] = useState<SubmenuId | null>(null);
+  const closeTimer = useRef<number | null>(null);
+  const openTimer = useRef<number | null>(null);
+
+  const clearCloseTimer = useCallback(() => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  }, []);
+  const clearOpenTimer = useCallback(() => {
+    if (openTimer.current !== null) {
+      window.clearTimeout(openTimer.current);
+      openTimer.current = null;
+    }
+  }, []);
+  const showSubmenu = (id: SubmenuId) => {
+    clearCloseTimer();
+    clearOpenTimer();
+    setOpenSubmenu(id);
+  };
+  const scheduleOpenSubmenu = (id: SubmenuId) => {
+    clearCloseTimer();
+    clearOpenTimer();
+    if (openSubmenu === id) return;
+    openTimer.current = window.setTimeout(() => {
+      setOpenSubmenu(id);
+      openTimer.current = null;
+    }, SUBMENU_OPEN_DELAY_MS);
+  };
+  /** Hovering a plain top-level item dismisses any open submenu right away. */
+  const closeSubmenuNow = () => {
+    clearCloseTimer();
+    clearOpenTimer();
+    setOpenSubmenu(null);
+  };
+  const scheduleCloseSubmenu = (id: SubmenuId) => {
+    clearOpenTimer();
+    clearCloseTimer();
+    closeTimer.current = window.setTimeout(() => {
+      setOpenSubmenu((current) => (current === id ? null : current));
+      closeTimer.current = null;
+    }, SUBMENU_CLOSE_DELAY_MS);
+  };
+  const submenuProps = (id: SubmenuId) => ({
+    open: openSubmenu === id,
+    onPointerEnter: (event: ReactPointerEvent) => {
+      if (event.pointerType === 'touch') return;
+      scheduleOpenSubmenu(id);
+    },
+    onPointerLeave: () => scheduleCloseSubmenu(id),
+  });
+  const summaryProps = (id: SubmenuId) => ({
+    onClick: (event: ReactMouseEvent) => {
+      event.preventDefault();
+      clearCloseTimer();
+      clearOpenTimer();
+      setOpenSubmenu((current) => (current === id ? null : id));
+    },
+    onKeyDown: (event: ReactKeyboardEvent) => {
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        showSubmenu(id);
+      } else if (event.key === 'ArrowLeft' && openSubmenu === id) {
+        event.preventDefault();
+        event.stopPropagation();
+        clearCloseTimer();
+        clearOpenTimer();
+        setOpenSubmenu(null);
+      }
+    },
+  });
+
+  useEffect(() => () => {
+    clearCloseTimer();
+    clearOpenTimer();
+  }, [clearCloseTimer, clearOpenTimer]);
 
   useEffect(() => {
     const close = () => onClose();
@@ -67,8 +153,8 @@ export function SelectionContextMenu({ x, y, onClose }: Props) {
       onPointerDown={(event) => event.stopPropagation()}
     >
       {isMultiple && <div className="selection-context-title">{selected.length} selected</div>}
-      <details>
-        <summary><FolderPlus size={15} aria-hidden /> Add to collection</summary>
+      <details {...submenuProps('add')}>
+        <summary {...summaryProps('add')}><FolderPlus size={15} aria-hidden /> Add to collection</summary>
         <div className="selection-context-submenu">
           {collections.length ? collections.map((collection) => (
             <button key={collection.name} type="button" role="menuitem" onClick={() => run(() => addSelectedToCollection(collection.name))}>
@@ -77,8 +163,8 @@ export function SelectionContextMenu({ x, y, onClose }: Props) {
           )) : <span>No collections yet</span>}
         </div>
       </details>
-      <details>
-        <summary><FolderX size={15} aria-hidden /> Remove from collection</summary>
+      <details {...submenuProps('remove')}>
+        <summary {...summaryProps('remove')}><FolderX size={15} aria-hidden /> Remove from collection</summary>
         <div className="selection-context-submenu">
           {relevantCollections.length ? relevantCollections.map((collection) => (
             <button key={collection.name} type="button" role="menuitem" onClick={() => run(() => removeSelectedFromCollection(collection.name))}>
@@ -87,11 +173,11 @@ export function SelectionContextMenu({ x, y, onClose }: Props) {
           )) : <span>Not in a collection</span>}
         </div>
       </details>
-      <button type="button" role="menuitem" onClick={() => run(() => setSelectedFavorites(!allStarred))}>
+      <button type="button" role="menuitem" onPointerEnter={closeSubmenuNow} onClick={() => run(() => setSelectedFavorites(!allStarred))}>
         {allStarred ? <StarOff size={15} aria-hidden /> : <Star size={15} aria-hidden />}
         {allStarred ? 'Unstar' : 'Star'}
       </button>
-      <button type="button" role="menuitem" className="is-danger" onClick={() => run(deleteSelected)}>
+      <button type="button" role="menuitem" className="is-danger" onPointerEnter={closeSubmenuNow} onClick={() => run(deleteSelected)}>
         <Trash2 size={15} aria-hidden /> {isMultiple ? `Delete ${selected.length} items` : 'Delete'}
       </button>
     </div>,

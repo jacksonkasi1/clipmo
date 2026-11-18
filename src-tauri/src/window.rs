@@ -380,6 +380,8 @@ pub fn show_full(app: &AppHandle) {
     ensure_titlebar_reachable(&window);
     let _ = window.show();
     let _ = window.set_focus();
+    // Lets the webview hand native + DOM focus to the page so Up/Down/Enter work.
+    let _ = app.emit_to(MAIN_LABEL, "clipdeck:full-opened", ());
 }
 
 pub fn hide_full(app: &AppHandle) {
