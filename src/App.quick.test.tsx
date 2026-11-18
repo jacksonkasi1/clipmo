@@ -362,3 +362,28 @@ describe('Enter with multiple clipboard items', () => {
     expect(apiMock.pasteActive).not.toHaveBeenCalled();
   });
 });
+
+describe('Keyboard navigation and paste', () => {
+  it.each(['quick', 'full'] as const)('moves selection and pastes with Up/Down/Enter in %s', async (mode) => {
+    const [a, b, c] = [801, 802, 803].map((id) => ({ ...fileItem, id, kind: 'text' as const })) as [ClipItem, ClipItem, ClipItem];
+    apiMock.listItems.mockResolvedValue([a, b, c]);
+    useStore.setState({
+      mode, items: [a, b, c], selectedId: 801, selectedIds: [801],
+      settings: { ...baseSettings, pasteOnEnter: true }, showCommands: false,
+    });
+    render(<App />);
+    await bootStore();
+    const search = screen.getByRole('searchbox');
+    search.focus();
+    fireEvent.keyDown(search, { key: 'ArrowDown' });
+    expect(useStore.getState().selectedId).toBe(802);
+    fireEvent.keyDown(search, { key: 'ArrowUp' });
+    expect(useStore.getState().selectedId).toBe(801);
+    fireEvent.keyDown(search, { key: 'ArrowDown' });
+    // The listbox and the bare document must behave the same as the input.
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowDown' });
+    expect(useStore.getState().selectedId).toBe(803);
+    fireEvent.keyDown(document.body, { key: 'Enter' });
+    await waitFor(() => expect(apiMock.pasteActive).toHaveBeenCalledWith(803, 'original'));
+  });
+});
