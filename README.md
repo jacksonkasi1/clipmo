@@ -4,14 +4,44 @@
   <img src="assets/logo-256.png" alt="Clipmo logo" width="200" height="200" />
 </p>
 
-**Fast, private clipboard history for Windows, macOS and Android.** Clipmo uses native
-Windows Acrylic/Mica and macOS vibrancy, with a compact quick window and a full
-history window for previewing and editing clipboard items.
+**Your clipboard, remembered — on Windows, Mac and Android.**
 
-> Press **Ctrl + Shift + V** on Windows or **Command + Shift + V** on Mac to summon
-> the quick window, type to filter,
-> use the arrow keys to navigate, and press **Enter** to paste back to the app you
-> were using.
+## What is Clipmo?
+
+Normally your computer remembers only the *last* thing you copied. **Clipmo remembers everything you copy**
+(text, links, images, files) so you can search it, paste it again, star the important ones and organize them —
+and it keeps your **PC, Mac and phone in sync**, so something you copy on one device is waiting on the others.
+
+- **Private by default.** Your clips stay on your devices. No account, no telemetry, nothing is uploaded to the
+  developer. Syncing happens directly between your own devices on your Wi-Fi.
+- **Works when Wi-Fi sharing is blocked.** An optional encrypted "relay" you host yourself (free on Cloudflare) syncs
+  devices that can't see each other.
+- **Works with AI assistants.** An optional built-in MCP server lets Claude, Codex, OpenCode and others search and
+  organize your clipboard history for you.
+
+> **Quick start:** press **Ctrl + Shift + V** (Windows) or **Command + Shift + V** (Mac), type to filter, use the
+> arrow keys and press **Enter** to paste back into the app you were using.
+
+### Get going in 3 steps
+
+1. **Install** Clipmo on your computer and phone — see [Download](#download).
+2. **Pair your devices** (optional): on the computer open **Add / Pair device**, then enter the six-digit code on the
+   phone (**Devices**) or scan the QR code — see [Sync across devices](#sync-across-devices).
+3. **Use it:** copy as usual. Open Clipmo to search, star ⭐, tag, or send a clip to another device.
+
+### Features at a glance
+
+| | What you get |
+| --- | --- |
+| **History** | Everything you copy — text, links, emails, colors, images, files — searchable, deduplicated, with favorites. |
+| **Quick paste** | A tiny popup (`Ctrl/Cmd + Shift + V`) to find and paste anything you copied before. |
+| **Organize** | Star favorites, add tags, group clips into collections, clear history whenever you like. |
+| **Sync** | Windows, Mac and Android stay in sync over your local network; reconnects automatically. |
+| **Send to a device** | Push a clip to one device or all of them with a click. |
+| **Clear safely** | Clear on **this device only** or on **every device**. |
+| **Relay (optional)** | End-to-end encrypted sync through a server you own, for networks that block direct sync. |
+| **AI control (optional)** | A local MCP server so assistants can search, tag, star and clean up your clips. |
+| **Private** | No telemetry, no developer-run servers, password-manager entries are skipped. |
 
 ## Download
 
@@ -65,7 +95,7 @@ preserved so your history and settings carry over.
 For older builds and the full changelog, see
 [all releases](https://github.com/jacksonkasi1/clipmo/releases).
 
-## Features
+## Features in detail
 
 - **Compact by default** — the quick history opens first; an optional preview
   pane expands beside it for editing, rich previews, and metadata.
@@ -282,6 +312,25 @@ Enter the printed address and your `RELAY_TOKEN` in Clipmo, plus your passphrase
 backends are in [`relay/README.md`](relay/README.md). Google Drive is not supported yet.
 
 ## Control Clipmo from AI assistants (MCP)
+
+**What is this?** MCP ("Model Context Protocol") is the standard way for AI assistants to use other apps. When you turn
+it on, assistants such as **Claude, Codex or OpenCode can work with your clipboard history** — you just ask in plain words:
+
+- "Find the link I copied yesterday about invoices."
+- "Star my last three clips and tag them *project-x*."
+- "Delete all clips that contain the word *password*." *(destructive tools ask for confirmation)*
+- "Put today's clips in a collection called *Standup notes*."
+- "Send my latest clip to my phone."
+
+**Set it up in three steps**
+
+1. In Clipmo open **Settings → Cross-device sync → AI assistants (MCP)** and tick **Enable local MCP server**.
+2. In the same panel, expand your assistant (Claude Code, Codex, OpenCode, Cursor, Claude Desktop) and press **Copy** —
+   the snippet already contains your address and access token. Paste it into your assistant (or its config file).
+3. Ask your assistant something about your clipboard.
+
+The reference below shows the same snippets with a `YOUR_TOKEN` placeholder, for people setting it up by hand.
+
 
 Clipmo includes an optional local [MCP](https://modelcontextprotocol.io) server, so Claude Code, Codex, OpenCode, Cursor and other MCP clients can search, star, tag, organize, add and delete clips for you.
 
