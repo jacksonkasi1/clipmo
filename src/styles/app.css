@@ -3414,3 +3414,7 @@ kbd {
 .pair-device-help input { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px 10px; border-radius: 8px; }
 .pair-device-help p { margin: 8px 0; }
 @media (max-width: 560px) { .pair-device-help { margin-left: 0; } }
+.mcp-snippet { margin: 6px 0; padding: 8px 10px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all; user-select: text; }
+.relay-settings { display: grid; gap: 10px; }
+.relay-settings label { display: grid; gap: 4px; }
+.relay-settings input[type='url'], .relay-settings input[type='password'], .relay-settings select { padding: 6px 8px; }

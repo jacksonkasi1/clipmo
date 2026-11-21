@@ -5,6 +5,7 @@ import type { ApplicationInfo, Backdrop, FileFilterMode, IgnoredApp, ImageCompre
 // ** import utils
 import { formatBytes } from './lib/formatting';
 import { RelaySettings } from './components/RelaySettings';
+import { McpSettings } from './components/McpSettings';
 import { shortcutFromKeyEvent, shortcutRecorderKeyAction } from './lib/global-shortcut';
 import { mutationErrorMessage } from './lib/mutation-error';
 
@@ -18,6 +19,7 @@ import {
   Archive,
   Check,
   Cloud,
+  Plug,
   CircleAlert,
   FolderOpen,
   HardDrive,
@@ -540,6 +542,12 @@ export default function Settings() {
         {activeCategory === 'sync' && (
         <Section title="Relay (optional)" description="Sync through your own server when the network blocks direct connections." icon={<Cloud size={18} />}>
           <RelaySettings />
+        </Section>
+        )}
+
+        {activeCategory === 'sync' && (
+        <Section title="AI assistants (MCP)" description="Let Claude, Codex or OpenCode manage your clipboard history." icon={<Plug size={18} />}>
+          <McpSettings />
         </Section>
         )}
 

@@ -14,7 +14,9 @@ use tauri::{Manager, WindowEvent};
 #[cfg(not(test))]
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 
-pub mod capture_policy;
+#[cfg(not(test))]
+pub mod mcp;
+mod capture_policy;
 pub mod clipboard;
 #[cfg(not(test))]
 pub mod commands;
@@ -41,6 +43,7 @@ mod platform;
 /// Shared application state handed to every command handler.
 #[cfg(not(test))]
 pub struct AppState {
+    pub mcp: mcp::McpServer,
     pub db: Arc<db::Db>,
     pub storage_root: Arc<parking_lot::RwLock<PathBuf>>,
     pub storage_operation: Arc<parking_lot::RwLock<()>>,
@@ -154,6 +157,9 @@ pub fn run() {
             commands::sync_state,
             commands::sync_history_now,
             commands::reconnect_sync,
+            commands::mcp_status,
+            commands::set_mcp_enabled,
+            commands::rotate_mcp_token,
             commands::relay_status,
             commands::save_relay,
             commands::send_to_device,
@@ -261,6 +267,7 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let state = AppState {
+        mcp: mcp::McpServer::default(),
         db: Arc::clone(&db),
         storage_root: Arc::new(parking_lot::RwLock::new(storage_path)),
         storage_operation: Arc::new(parking_lot::RwLock::new(())),
@@ -274,6 +281,7 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         quick_open_pending: std::sync::atomic::AtomicBool::new(false),
     };
     app.manage(state);
+    app.state::<AppState>().mcp.start_if_enabled(app.handle());
 
     // Both windows are declared hidden in tauri.conf.json and stay alive for
     // the whole session. Applying the material now — before either is ever

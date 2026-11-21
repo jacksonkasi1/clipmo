@@ -18,6 +18,7 @@ import type {
   SourceApp,
   FilterScope,
   BulkFilterAction,
+  McpStatus,
   RelayInput,
   RelayStatus,
 } from './types';
@@ -75,6 +76,9 @@ export const api = {
     invoke<void>('clear_history', { includeFavorites, scope }),
   clearCategory: (kind: ItemKind, includeFavorites = false, scope: ClearScope = 'all') =>
     invoke<void>('clear_category', { kind, includeFavorites, scope }),
+  mcpStatus: () => invoke<McpStatus>('mcp_status'),
+  setMcpEnabled: (enabled: boolean) => invoke<McpStatus>('set_mcp_enabled', { enabled }),
+  rotateMcpToken: () => invoke<McpStatus>('rotate_mcp_token'),
   relayStatus: () => invoke<RelayStatus>('relay_status'),
   saveRelay: (input: RelayInput) => invoke<RelayStatus>('save_relay', { input }),
   reconnectSync: () => invoke<number>('reconnect_sync'),

@@ -1059,6 +1059,25 @@ pub async fn save_relay(
 }
 
 #[tauri::command]
+pub async fn mcp_status(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<crate::mcp::McpStatus> {
+    Ok(state.mcp.status(&app))
+}
+
+#[tauri::command]
+pub async fn set_mcp_enabled(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<crate::mcp::McpStatus> {
+    Ok(state.mcp.set_enabled(&app, enabled))
+}
+
+#[tauri::command]
+pub async fn rotate_mcp_token(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<crate::mcp::McpStatus> {
+    Ok(state.mcp.rotate_token(&app))
+}
+
+#[tauri::command]
 pub async fn reconnect_sync(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<usize> {
     let service = state.sync.clone();
     let connected = tauri::async_runtime::spawn_blocking(move || service.reconnect_now())
@@ -1134,6 +1153,10 @@ pub async fn quit_app(app: AppHandle) -> Result<()> {
 }
 
 // ---- helpers -------------------------------------------------------------
+
+pub fn cleanup_asset_paths_public(storage_root: &std::path::Path, orphans: Vec<String>) {
+    cleanup_asset_paths(storage_root, orphans);
+}
 
 fn cleanup_asset_paths(storage_root: &std::path::Path, orphans: Vec<String>) {
     for path in orphans {

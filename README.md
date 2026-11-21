@@ -218,6 +218,101 @@ clipmo/
     └── Cargo.toml
 ```
 
+## Control Clipmo from AI assistants (MCP)
+
+Clipmo includes an optional local [MCP](https://modelcontextprotocol.io) server, so Claude Code, Codex, OpenCode, Cursor and other MCP clients can search, star, tag, organize, add and delete clips for you.
+
+- **Off by default.** Turn it on in **Settings → Cross-device sync → AI assistants (MCP)**. That page shows your URL and access token inside ready-to-copy snippets, so you can skip the placeholders below.
+- **Local only.** It listens on `127.0.0.1` (never your network), requires a bearer token, and rejects browser requests.
+- Default address: `http://127.0.0.1:47650/mcp` (ports 47650–47659 are tried). Replace `YOUR_TOKEN` with the token shown in Settings.
+
+### Claude Code
+
+```bash
+claude mcp add --transport http clipmo http://127.0.0.1:47650/mcp --header "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Codex
+
+Add to `~/.codex/config.toml` and export the token in your shell profile:
+
+```toml
+[mcp_servers.clipmo]
+url = "http://127.0.0.1:47650/mcp"
+bearer_token_env_var = "CLIPMO_MCP_TOKEN"
+```
+
+```bash
+export CLIPMO_MCP_TOKEN=YOUR_TOKEN
+```
+
+### OpenCode
+
+Add to `opencode.json` (project) or `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "clipmo": {
+      "type": "remote",
+      "url": "http://127.0.0.1:47650/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" },
+      "enabled": true
+    }
+  }
+}
+```
+
+### Cursor / Windsurf (`mcp.json`)
+
+```json
+{
+  "mcpServers": {
+    "clipmo": {
+      "url": "http://127.0.0.1:47650/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+### Claude Desktop (via `mcp-remote`)
+
+```json
+{
+  "mcpServers": {
+    "clipmo": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:47650/mcp", "--header", "Authorization:Bearer YOUR_TOKEN"]
+    }
+  }
+}
+```
+
+### Tools
+
+| Tool | What it does |
+| --- | --- |
+| `list_clips` | Search/list history (filters: text, kind, favorites, tag, limit) |
+| `get_clip` | Full text of one clip |
+| `add_clip` | Add a text clip (optional star and tags) |
+| `set_favorite` | Star / unstar |
+| `delete_clip` | Delete one clip (also on synced devices) |
+| `set_tags`, `add_tags`, `remove_tags`, `list_tags` | Manage tags |
+| `list_collections`, `create_collection`, `delete_collection` | Manage collections |
+| `add_to_collection`, `remove_from_collection` | Organize clips |
+| `clear_history` | Destructive; needs `confirm=true`. Keeps favorites unless `include_favorites`; `scope` is `all` or `device` |
+
+Quick check without any client:
+
+```bash
+curl -s http://127.0.0.1:47650/mcp -H "Authorization: Bearer YOUR_TOKEN" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+Anything holding the token can read and change your clipboard history, so treat it like a password. **New access token** in Settings revokes the old one.
+
 ## Default hotkey
 
 **Ctrl + Shift + V.** Win+V is reserved by Windows, so Clipmo uses the common

@@ -43,6 +43,7 @@ ureq = { version = "2", features = ["json"] }
 aes-gcm = "0.10"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 hex = "0.4"
+tiny_http = "0.12"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 

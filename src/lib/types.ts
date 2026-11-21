@@ -62,6 +62,13 @@ export interface SyncPeer {
   status: SyncStatus;
 }
 
+export interface McpStatus {
+  enabled: boolean;
+  running: boolean;
+  url: string | null;
+  token: string;
+}
+
 export type RelayBackend = 'endpoint' | 'firebase';
 
 export interface RelayStatus {

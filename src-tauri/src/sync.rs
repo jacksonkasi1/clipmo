@@ -4,7 +4,7 @@
 //! messages over TCP. All network work is best-effort and runs away from the
 //! clipboard listener so local capture can never be blocked by a slow peer.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
@@ -159,6 +159,9 @@ pub struct SyncService {
     pairing: Arc<pairing::Pairing>,
     relay: Arc<relay::Relay>,
     senders: Arc<Mutex<HashMap<String, Arc<PeerQueue>>>>,
+    /// Hashes this device has just sent. The change watcher polls, so a star or delete
+    /// made within one tick of a copy would otherwise never be noticed.
+    sent: Arc<Mutex<HashSet<String>>>,
 }
 
 impl SyncService {
@@ -177,6 +180,7 @@ impl SyncService {
             pairing: Arc::new(pairing::Pairing::default()),
             relay: Arc::new(relay::Relay::default()),
             senders: Arc::new(Mutex::new(HashMap::new())),
+            sent: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -211,6 +215,7 @@ impl SyncService {
             pairing: Arc::new(pairing::Pairing::default()),
             relay: Arc::new(relay::Relay::default()),
             senders: Arc::new(Mutex::new(HashMap::new())),
+            sent: Arc::new(Mutex::new(HashSet::new())),
         };
         service
             .load_peers()
@@ -523,6 +528,13 @@ impl SyncService {
                 }
             }
         };
+        {
+            let mut sent = self.sent.lock();
+            if sent.len() > 5_000 {
+                sent.clear();
+            }
+            sent.insert(record.id_hash.clone());
+        }
         let preferences = self.preferences.read().clone();
         let Some(job) = build_upsert_job(&item, &record, &preferences, live) else {
             return;
@@ -1789,8 +1801,31 @@ fn spawn_watcher(service: SyncService) -> io::Result<()> {
                     }
                 };
 
+                let own_id = service
+                    .settings
+                    .as_ref()
+                    .map(|s| s.read().sync_device_id.clone())
+                    .unwrap_or_default();
                 for (id_hash, row) in &current {
                     let Some(before) = previous.get(id_hash) else {
+                        // A row created since the last tick may already have been starred
+                        // or tagged; the copy that was sent did not include that.
+                        let own = query_record_by_id(&store.conn.lock(), row.item_id)
+                            .ok()
+                            .flatten()
+                            .is_some_and(|record| record.version.device_id == own_id);
+                        if own && service.sent.lock().contains(id_hash) {
+                            if row.favorite {
+                                service.enqueue_favorite(row);
+                            }
+                            if row.tags_fingerprint != tags_fingerprint(&[]) {
+                                if let Some(db) = &service.db {
+                                    if let Ok(Some(item)) = db.get(row.item_id) {
+                                        service.enqueue_item(&item);
+                                    }
+                                }
+                            }
+                        }
                         continue;
                     };
                     if (before.content_hash != row.content_hash || before.content != row.content)
@@ -1824,7 +1859,21 @@ fn spawn_watcher(service: SyncService) -> io::Result<()> {
                     }
                 }
 
-                for id_hash in previous.keys().filter(|key| !current.contains_key(*key)) {
+                let mut gone: HashSet<String> = previous
+                    .keys()
+                    .filter(|key| !current.contains_key(*key))
+                    .cloned()
+                    .collect();
+                gone.extend(
+                    service
+                        .sent
+                        .lock()
+                        .iter()
+                        .filter(|key| !current.contains_key(*key))
+                        .cloned(),
+                );
+                for id_hash in &gone {
+                    service.sent.lock().remove(id_hash);
                     if !consume_delete_suppression(&service, id_hash) {
                         service.enqueue_tombstone(id_hash);
                     }
