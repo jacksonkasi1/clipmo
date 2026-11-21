@@ -211,7 +211,11 @@ fn pull_items(config: &RelayConfig, after: &str) -> io::Result<Vec<MailItem>> {
 
 /// Sortable, unique, and parseable without decrypting: `<ms>-<random>`.
 fn new_item_id() -> String {
-    format!("{:016}-{}", now_ms().max(0), &uuid::Uuid::new_v4().simple().to_string()[..8])
+    format!(
+        "{:016}-{}",
+        now_ms().max(0),
+        &uuid::Uuid::new_v4().simple().to_string()[..8]
+    )
 }
 
 impl SyncService {
@@ -231,7 +235,12 @@ impl SyncService {
     pub fn save_relay(&self, input: RelayInput) -> Result<RelayStatus> {
         let mut config = self.relay.config.read().clone();
         config.enabled = input.enabled;
-        config.backend = if input.backend == "firebase" { "firebase" } else { "endpoint" }.into();
+        config.backend = if input.backend == "firebase" {
+            "firebase"
+        } else {
+            "endpoint"
+        }
+        .into();
         config.url = input.url.trim().to_string();
         if let Some(secret) = input.secret {
             config.secret = secret.trim().to_string();
@@ -246,10 +255,14 @@ impl SyncService {
                 || config.url.starts_with("http://localhost")
                 || config.url.starts_with("http://127.0.0.1"))
             {
-                return Err(Error::Other("The relay address must start with https://".into()));
+                return Err(Error::Other(
+                    "The relay address must start with https://".into(),
+                ));
             }
             if config.key.is_empty() {
-                return Err(Error::Other("Choose a sync passphrase for the relay.".into()));
+                return Err(Error::Other(
+                    "Choose a sync passphrase for the relay.".into(),
+                ));
             }
         }
         if let Some(store) = &self.store {
@@ -278,8 +291,7 @@ impl SyncService {
             .optional()
             .ok()
             .flatten();
-        if let Some(config) = raw.and_then(|json| serde_json::from_str::<RelayConfig>(&json).ok())
-        {
+        if let Some(config) = raw.and_then(|json| serde_json::from_str::<RelayConfig>(&json).ok()) {
             *self.relay.config.write() = config;
         }
     }
@@ -300,7 +312,9 @@ impl SyncService {
         }
         let mut stripped = envelope.clone();
         stripped.pairing_code = String::new(); // LAN credentials never go to the relay.
-        let Ok(json) = serde_json::to_string(&stripped) else { return };
+        let Ok(json) = serde_json::to_string(&stripped) else {
+            return;
+        };
         let mut outbox = self.relay.outbox.lock();
         if outbox.len() >= 500 {
             outbox.pop_front();
@@ -338,14 +352,23 @@ impl SyncService {
 
     fn relay_tick(&self, app: &AppHandle) -> io::Result<()> {
         let config = self.relay.config.read().clone();
-        let Some(settings) = &self.settings else { return Ok(()) };
+        let Some(settings) = &self.settings else {
+            return Ok(());
+        };
         let own_id = settings.read().sync_device_id.clone();
         // Push.
         loop {
             let next = self.relay.outbox.lock().front().cloned();
             let Some((id, json)) = next else { break };
             let blob = encrypt(&config.key, json.as_bytes())?;
-            push_item(&config, &MailItem { id, device: own_id.clone(), blob })?;
+            push_item(
+                &config,
+                &MailItem {
+                    id,
+                    device: own_id.clone(),
+                    blob,
+                },
+            )?;
             self.relay.outbox.lock().pop_front();
         }
         // Pull.
@@ -357,11 +380,15 @@ impl SyncService {
             if item.device == own_id {
                 continue;
             }
-            let Ok(plain) = decrypt(&config.key, &item.blob) else { continue };
+            let Ok(plain) = decrypt(&config.key, &item.blob) else {
+                continue;
+            };
             if plain.len() > MAX_PLAINTEXT {
                 continue;
             }
-            let Ok(envelope) = serde_json::from_slice::<SyncEnvelope>(&plain) else { continue };
+            let Ok(envelope) = serde_json::from_slice::<SyncEnvelope>(&plain) else {
+                continue;
+            };
             if envelope.device.id != item.device
                 || envelope.body.version().device_id != envelope.device.id
                 || !valid_id_hash(envelope.body.id_hash())
@@ -375,7 +402,9 @@ impl SyncService {
             }
         }
         self.save_relay_cursor(&cursor);
-        self.relay.last_ok_at.store(now_ms().max(0) as u64, Ordering::SeqCst);
+        self.relay
+            .last_ok_at
+            .store(now_ms().max(0) as u64, Ordering::SeqCst);
         if changed {
             let _ = app.emit("clip-updated", ());
         }
@@ -389,7 +418,10 @@ pub(super) fn spawn_relay_worker(service: SyncService, app: AppHandle) -> io::Re
         .spawn(move || loop {
             std::thread::sleep(POLL_INTERVAL);
             let enabled = service.relay.config.read().enabled
-                && service.settings.as_ref().is_some_and(|s| s.read().sync_enabled);
+                && service
+                    .settings
+                    .as_ref()
+                    .is_some_and(|s| s.read().sync_enabled);
             if !enabled {
                 continue;
             }

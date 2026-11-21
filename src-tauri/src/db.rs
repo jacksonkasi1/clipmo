@@ -698,7 +698,11 @@ CREATE TABLE IF NOT EXISTS collections (
     }
 
     /// Ids of the rows a clear would remove (used to keep a device-only clear local).
-    pub fn ids_for_clear(&self, include_favorites: bool, kind: Option<ItemKind>) -> Result<Vec<i64>> {
+    pub fn ids_for_clear(
+        &self,
+        include_favorites: bool,
+        kind: Option<ItemKind>,
+    ) -> Result<Vec<i64>> {
         let conn = self.conn.lock();
         let mut clauses = Vec::new();
         if !include_favorites {

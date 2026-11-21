@@ -7,7 +7,10 @@ pub fn rpc_error(id: Value, code: i32, message: &str) -> Value {
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
     // Hints let MCP clients auto-approve reads and warn before destructive calls.
-    let read_only = matches!(name, "list_clips" | "get_clip" | "list_tags" | "list_collections" | "list_devices");
+    let read_only = matches!(
+        name,
+        "list_clips" | "get_clip" | "list_tags" | "list_collections" | "list_devices"
+    );
     let destructive = matches!(name, "delete_clip" | "delete_collection" | "clear_history");
     json!({
         "name": name,
@@ -57,7 +60,6 @@ pub fn tool_definitions() -> Vec<Value> {
     ]
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,7 +77,9 @@ mod tests {
             assert!(tool["description"].as_str().is_some_and(|d| d.len() > 10));
             // Every required field must be declared as a property.
             for required in tool["inputSchema"]["required"].as_array().unwrap() {
-                assert!(tool["inputSchema"]["properties"].get(required.as_str().unwrap()).is_some());
+                assert!(tool["inputSchema"]["properties"]
+                    .get(required.as_str().unwrap())
+                    .is_some());
             }
         }
     }
@@ -84,10 +88,16 @@ mod tests {
     fn destructive_tools_are_flagged_and_reads_are_read_only() {
         let tools = tool_definitions();
         let find = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap().clone();
-        assert_eq!(find("clear_history")["annotations"]["destructiveHint"], true);
+        assert_eq!(
+            find("clear_history")["annotations"]["destructiveHint"],
+            true
+        );
         assert_eq!(find("delete_clip")["annotations"]["destructiveHint"], true);
         assert_eq!(find("list_clips")["annotations"]["readOnlyHint"], true);
-        assert_eq!(find("set_favorite")["annotations"]["destructiveHint"], false);
+        assert_eq!(
+            find("set_favorite")["annotations"]["destructiveHint"],
+            false
+        );
     }
 
     #[test]

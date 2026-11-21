@@ -1059,7 +1059,10 @@ pub async fn save_relay(
 }
 
 #[tauri::command]
-pub async fn mcp_status(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<crate::mcp::McpStatus> {
+pub async fn mcp_status(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::mcp::McpStatus> {
     Ok(state.mcp.status(&app))
 }
 
@@ -1073,7 +1076,10 @@ pub async fn set_mcp_enabled(
 }
 
 #[tauri::command]
-pub async fn rotate_mcp_token(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<crate::mcp::McpStatus> {
+pub async fn rotate_mcp_token(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::mcp::McpStatus> {
     Ok(state.mcp.rotate_token(&app))
 }
 

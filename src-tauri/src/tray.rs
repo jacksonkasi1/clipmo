@@ -13,7 +13,13 @@ use crate::window;
 pub fn install(app: &mut App) -> tauri::Result<()> {
     let quick = MenuItem::with_id(app, "quick", "Quick Clipboard", true, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show Clipmo", true, None::<&str>)?;
-    let send = MenuItem::with_id(app, "send_latest", "Send latest clip to all devices", true, None::<&str>)?;
+    let send = MenuItem::with_id(
+        app,
+        "send_latest",
+        "Send latest clip to all devices",
+        true,
+        None::<&str>,
+    )?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Clipmo", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
@@ -21,7 +27,15 @@ pub fn install(app: &mut App) -> tauri::Result<()> {
 
     let menu = Menu::with_items(
         app,
-        &[&quick, &show, &send, &separator, &settings, &quit_separator, &quit],
+        &[
+            &quick,
+            &show,
+            &send,
+            &separator,
+            &settings,
+            &quit_separator,
+            &quit,
+        ],
     )?;
 
     TrayIconBuilder::with_id("clipmo-tray")

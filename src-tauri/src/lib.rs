@@ -14,9 +14,8 @@ use tauri::{Manager, WindowEvent};
 #[cfg(not(test))]
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 
-#[cfg(not(test))]
-pub mod mcp;
-pub mod mcp_tools;
+// Used by the Windows capture path only; macOS builds keep it for shared tests.
+#[cfg_attr(not(windows), allow(dead_code))]
 mod capture_policy;
 pub mod clipboard;
 #[cfg(not(test))]
@@ -24,6 +23,9 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod hotkey;
+#[cfg(not(test))]
+pub mod mcp;
+pub mod mcp_tools;
 pub mod models;
 pub mod native_appearance;
 pub mod storage;

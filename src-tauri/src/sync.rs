@@ -508,11 +508,17 @@ impl SyncService {
         // made old clips look newer than deletes the other device had already made, so
         // cleared clips came back after reconnects. Only clips that originated here are
         // backfilled; their own device is responsible for the rest.
-        let own_id = self.settings.as_ref().map(|s| s.read().sync_device_id.clone()).unwrap_or_default();
+        let own_id = self
+            .settings
+            .as_ref()
+            .map(|s| s.read().sync_device_id.clone())
+            .unwrap_or_default();
         let existing = if live {
             None
         } else {
-            query_record_by_id(&store.conn.lock(), item.id).ok().flatten()
+            query_record_by_id(&store.conn.lock(), item.id)
+                .ok()
+                .flatten()
         };
         let record = match existing {
             Some(record) if record.version.device_id == own_id => record,
@@ -1722,7 +1728,11 @@ fn spawn_sender(service: SyncService) -> io::Result<()> {
             }
             let peers: Vec<String> = service.peers.read().keys().cloned().collect();
             for peer_id in peers {
-                if job.target.as_deref().is_some_and(|target| target != peer_id) {
+                if job
+                    .target
+                    .as_deref()
+                    .is_some_and(|target| target != peer_id)
+                {
                     continue;
                 }
                 let queue = {

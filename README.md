@@ -4,7 +4,7 @@
   <img src="assets/logo-256.png" alt="Clipmo logo" width="200" height="200" />
 </p>
 
-**Fast, private clipboard history for Windows and macOS.** Clipmo uses native
+**Fast, private clipboard history for Windows, macOS and Android.** Clipmo uses native
 Windows Acrylic/Mica and macOS vibrancy, with a compact quick window and a full
 history window for previewing and editing clipboard items.
 
@@ -23,18 +23,38 @@ Windows, macOS Intel/Apple Silicon, and Android builds are published on the
 [![macOS](https://img.shields.io/badge/macOS-Intel%20%7C%20Apple%20Silicon-333333)](https://github.com/jacksonkasi1/clipmo/releases/latest)
 [![License](https://img.shields.io/github/license/jacksonkasi1/clipmo)](LICENSE)
 
-**Clipmo 0.2.11 downloads**
+**Clipmo 0.3.0 downloads**
 
 | Platform | Download | Checksums |
 | --- | --- | --- |
-| macOS — Apple Silicon (M-series) | [ARM64 DMG](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/Clipmo_0.2.11_arm64.dmg) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/Clipmo_0.2.11_arm64.sha256) |
-| macOS — Intel | [x86_64 DMG](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/Clipmo_0.2.11_x86_64.dmg) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/Clipmo_0.2.11_x86_64.sha256) |
-| Windows — x64 | [Windows installer](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/Clipmo_0.2.11_x64-setup.exe) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/SHA256SUMS.txt) |
-| Android | [APK](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/Clipmo_0.2.11_android.apk) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.11/SHA256SUMS.txt) |
+| macOS — Apple Silicon (M-series) | [ARM64 DMG](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_arm64.dmg) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_arm64.sha256) |
+| macOS — Intel | [x86_64 DMG](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_x86_64.dmg) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_x86_64.sha256) |
+| Windows — x64 | [Windows installer](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_x64-setup.exe) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/SHA256SUMS.txt) |
+| Android 10+ | [APK](https://github.com/jacksonkasi1/clipmo/releases/tag/v0.3.0) (see the release assets) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/SHA256SUMS.txt) |
 
 The Mac downloads include native vibrancy and are also available as app ZIPs.
-See the [release notes](https://github.com/jacksonkasi1/clipmo/releases/tag/v0.2.11)
-for build provenance, verification, and platform signing details.
+See the [release notes](https://github.com/jacksonkasi1/clipmo/releases/tag/v0.3.0)
+for what changed, build provenance, verification, and platform signing details.
+
+**Install Android:** download the APK to the phone (or `adb install -r Clipmo_0.3.0_android*.apk`),
+allow "Install unknown apps" for your browser/files app when asked, open Clipmo and allow notifications
+(they keep sync running). Then pair it with a desktop: on the desktop choose **Add / Pair device**, on the phone
+open **Devices** and enter the six-digit code or scan the QR code.
+
+## What's new in 0.3.0
+
+- **Sync that reconnects by itself.** Saved devices are found again even when your network blocks UDP
+  broadcasts or the IP address changed, with a **Reconnect** button on desktop and Android.
+- **Deleted clips stay deleted.** Fixes cleared clips reappearing; deletes also reach devices that were offline.
+- **Faster, ordered sync.** A fresh copy is never stuck behind a bulk delete; each device has its own queue.
+- **Clear on this device only, or on every device**, from desktop and Android.
+- **Send to device.** Push selected clips (or the latest one from the tray menu) to one device or all of them.
+- **Optional encrypted relay** for networks that block direct sync (Cloudflare Worker, your own server, or Firebase) —
+  you own the mailbox; see [Sync across devices](#sync-across-devices).
+- **Local MCP server.** Let Claude Code, Codex, OpenCode, Cursor or Claude Desktop search, star, tag, organize and
+  delete clips — see [Control Clipmo from AI assistants](#control-clipmo-from-ai-assistants-mcp).
+- **Android polish.** Clips grouped by day with a Select mode (and select a whole day), confirmation before deleting,
+  and the back button navigates instead of closing the app.
 
 The Windows installer bootstraps WebView2 on machines that do not already have it, then
 creates a Start Menu shortcut, a desktop tray entry, and the `Ctrl + Shift + V`
@@ -68,8 +88,11 @@ For older builds and the full changelog, see
   and a saved Vibrancy/Solid choice in Settings → Appearance → Window material.
 - **Fast startup** — pre-created warm windows, a dedicated Win32 clipboard
   listener, virtualized history rendering, and file-backed image thumbnails.
-- **No telemetry.** Clipboard history stays on the device unless the user enables
-  trusted local-network synchronization.
+- **Sync across your devices** — pair Windows, Mac and Android over the local network,
+  optionally through your own encrypted relay. Details below.
+- **AI-ready** — an optional local MCP server lets assistants organize your clips.
+- **No telemetry.** Clipboard history stays on the device unless you enable
+  synchronization. Clipmo's developer operates no servers and never receives your data.
 
 ## Requirements
 
@@ -218,6 +241,46 @@ clipmo/
     └── Cargo.toml
 ```
 
+## Sync across devices
+
+Pair devices once, then clips, stars, tags and deletes follow you.
+
+1. **Pair (local network).** On one device open **Add / Pair device** (Android: **Devices**), then enter the six-digit
+   code on the other device or scan the QR code. Both devices need LAN sync switched on and to be on the same Wi-Fi.
+   Allow Clipmo through the desktop firewall and, on macOS, the Local Network prompt.
+2. **If a device does not show as connected,** press **Reconnect saved devices** (desktop) or **Reconnect** (Android).
+   Clipmo checks the saved address and scans your local network for the device if its IP changed.
+3. **Clear and send.** *Clear history* asks whether to apply to **this device only** or **all devices**. Select clips and
+   choose **Send to device**, or use the tray item **Send latest clip to all devices**.
+
+### When your network blocks direct sync (optional relay)
+
+Wi-Fi "client isolation", strict firewalls or different networks can prevent devices from reaching each other. The
+**relay** is a mailbox that **you** own; Clipmo's developer never sees your clips. Every device encrypts clips
+(AES-256-GCM) with a **sync passphrase** you choose, so the mailbox only stores scrambled text. Only text clips, edits,
+favorites and deletes use the relay; images and files stay on the direct path.
+
+Turn it on in **Settings → Cross-device sync → Relay (optional)** on **every** device, with the **same passphrase**.
+
+| Backend | What you enter | Setup |
+| --- | --- | --- |
+| **Cloudflare Worker** (or your own HTTP server) | Server address + access password | Deploy `relay/worker.js` (steps below) |
+| **Firebase Realtime Database** | Database URL + database secret | Create a Firebase project and enable Realtime Database |
+| Turso / Postgres / other SQL | Server address + access password | Put a small server in front of the database that speaks the relay API (see [`relay/README.md`](relay/README.md)); Clipmo never connects to a database directly |
+
+**Cloudflare Worker in four commands**
+
+```bash
+cd relay
+npx wrangler d1 create clipmo-relay                 # paste the id into wrangler.toml
+npx wrangler d1 execute clipmo-relay --remote --file schema.sql
+npx wrangler secret put RELAY_TOKEN                 # any long random string = your "access password"
+npx wrangler deploy                                 # prints the https://….workers.dev address
+```
+
+Enter the printed address and your `RELAY_TOKEN` in Clipmo, plus your passphrase. Full details for Firebase and SQL
+backends are in [`relay/README.md`](relay/README.md). Google Drive is not supported yet.
+
 ## Control Clipmo from AI assistants (MCP)
 
 Clipmo includes an optional local [MCP](https://modelcontextprotocol.io) server, so Claude Code, Codex, OpenCode, Cursor and other MCP clients can search, star, tag, organize, add and delete clips for you.
@@ -358,11 +421,18 @@ stable so existing Clipdeck installations retain their database, settings, and
 history when upgrading to Clipmo. New user-facing windows, shortcuts, executable
 names, installer assets, tray text, and release titles use Clipmo.
 
+0.3.0 keeps the local-network protocol (`clipmo-lan-v3`) unchanged, so 0.2.12+ devices still pair and sync with it; update every
+device to get the reconnect and delete fixes. Your history and saved connections carry over.
+
 ## Privacy
 
 Clipmo reads local operating-system appearance settings and clipboard data. It does not
 send telemetry. Entries marked as excluded from clipboard history by password
 managers or Windows are discarded before database persistence.
+
+Synchronization is off until you enable it. Direct sync stays on your local network. The optional relay and the optional
+MCP server are off by default: the relay only stores text encrypted with a passphrase that never leaves your devices, on a
+mailbox you own, and the MCP server listens on `127.0.0.1` only behind an access token. Clipmo's developer operates no servers.
 
 ## License
 

@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::models::{ItemKind, ListQuery, NewItem, SyncStatus};
 use crate::mcp_tools::{rpc_error, tool_definitions};
+use crate::models::{ItemKind, ListQuery, NewItem, SyncStatus};
 use crate::AppState;
 
 const FIRST_PORT: u16 = 47_650;
@@ -46,7 +46,10 @@ pub struct McpServer {
 }
 
 fn file_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_data_dir().ok().map(|dir| dir.join("mcp.json"))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| dir.join("mcp.json"))
 }
 
 fn read_file(app: &AppHandle) -> McpFile {
@@ -149,24 +152,25 @@ impl McpServer {
         *self.server.lock() = Some(server.clone());
         let app = app.clone();
         let stop = self.stop.clone();
-        let _ = std::thread::Builder::new().name("mcp-server".into()).spawn(move || {
-            for request in server.incoming_requests() {
-                if stop.load(Ordering::SeqCst) {
-                    break;
+        let _ = std::thread::Builder::new()
+            .name("mcp-server".into())
+            .spawn(move || {
+                for request in server.incoming_requests() {
+                    if stop.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let app = app.clone();
+                    let _ = std::thread::spawn(move || handle(app, request));
                 }
-                let app = app.clone();
-                let _ = std::thread::spawn(move || handle(app, request));
-            }
-        });
+            });
         log::info!("MCP server listening on 127.0.0.1:{port}");
     }
 }
 
 fn respond(request: tiny_http::Request, status: u16, body: Option<Value>) {
-    let mut response = tiny_http::Response::from_string(
-        body.map(|value| value.to_string()).unwrap_or_default(),
-    )
-    .with_status_code(status);
+    let mut response =
+        tiny_http::Response::from_string(body.map(|value| value.to_string()).unwrap_or_default())
+            .with_status_code(status);
     if let Ok(header) = tiny_http::Header::from_bytes("Content-Type", "application/json") {
         response = response.with_header(header);
     }
@@ -179,9 +183,10 @@ fn handle(app: AppHandle, mut request: tiny_http::Request) {
         return respond(request, 403, Some(json!({"error": "forbidden"})));
     }
     let token = read_file(&app).token;
-    let authorized = request.headers().iter().any(|h| {
-        h.field.equiv("Authorization") && h.value.as_str() == format!("Bearer {token}")
-    });
+    let authorized = request
+        .headers()
+        .iter()
+        .any(|h| h.field.equiv("Authorization") && h.value.as_str() == format!("Bearer {token}"));
     if !authorized {
         return respond(request, 401, Some(json!({"error": "unauthorized"})));
     }
@@ -201,7 +206,11 @@ fn handle(app: AppHandle, mut request: tiny_http::Request) {
         return respond(request, 400, Some(json!({"error": "bad body"})));
     }
     let Ok(message) = serde_json::from_str::<Value>(&body) else {
-        return respond(request, 400, Some(rpc_error(Value::Null, -32700, "parse error")));
+        return respond(
+            request,
+            400,
+            Some(rpc_error(Value::Null, -32700, "parse error")),
+        );
     };
     // Notifications carry no id and get no JSON-RPC response.
     let Some(id) = message.get("id").cloned() else {
@@ -263,12 +272,19 @@ fn summarize(item: &crate::models::ClipItem, full: bool) -> Value {
 fn string_list(args: &Value, key: &str) -> Vec<String> {
     args.get(key)
         .and_then(Value::as_array)
-        .map(|values| values.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 fn id_arg(args: &Value, key: &str) -> Result<i64, String> {
-    args.get(key).and_then(Value::as_i64).ok_or_else(|| format!("'{key}' must be an integer"))
+    args.get(key)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| format!("'{key}' must be an integer"))
 }
 
 fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String> {
@@ -279,31 +295,65 @@ fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String>
     };
     match name {
         "list_clips" => {
-            let mut query = ListQuery::default();
-            query.search = args.get("search").and_then(Value::as_str).map(str::to_string);
-            if let Some(kind) = args.get("kind").and_then(Value::as_str) {
-                let parsed: ItemKind = serde_json::from_value(json!(kind)).map_err(|_| "unknown kind".to_string())?;
-                query.kinds = vec![parsed];
-            }
-            query.favorites_only = args.get("favorites_only").and_then(Value::as_bool).unwrap_or(false);
-            if let Some(tag) = args.get("tag").and_then(Value::as_str) {
-                query.tags = vec![tag.trim().trim_start_matches('#').to_lowercase()];
-            }
-            query.limit = Some(args.get("limit").and_then(Value::as_u64).unwrap_or(20).clamp(1, 100) as u32);
+            let kinds = match args.get("kind").and_then(Value::as_str) {
+                Some(kind) => vec![serde_json::from_value::<ItemKind>(json!(kind))
+                    .map_err(|_| "unknown kind".to_string())?],
+                None => Vec::new(),
+            };
+            let query = ListQuery {
+                search: args
+                    .get("search")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                kinds,
+                favorites_only: args
+                    .get("favorites_only")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                tags: args
+                    .get("tag")
+                    .and_then(Value::as_str)
+                    .map(|tag| vec![tag.trim().trim_start_matches('#').to_lowercase()])
+                    .unwrap_or_default(),
+                limit: Some(
+                    args.get("limit")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(20)
+                        .clamp(1, 100) as u32,
+                ),
+                ..ListQuery::default()
+            };
             let items = state.db.list(&query).map_err(e)?;
-            Ok(json!(items.iter().map(|i| summarize(i, false)).collect::<Vec<_>>()))
+            Ok(json!(items
+                .iter()
+                .map(|i| summarize(i, false))
+                .collect::<Vec<_>>()))
         }
         "get_clip" => {
-            let item = state.db.get(id_arg(args, "id")?).map_err(e)?.ok_or("clip not found")?;
+            let item = state
+                .db
+                .get(id_arg(args, "id")?)
+                .map_err(e)?
+                .ok_or("clip not found")?;
             Ok(summarize(&item, true))
         }
         "add_clip" => {
-            let text = args.get("text").and_then(Value::as_str).ok_or("'text' is required")?;
+            let text = args
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or("'text' is required")?;
             if text.trim().is_empty() {
                 return Err("text cannot be empty".into());
             }
             let kind = crate::clipboard::classify(text.trim());
-            let preview: String = text.trim().lines().next().unwrap_or("").chars().take(200).collect();
+            let preview: String = text
+                .trim()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(200)
+                .collect();
             let upsert = state
                 .db
                 .upsert(&NewItem {
@@ -323,7 +373,11 @@ fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String>
                 })
                 .map_err(e)?;
             let id = upsert.id();
-            if args.get("favorite").and_then(Value::as_bool).unwrap_or(false) {
+            if args
+                .get("favorite")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
                 state.db.set_favorite(id, true).map_err(e)?;
             }
             let tags = string_list(args, "tags");
@@ -338,7 +392,15 @@ fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String>
         }
         "set_favorite" => {
             let id = id_arg(args, "id")?;
-            state.db.set_favorite(id, args.get("favorite").and_then(Value::as_bool).ok_or("'favorite' must be a boolean")?).map_err(e)?;
+            state
+                .db
+                .set_favorite(
+                    id,
+                    args.get("favorite")
+                        .and_then(Value::as_bool)
+                        .ok_or("'favorite' must be a boolean")?,
+                )
+                .map_err(e)?;
             changed();
             Ok(json!({ "ok": true }))
         }
@@ -349,10 +411,25 @@ fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String>
             changed();
             Ok(json!({ "ok": true }))
         }
-        "set_tags" | "add_tags" | "remove_tags" | "add_to_collection" | "remove_from_collection" => {
+        "set_tags"
+        | "add_tags"
+        | "remove_tags"
+        | "add_to_collection"
+        | "remove_from_collection" => {
             let (ids, tags): (Vec<i64>, Vec<String>) = if name.ends_with("collection") {
-                let ids = args.get("ids").and_then(Value::as_array).map(|v| v.iter().filter_map(Value::as_i64).collect()).unwrap_or_default();
-                (ids, vec![args.get("collection").and_then(Value::as_str).ok_or("'collection' is required")?.to_string()])
+                let ids = args
+                    .get("ids")
+                    .and_then(Value::as_array)
+                    .map(|v| v.iter().filter_map(Value::as_i64).collect())
+                    .unwrap_or_default();
+                (
+                    ids,
+                    vec![args
+                        .get("collection")
+                        .and_then(Value::as_str)
+                        .ok_or("'collection' is required")?
+                        .to_string()],
+                )
             } else {
                 (vec![id_arg(args, "id")?], string_list(args, "tags"))
             };
@@ -362,7 +439,11 @@ fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String>
                 match name {
                     "set_tags" => next = tags.clone(),
                     "add_tags" | "add_to_collection" => next.extend(tags.clone()),
-                    _ => next.retain(|t| !tags.iter().any(|r| r.trim().trim_start_matches('#').eq_ignore_ascii_case(t))),
+                    _ => next.retain(|t| {
+                        !tags
+                            .iter()
+                            .any(|r| r.trim().trim_start_matches('#').eq_ignore_ascii_case(t))
+                    }),
                 }
                 state.db.set_tags(id, &next).map_err(e)?;
             }
@@ -384,11 +465,18 @@ fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String>
             }))
         }
         "send_to_device" => {
-            let ids: Vec<i64> = args.get("ids").and_then(Value::as_array).map(|v| v.iter().filter_map(Value::as_i64).collect()).unwrap_or_default();
+            let ids: Vec<i64> = args
+                .get("ids")
+                .and_then(Value::as_array)
+                .map(|v| v.iter().filter_map(Value::as_i64).collect())
+                .unwrap_or_default();
             if ids.is_empty() {
                 return Err("'ids' must list at least one clip id".into());
             }
-            let target = args.get("device_id").and_then(Value::as_str).map(str::to_string);
+            let target = args
+                .get("device_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             let mut sent = 0;
             for id in ids {
                 if let Some(item) = state.db.get(id).map_err(e)? {
@@ -402,12 +490,26 @@ fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String>
         "list_tags" => Ok(json!(state.db.known_tags().map_err(e)?)),
         "list_collections" => Ok(json!(state.db.collections().map_err(e)?)),
         "create_collection" => {
-            state.db.create_collection(args.get("name").and_then(Value::as_str).ok_or("'name' is required")?).map_err(e)?;
+            state
+                .db
+                .create_collection(
+                    args.get("name")
+                        .and_then(Value::as_str)
+                        .ok_or("'name' is required")?,
+                )
+                .map_err(e)?;
             changed();
             Ok(json!({ "ok": true }))
         }
         "delete_collection" => {
-            state.db.delete_collection(args.get("name").and_then(Value::as_str).ok_or("'name' is required")?).map_err(e)?;
+            state
+                .db
+                .delete_collection(
+                    args.get("name")
+                        .and_then(Value::as_str)
+                        .ok_or("'name' is required")?,
+                )
+                .map_err(e)?;
             changed();
             Ok(json!({ "ok": true }))
         }
@@ -415,7 +517,10 @@ fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String>
             if args.get("confirm").and_then(Value::as_bool) != Some(true) {
                 return Err("clear_history is destructive: pass confirm=true only when the user explicitly asked".into());
             }
-            let include_favorites = args.get("include_favorites").and_then(Value::as_bool).unwrap_or(false);
+            let include_favorites = args
+                .get("include_favorites")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let _guard = state.storage_operation.read();
             if args.get("scope").and_then(Value::as_str) == Some("device") {
                 let ids = state.db.ids_for_clear(include_favorites, None).map_err(e)?;
