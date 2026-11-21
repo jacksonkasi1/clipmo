@@ -528,8 +528,12 @@ pub fn active_hotkeys(state: tauri::State<'_, AppState>) -> [bool; 2] {
     };
     let active = state.hotkeys.lock();
     [
-        crate::hotkey::parse(&quick).ok().is_some_and(|s| active.quick == Some(s)),
-        crate::hotkey::parse(&full).ok().is_some_and(|s| active.full == Some(s)),
+        crate::hotkey::parse(&quick)
+            .ok()
+            .is_some_and(|s| active.quick == Some(s)),
+        crate::hotkey::parse(&full)
+            .ok()
+            .is_some_and(|s| active.full == Some(s)),
     ]
 }
 
