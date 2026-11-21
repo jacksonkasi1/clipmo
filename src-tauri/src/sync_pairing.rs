@@ -309,6 +309,158 @@ impl SyncService {
         candidates
     }
 
+    /// Asks whatever listens at `address` who it is. A random token is used so a
+    /// saved credential is never sent to a host that has not proven its identity;
+    /// even a "not paired" rejection names the device.
+    fn identify(&self, address: SocketAddr, timeout: Duration) -> io::Result<DeviceIdentity> {
+        let current = self.settings.as_ref().unwrap().read().clone();
+        let request = Control {
+            protocol: PROTOCOL.into(),
+            kind: "ping".into(),
+            device: current.device_identity(),
+            tcp_port: self.listen_port,
+            code: String::new(),
+            token: format!(
+                "{:032x}{:032x}",
+                uuid::Uuid::new_v4().as_u128(),
+                uuid::Uuid::new_v4().as_u128()
+            ),
+        };
+        let mut stream = TcpStream::connect_timeout(&address, timeout)?;
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+        write_json(&mut stream, &request)?;
+        let reply: ControlReply = read_json(&mut stream)?;
+        Ok(reply.device)
+    }
+
+    /// Reconnects saved devices without relying on UDP broadcasts. Tries the last
+    /// known address first; with `scan` it also searches the local /24 networks
+    /// for a device whose identity matches (its address may have changed).
+    /// Returns how many saved devices are connected afterwards.
+    pub(super) fn probe_saved_peers(&self, force: bool, scan: bool) -> usize {
+        let Some(settings) = &self.settings else {
+            return 0;
+        };
+        if !settings.read().sync_enabled {
+            return 0;
+        }
+        let peers: Vec<PeerRecord> = self.peers.read().values().cloned().collect();
+        let mut stale = Vec::new();
+        // Each saved device counts once, however many addresses answered.
+        let mut connected_ids: HashSet<String> = HashSet::new();
+        for peer in peers {
+            if !force && now_ms() - peer.last_seen_at < 15_000 {
+                connected_ids.insert(peer.device.id.clone());
+                continue;
+            }
+            let was_offline = now_ms() - peer.last_seen_at > 30_000;
+            // The saved address may now belong to another device: confirm who answers
+            // before sending the saved credential.
+            let identity_matches = self
+                .identify(peer.address, Duration::from_secs(3))
+                .is_ok_and(|device| device.id == peer.device.id);
+            if identity_matches
+                && self
+                    .exchange_control(peer.address, &peer.device.id, "ping", "", &peer.token)
+                    .is_ok()
+            {
+                connected_ids.insert(peer.device.id.clone());
+                if was_offline {
+                    self.enqueue_history_backfill();
+                }
+            } else {
+                stale.push(peer);
+            }
+        }
+        if scan && !stale.is_empty() {
+            for (address, device_id) in self.scan_lan(&stale) {
+                if connected_ids.contains(&device_id) {
+                    continue;
+                }
+                if let Some(peer) = stale.iter().find(|p| p.device.id == device_id) {
+                    if self
+                        .exchange_control(address, &peer.device.id, "ping", "", &peer.token)
+                        .is_ok()
+                    {
+                        connected_ids.insert(device_id);
+                        self.enqueue_history_backfill();
+                    }
+                }
+            }
+        }
+        connected_ids.len()
+    }
+
+    /// Finds saved devices on the local IPv4 subnets (up to /24 each) by identity.
+    fn scan_lan(&self, wanted: &[PeerRecord]) -> Vec<(SocketAddr, String)> {
+        let mut hosts = Vec::new();
+        for interface in if_addrs::get_if_addrs().unwrap_or_default() {
+            if let if_addrs::IfAddr::V4(v4) = interface.addr {
+                if v4.ip.is_loopback() || v4.ip.is_link_local() || !v4.ip.is_private() {
+                    continue;
+                }
+                let o = v4.ip.octets();
+                for last in 1..255u8 {
+                    let ip = Ipv4Addr::new(o[0], o[1], o[2], last);
+                    if ip != v4.ip && !hosts.contains(&ip) {
+                        hosts.push(ip);
+                    }
+                }
+            }
+        }
+        // Prefer the ports peers used before, then the whole sync range.
+        let mut ports: Vec<u16> = wanted.iter().map(|p| p.address.port()).collect();
+        ports.extend(FIRST_SYNC_PORT..=LAST_SYNC_PORT);
+        ports.dedup();
+        let wanted_ids: Vec<String> = wanted.iter().map(|p| p.device.id.clone()).collect();
+        let found = Arc::new(Mutex::new(Vec::new()));
+        let hosts = Arc::new(hosts);
+        let ports = Arc::new(ports);
+        let next = Arc::new(AtomicU64::new(0));
+        let workers: Vec<_> = (0..48)
+            .map(|_| {
+                let (service, hosts, ports, next, found, ids) = (
+                    self.clone(),
+                    hosts.clone(),
+                    ports.clone(),
+                    next.clone(),
+                    found.clone(),
+                    wanted_ids.clone(),
+                );
+                std::thread::spawn(move || loop {
+                    let index = next.fetch_add(1, Ordering::SeqCst) as usize;
+                    let Some(ip) = hosts.get(index) else { break };
+                    // A host that drops connections costs at most two timeouts, but a
+                    // timeout on one port must not hide a later port where the device listens.
+                    let mut timeouts = 0;
+                    for port in ports.iter() {
+                        let address = SocketAddr::new(IpAddr::V4(*ip), *port);
+                        match service.identify(address, Duration::from_millis(250)) {
+                            Ok(device) if ids.contains(&device.id) => {
+                                found.lock().push((address, device.id));
+                                break;
+                            }
+                            Ok(_) => break,
+                            Err(error) if error.kind() == io::ErrorKind::TimedOut => {
+                                timeouts += 1;
+                                if timeouts >= 2 {
+                                    break;
+                                }
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            let _ = worker.join();
+        }
+        let result = found.lock().clone();
+        result
+    }
+
     pub(super) fn exchange_control(
         &self,
         address: SocketAddr,

@@ -697,6 +697,37 @@ CREATE TABLE IF NOT EXISTS collections (
         filter_unreferenced_assets(&conn, assets)
     }
 
+    /// Ids of the rows a clear would remove (used to keep a device-only clear local).
+    pub fn ids_for_clear(
+        &self,
+        include_favorites: bool,
+        kind: Option<ItemKind>,
+    ) -> Result<Vec<i64>> {
+        let conn = self.conn.lock();
+        let mut clauses = Vec::new();
+        if !include_favorites {
+            clauses.push("favorite = 0");
+        }
+        if kind.is_some() {
+            clauses.push("kind = ?1");
+        }
+        let filter = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        let mut stmt = conn.prepare(&format!("SELECT id FROM items {filter}"))?;
+        let ids = match kind {
+            Some(kind) => stmt
+                .query_map(params![kind.as_str()], |row| row.get::<_, i64>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+            None => stmt
+                .query_map([], |row| row.get::<_, i64>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+        };
+        Ok(ids)
+    }
+
     /// Clears history. Starred entries survive unless `include_favorites`.
     pub fn clear(&self, include_favorites: bool) -> Result<Vec<String>> {
         let conn = self.conn.lock();

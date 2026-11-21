@@ -13,6 +13,13 @@ use crate::window;
 pub fn install(app: &mut App) -> tauri::Result<()> {
     let quick = MenuItem::with_id(app, "quick", "Quick Clipboard", true, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show Clipmo", true, None::<&str>)?;
+    let send = MenuItem::with_id(
+        app,
+        "send_latest",
+        "Send latest clip to all devices",
+        true,
+        None::<&str>,
+    )?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Clipmo", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
@@ -20,7 +27,15 @@ pub fn install(app: &mut App) -> tauri::Result<()> {
 
     let menu = Menu::with_items(
         app,
-        &[&quick, &show, &separator, &settings, &quit_separator, &quit],
+        &[
+            &quick,
+            &show,
+            &send,
+            &separator,
+            &settings,
+            &quit_separator,
+            &quit,
+        ],
     )?;
 
     TrayIconBuilder::with_id("clipmo-tray")
@@ -34,6 +49,21 @@ pub fn install(app: &mut App) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "quick" => window::show_quick(app),
             "show" => window::show_full(app),
+            "send_latest" => {
+                // Forces the newest clip out to every paired device, even when automatic
+                // sync would not (for example a type that is switched off).
+                let state = app.state::<crate::AppState>();
+                let query = crate::models::ListQuery {
+                    limit: Some(1),
+                    ..Default::default()
+                };
+                if let Ok(items) = state.db.list(&query) {
+                    if let Some(item) = items.first() {
+                        let sent = state.sync.send_item_to(item, None);
+                        log::info!("tray send-latest queued={sent}");
+                    }
+                }
+            }
             "settings" => {
                 if let Some(window) = app.get_webview_window("settings") {
                     let _ = window.set_title("Clipmo Settings");

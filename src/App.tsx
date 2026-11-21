@@ -269,11 +269,11 @@ export default function App() {
         void setShowPreview(!showPreview);
       } else if (modifier && event.shiftKey && isDeleteShortcutKey(event)) {
         event.preventDefault();
-        void api.confirm(
+        void api.confirmClear(
           'Clear all non-favorite history items? Favorites will stay pinned.',
           'Clear history',
-        ).then((approved) => {
-          if (approved) return clearHistory(false);
+        ).then((scope) => {
+          if (scope) return clearHistory(false, scope);
         }).catch((error: unknown) => {
           console.error('Failed to confirm clearing clipboard history', error);
         });

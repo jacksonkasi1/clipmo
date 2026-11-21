@@ -4,6 +4,8 @@ import type { ApplicationInfo, Backdrop, FileFilterMode, IgnoredApp, ImageCompre
 
 // ** import utils
 import { formatBytes } from './lib/formatting';
+import { RelaySettings } from './components/RelaySettings';
+import { McpSettings } from './components/McpSettings';
 import { shortcutFromKeyEvent, shortcutRecorderKeyAction } from './lib/global-shortcut';
 import { mutationErrorMessage } from './lib/mutation-error';
 
@@ -16,6 +18,8 @@ import {
   AppWindow,
   Archive,
   Check,
+  Cloud,
+  Plug,
   CircleAlert,
   FolderOpen,
   HardDrive,
@@ -260,11 +264,11 @@ export default function Settings() {
     if (count === 0) return;
     setMutationError(null);
     try {
-      const approved = await api.confirm(
+      const scope = await api.confirmClear(
         `Delete ${count} non-favorite ${label.toLowerCase()} item${count === 1 ? '' : 's'}? Favorites will stay.`,
         `Clear ${label}`,
       );
-      if (approved) await clearCategory(kind);
+      if (scope) await clearCategory(kind, false, scope);
     } catch (error) {
       setMutationError(mutationErrorMessage(`${label} history could not be cleared.`, error));
     }
@@ -273,13 +277,13 @@ export default function Settings() {
   const removeHistory = async (includeFavorites: boolean) => {
     setMutationError(null);
     try {
-      const approved = await api.confirm(
+      const scope = await api.confirmClear(
         includeFavorites
           ? 'Delete every history item, including favorites? This cannot be undone.'
           : 'Clear all non-favorite history items? Favorites will stay pinned.',
         includeFavorites ? 'Delete all history' : 'Clear history',
       );
-      if (approved) await clearHistory(includeFavorites);
+      if (scope) await clearHistory(includeFavorites, scope);
     } catch (error) {
       setMutationError(mutationErrorMessage('Clipboard history could not be cleared.', error));
     }
@@ -543,6 +547,18 @@ export default function Settings() {
               ))
             )}
           </div>
+        </Section>
+        )}
+
+        {activeCategory === 'sync' && (
+        <Section title="Relay (optional)" description="Sync through your own server when the network blocks direct connections." icon={<Cloud size={18} />}>
+          <RelaySettings />
+        </Section>
+        )}
+
+        {activeCategory === 'sync' && (
+        <Section title="AI assistants (MCP)" description="Let Claude, Codex or OpenCode manage your clipboard history." icon={<Plug size={18} />}>
+          <McpSettings />
         </Section>
         )}
 

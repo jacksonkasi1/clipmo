@@ -1,12 +1,14 @@
 // ** import lib
-import { FolderPlus, FolderX, Star, StarOff, Trash2 } from 'lucide-react';
+import { FolderPlus, FolderX, Send, Star, StarOff, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 
+import { api } from '../lib/tauri';
+import type { SyncPeer } from '../lib/types';
 import { useStore } from '../lib/store';
 
-type SubmenuId = 'add' | 'remove';
+type SubmenuId = 'add' | 'remove' | 'send';
 
 /** Grace period so brief pointer drift outside a submenu does not collapse it. */
 const SUBMENU_CLOSE_DELAY_MS = 250;
@@ -36,6 +38,25 @@ export function SelectionContextMenu({ x, y, onClose }: Props) {
     () => collections.filter((collection) => selected.some((item) => item.tags.includes(collection.name))),
     [collections, selected],
   );
+
+  const [peers, setPeers] = useState<SyncPeer[]>([]);
+  useEffect(() => {
+    let active = true;
+    void api.syncState().then((state) => {
+      if (active && state.enabled) setPeers(state.peers);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+  const sendSelected = (targetId: string | null) => async () => {
+    try {
+      const queued = await api.sendToDevice(selected.map((item) => item.id), targetId);
+      if (queued === 0) {
+        await api.notify('Nothing was sent. Make sure LAN sync is on and the device is paired, then try again.');
+      }
+    } catch (error) {
+      await api.notify(`Could not send: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
 
   const [openSubmenu, setOpenSubmenu] = useState<SubmenuId | null>(null);
   const closeTimer = useRef<number | null>(null);
@@ -173,6 +194,19 @@ export function SelectionContextMenu({ x, y, onClose }: Props) {
           )) : <span>Not in a collection</span>}
         </div>
       </details>
+      {peers.length > 0 && (
+        <details {...submenuProps('send')}>
+          <summary {...summaryProps('send')}><Send size={15} aria-hidden /> Send to device</summary>
+          <div className="selection-context-submenu">
+            <button type="button" role="menuitem" onClick={() => run(sendSelected(null))}>All devices</button>
+            {peers.map((peer) => (
+              <button key={peer.device.id} type="button" role="menuitem" onClick={() => run(sendSelected(peer.device.id))}>
+                {peer.device.name}{peer.status === 'offline' ? ' (offline)' : ''}
+              </button>
+            ))}
+          </div>
+        </details>
+      )}
       <button type="button" role="menuitem" onPointerEnter={closeSubmenuNow} onClick={() => run(() => setSelectedFavorites(!allStarred))}>
         {allStarred ? <StarOff size={15} aria-hidden /> : <Star size={15} aria-hidden />}
         {allStarred ? 'Unstar' : 'Star'}

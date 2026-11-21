@@ -402,8 +402,13 @@ pub async fn clear_history(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     include_favorites: bool,
+    scope: Option<String>,
 ) -> Result<()> {
     let _storage_guard = state.storage_operation.read();
+    if scope.as_deref() == Some("device") {
+        let ids = state.db.ids_for_clear(include_favorites, None)?;
+        state.sync.detach_deletions(&ids);
+    }
     let orphans = state.db.clear(include_favorites)?;
     cleanup_asset_paths(&state.storage_root.read(), orphans);
     let _ = app.emit("clip-updated", ());
@@ -416,8 +421,13 @@ pub async fn clear_category(
     state: tauri::State<'_, AppState>,
     kind: ItemKind,
     include_favorites: bool,
+    scope: Option<String>,
 ) -> Result<()> {
     let _storage_guard = state.storage_operation.read();
+    if scope.as_deref() == Some("device") {
+        let ids = state.db.ids_for_clear(include_favorites, Some(kind))?;
+        state.sync.detach_deletions(&ids);
+    }
     let orphans = state.db.clear_kind(kind, include_favorites)?;
     cleanup_asset_paths(&state.storage_root.read(), orphans);
     let _ = app.emit("clip-updated", ());
@@ -518,8 +528,12 @@ pub fn active_hotkeys(state: tauri::State<'_, AppState>) -> [bool; 2] {
     };
     let active = state.hotkeys.lock();
     [
-        crate::hotkey::parse(&quick).ok().is_some_and(|s| active.quick == Some(s)),
-        crate::hotkey::parse(&full).ok().is_some_and(|s| active.full == Some(s)),
+        crate::hotkey::parse(&quick)
+            .ok()
+            .is_some_and(|s| active.quick == Some(s)),
+        crate::hotkey::parse(&full)
+            .ok()
+            .is_some_and(|s| active.full == Some(s)),
     ]
 }
 
@@ -1035,6 +1049,87 @@ pub async fn sync_history_now(app: AppHandle, state: tauri::State<'_, AppState>)
 }
 
 #[tauri::command]
+pub async fn send_to_device(
+    state: tauri::State<'_, AppState>,
+    ids: Vec<i64>,
+    target_id: Option<String>,
+) -> Result<usize> {
+    let mut sent = 0;
+    for id in ids {
+        if let Some(item) = state.db.get(id)? {
+            if state.sync.send_item_to(&item, target_id.clone()) {
+                sent += 1;
+            }
+        }
+    }
+    Ok(sent)
+}
+
+#[tauri::command]
+pub async fn relay_status(state: tauri::State<'_, AppState>) -> Result<crate::sync::RelayStatus> {
+    Ok(state.sync.relay_status())
+}
+
+#[tauri::command]
+pub async fn save_relay(
+    state: tauri::State<'_, AppState>,
+    input: crate::sync::RelayInput,
+) -> Result<crate::sync::RelayStatus> {
+    state.sync.save_relay(input)
+}
+
+#[tauri::command]
+pub async fn mcp_status(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::mcp::McpStatus> {
+    Ok(state.mcp.status(&app))
+}
+
+#[tauri::command]
+pub async fn set_mcp_enabled(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<crate::mcp::McpStatus> {
+    Ok(state.mcp.set_enabled(&app, enabled))
+}
+
+#[tauri::command]
+pub async fn rotate_mcp_token(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::mcp::McpStatus> {
+    Ok(state.mcp.rotate_token(&app))
+}
+
+/// Saves the entered relay settings, then proves they work with a real round trip.
+#[tauri::command]
+pub async fn verify_relay(
+    state: tauri::State<'_, AppState>,
+    input: Option<crate::sync::RelayInput>,
+) -> Result<String> {
+    if let Some(input) = input {
+        state.sync.save_relay(input)?;
+    }
+    let service = state.sync.clone();
+    tauri::async_runtime::spawn_blocking(move || service.verify_relay())
+        .await
+        .map_err(|error| Error::Other(error.to_string()))?
+        .map_err(Error::Other)
+}
+
+#[tauri::command]
+pub async fn reconnect_sync(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<usize> {
+    let service = state.sync.clone();
+    let connected = tauri::async_runtime::spawn_blocking(move || service.reconnect_now())
+        .await
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let _ = app.emit("sync-peers-updated", ());
+    Ok(connected)
+}
+
+#[tauri::command]
 pub async fn regenerate_pairing_code(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
@@ -1100,6 +1195,10 @@ pub async fn quit_app(app: AppHandle) -> Result<()> {
 }
 
 // ---- helpers -------------------------------------------------------------
+
+pub fn cleanup_asset_paths_public(storage_root: &std::path::Path, orphans: Vec<String>) {
+    cleanup_asset_paths(storage_root, orphans);
+}
 
 fn cleanup_asset_paths(storage_root: &std::path::Path, orphans: Vec<String>) {
     for path in orphans {

@@ -53,7 +53,7 @@ internal fun contentHashForSync(kind: ItemKind, content: String, idHash: String)
 	return bytes.take(16).joinToString("") { "%02x".format(it) }
 }
 const val HARD_MAX_MESSAGE_BYTES = 128L * 1024 * 1024
-const val LIVE_CLIP_MAX_AGE_MS = 30_000L
+const val LIVE_CLIP_MAX_AGE_MS = 120_000L
 const val LIVE_CLIP_FUTURE_TOLERANCE_MS = 5_000L
 const val KEY_COPY_LIVE_SYNC_TO_CLIPBOARD = "copy_live_sync_to_clipboard"
 const val KEY_LAST_REMOTE_CLIPBOARD_AT = "last_remote_clipboard_at"
@@ -197,8 +197,10 @@ class ClipSyncService : Service() {
 		const val CHANNEL_ID = "clipmo_sync_channel"
 		const val NOTIF_ID = 2
 		const val ACTION_SYNC_NOW = "app.clipdeck.desktop.action.SYNC_NOW"
+		const val ACTION_SEND_TO = "app.clipdeck.desktop.action.SEND_TO"
+		const val ACTION_RECONNECT = "app.clipdeck.desktop.action.RECONNECT"
 		const val CONNECT_TIMEOUT_MS = 900L
-		const val PROBE_TICK_MS = 10_000L
+		const val PROBE_TICK_MS = 8_000L
 	}
 
 	private val binder = LocalBinder()
@@ -230,6 +232,7 @@ class ClipSyncService : Service() {
 		val blobs: List<File> = emptyList(),
 		val estimatedBytes: Long = 1024,
 		var pendingPeers: MutableSet<String>? = null,
+		var relayed: Boolean = false,
 	)
 
 	data class Suppression(
@@ -270,6 +273,8 @@ class ClipSyncService : Service() {
 
 		if (running) {
 			if (intent?.action == ACTION_SYNC_NOW) serviceScope.launch { enqueueHistoryBackfill() }
+			if (intent?.action == ACTION_RECONNECT) serviceScope.launch { reconnectSavedPeers(force = true, scan = true); enqueueHistoryBackfill() }
+			if (intent?.action == ACTION_SEND_TO) serviceScope.launch { sendItemsTo(intent) }
 			return START_STICKY
 		}
 		val preferences = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
@@ -293,7 +298,10 @@ class ClipSyncService : Service() {
 			launch { drainSendQueue(deviceId, deviceName) }
 			launch { watchLocalChanges(deviceId) }
 			launch { probePeers() }
+			launch { relayLoop(deviceId) }
 			if (intent?.action == ACTION_SYNC_NOW) enqueueHistoryBackfill()
+			if (intent?.action == ACTION_RECONNECT) reconnectSavedPeers(force = true, scan = true)
+			if (intent?.action == ACTION_SEND_TO) sendItemsTo(intent)
 		}
 
 		Log.i("ClipSyncService", "started on port=$listenPort deviceId=$deviceId")
@@ -491,7 +499,7 @@ class ClipSyncService : Service() {
 			}
 		}
 
-	private suspend fun enqueueItem(itemId: Long, kind: ItemKind, live: Boolean = true, targetPeerId: String? = null) = syncMutex.withLock {
+	private suspend fun enqueueItem(itemId: Long, kind: ItemKind, live: Boolean = true, targetPeerId: String? = null, reuseVersion: Boolean = false) = syncMutex.withLock {
 		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
 		val cursor = db.query("items", null, "id=?", arrayOf(itemId.toString()), null, null, null)
 		cursor.use { c ->
@@ -509,12 +517,20 @@ class ClipSyncService : Service() {
 				db.update("items", values, "id=?", arrayOf(itemId.toString()))
 			}
 			val contentHash = contentHashForSync(kind, content, idHash)
-			val version = SyncVersion(
-				device_id = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
-					.getString("device_id", "local")!!,
-				lamport = lamport.getAndIncrement(),
-				wall_ms = ts
-			)
+			val myId = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE).getString("device_id", "local")!!
+			// A backfill resends the ORIGINAL version. A fresh one would make an old clip look
+			// newer than a delete another device already made, so deleted clips reappeared.
+			val storedLamport = c.getColumnIndex("origin_lamport").takeIf { it >= 0 && !c.isNull(it) }?.let(c::getLong) ?: 0L
+			val storedDevice = c.getColumnIndex("origin_device").takeIf { it >= 0 && !c.isNull(it) }?.let(c::getString)
+			val version = if (reuseVersion && storedLamport > 0 && storedDevice == myId) {
+				SyncVersion(myId, storedLamport, c.getColumnIndex("origin_wall_ms").takeIf { it >= 0 }?.let(c::getLong) ?: ts)
+			} else if (reuseVersion && storedDevice != null && storedDevice != myId) {
+				return@withLock // another device owns this clip and resends it itself
+			} else {
+				SyncVersion(myId, lamport.getAndIncrement(), ts).also { fresh ->
+					db.execSQL("UPDATE items SET origin_lamport=?, origin_wall_ms=? WHERE id=?", arrayOf(fresh.lamport, fresh.wall_ms, itemId))
+				}
+			}
 			val snapshot = ClipSnapshot(
 				id_hash = idHash,
 				kind = kind,
@@ -541,11 +557,14 @@ class ClipSyncService : Service() {
 				if (targetPeerId != null) {
 					job.pendingPeers = mutableSetOf(targetPeerId)
 				}
-				jobQueue.add(job)
+				// Fresh copies jump ahead of bulk work such as backfills and deletes.
+				if (live && targetPeerId == null) jobQueue.addFirst(job) else jobQueue.addLast(job)
 			}
 		}
 		db.close()
 	}
+
+	private val peerDownUntil = ConcurrentHashMap<String, Long>()
 
 	private suspend fun drainSendQueue(deviceId: String, deviceName: String) {
 		while (running) {
@@ -564,11 +583,21 @@ class ClipSyncService : Service() {
 				body = job.body
 			)
 
+			// Broadcast jobs (not "send to one device") also go to the relay once, when enabled.
+			val relay = relayConfig()
+			if (relay.enabled && !job.relayed) {
+				job.relayed = true
+				if (job.pendingPeers == null && job.body.isRelayEligible()) queueRelay(envelope)
+			}
 			val targets = job.pendingPeers ?: peers.keys.toMutableSet().also { job.pendingPeers = it }
+			if (targets.isEmpty() && relay.enabled) {
+				// No direct peer is reachable; the relay carries it and reconnect backfill covers LAN peers.
+				job.pendingPeers = null
+				continue
+			}
 			if (targets.isEmpty()) {
-                job.pendingPeers = null
-				syncMutex.withLock { jobQueue.addFirst(job) }
-				delay(1_000)
+				// Nobody to deliver to right now; reconnect backfill (items + deletes) catches devices up.
+				job.pendingPeers = null
 				continue
 			}
 			for (peerId in targets.toList()) {
@@ -577,6 +606,7 @@ class ClipSyncService : Service() {
                 if (token == null) { targets.remove(peerId); peers.remove(peerId); continue }
                 val peer = peers[peerId] ?: continue
                 if (peer.address.address.isAnyLocalAddress) continue
+                if (System.currentTimeMillis() < (peerDownUntil[peerId] ?: 0L)) { targets.remove(peerId); continue }
                 if (sendToPeer(peer.address, envelope.copy(pairing_code = token), job.blobs)) {
 					targets.remove(peerId)
 					touchDeviceSeen(peerId)
@@ -584,12 +614,74 @@ class ClipSyncService : Service() {
 						"ClipSyncService",
 						"sent ${job.body.javaClass.simpleName} version=${job.body.version().lamport} to ${peer.device.platform}",
 					)
+				} else {
+					// Skip an unreachable device briefly; reconnect backfill catches it up.
+					peerDownUntil[peerId] = System.currentTimeMillis() + 5_000
+					targets.remove(peerId)
 				}
 			}
-			if (targets.isNotEmpty()) {
-                // An offline recipient must not block newer clips to online devices.
-				syncMutex.withLock { jobQueue.addLast(job) }
-				delay(1_000)
+		}
+	}
+
+	// ---- Relay (optional, end-to-end encrypted, user-owned mailbox) ----
+	private val relayClient by lazy { RelayClient(mapper) }
+	private val relayOutbox = java.util.concurrent.ConcurrentLinkedQueue<Pair<String, String>>()
+
+	private fun SyncBody.isRelayEligible() =
+		this is SyncBody.ClipUpsert || this is SyncBody.ClipEdit || this is SyncBody.FavoriteToggle || this is SyncBody.Tombstone
+
+	private fun relayConfig(): RelayConfig {
+		val p = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+		return RelayConfig(
+			p.getBoolean("relay_enabled", false), p.getString("relay_backend", "endpoint").orEmpty(),
+			p.getString("relay_url", "").orEmpty(), p.getString("relay_secret", "").orEmpty(),
+			p.getString("relay_key", "").orEmpty(), p.getString("relay_channel", "").orEmpty(),
+		)
+	}
+
+	private fun queueRelay(envelope: SyncEnvelope) {
+		if (relayOutbox.size >= 500) relayOutbox.poll()
+		val json = mapper.writeValueAsString(envelope.copy(pairing_code = ""))
+		relayOutbox.add(RelayCrypto.newItemId() to json)
+	}
+
+	private suspend fun relayLoop(deviceId: String) = withContext(Dispatchers.IO) {
+		val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+		while (running) {
+			delay(4_000)
+			val config = relayConfig()
+			if (!config.enabled || config.keyHex.isBlank() || !prefs.getBoolean("sync_enabled", false)) continue
+			try {
+				while (true) {
+					val (id, json) = relayOutbox.peek() ?: break
+					relayClient.push(config, MailItem(id, deviceId, RelayCrypto.encrypt(config.keyHex, json.toByteArray())))
+					relayOutbox.poll()
+				}
+				var cursor = prefs.getString("relay_cursor", null) ?: "%016d-".format(System.currentTimeMillis() - 600_000)
+				for (item in relayClient.pull(config, cursor)) {
+					cursor = item.id
+					if (item.device == deviceId) continue
+					val plain = RelayCrypto.decrypt(config.keyHex, item.blob) ?: continue
+					if (plain.size > 512 * 1024) continue
+					val envelope = runCatching { mapper.readValue(plain, SyncEnvelope::class.java) }.getOrNull() ?: continue
+					if (envelope.device.id != item.device || envelope.body.version().device_id != envelope.device.id
+						|| !validIdHash(envelope.body.idHash())) continue
+					lamport.updateAndGet { maxOf(it, envelope.body.version().lamport) + 1 }
+					incomingMutex.withLock {
+						when (val body = envelope.body) {
+							is SyncBody.ClipUpsert -> applyClipUpsert(envelope, body.clip)
+							is SyncBody.ClipEdit -> applyClipEdit(body)
+							is SyncBody.FavoriteToggle -> applyFavoriteToggle(body)
+							is SyncBody.Tombstone -> applyTombstone(body)
+							else -> Unit
+						}
+					}
+				}
+				prefs.edit().putString("relay_cursor", cursor).putLong("relay_last_ok", System.currentTimeMillis())
+					.remove("relay_error").apply()
+			} catch (e: Exception) {
+				Log.d("ClipSyncService", "relay: ${e.message}")
+				prefs.edit().putString("relay_error", e.message ?: "Relay failed").apply()
 			}
 		}
 	}
@@ -598,7 +690,7 @@ class ClipSyncService : Service() {
 		val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
 		var lastSeenId = prefs.getLong("sync_last_seen_id", 0L)
 		while (running) {
-			delay(1000L)
+			delay(400L)
 			if (!prefs.getBoolean("sync_enabled", false)) continue
 			try {
 				processMutationOutbox(deviceId)
@@ -628,6 +720,44 @@ class ClipSyncService : Service() {
 		}
 	}
 
+	/** Explicit "send to device": [ids] go to one saved device, or all when no target is given. */
+	private suspend fun sendItemsTo(intent: Intent) {
+		val ids = intent.getLongArrayExtra("ids") ?: return
+		val target = intent.getStringExtra("target")?.takeIf { it.isNotBlank() }
+		ids.forEach { id ->
+			val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
+			val type = db.rawQuery("SELECT type FROM items WHERE id=?", arrayOf(id.toString())).use { if (it.moveToFirst()) it.getString(0) else null }
+			db.close()
+			val kind = when (type) {
+				null -> return@forEach
+				"URL" -> ItemKind.link
+				"IMAGE" -> ItemKind.image
+				"FILE" -> ItemKind.files
+				else -> ItemKind.text
+			}
+			enqueueItem(id, kind, live = true, targetPeerId = target)
+		}
+	}
+
+	/** Re-sends deletes this device made, so a device that was offline still removes those clips. */
+	private suspend fun replayTombstones(targetPeerId: String?) {
+		val myId = getOrCreateDeviceId()
+		val bodies = mutableListOf<SyncBody>()
+		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
+		db.rawQuery(
+			"SELECT id_hash, origin_lamport, origin_wall_ms FROM sync_tombstones WHERE origin_device=? ORDER BY origin_wall_ms DESC LIMIT 3000",
+			arrayOf(myId),
+		).use { c ->
+			while (c.moveToNext()) bodies += SyncBody.Tombstone(c.getString(0), SyncVersion(myId, c.getLong(1), c.getLong(2)))
+		}
+		db.close()
+		syncMutex.withLock {
+			bodies.forEach { body ->
+				jobQueue.addLast(SyncJob(body).also { job -> if (targetPeerId != null) job.pendingPeers = mutableSetOf(targetPeerId) })
+			}
+		}
+	}
+
 	private suspend fun enqueueHistoryBackfill(targetPeerId: String? = null) {
 		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
 		val items = mutableListOf<Pair<Long, ItemKind>>()
@@ -645,7 +775,8 @@ class ClipSyncService : Service() {
 			}
 		}
 		db.close()
-		items.forEach { (id, kind) -> enqueueItem(id, kind, live = false, targetPeerId = targetPeerId) }
+		replayTombstones(targetPeerId)
+		items.forEach { (id, kind) -> enqueueItem(id, kind, live = false, targetPeerId = targetPeerId, reuseVersion = true) }
 		Log.i("ClipSyncService", "manual sync queued ${items.size} local items for target=${targetPeerId ?: "all"}")
 	}
 
@@ -1256,14 +1387,87 @@ class ClipSyncService : Service() {
 	// broadcasts the phone never receives — showed as offline. Probing the
 	// same TCP channel sync uses makes the badge mean "reachable right now".
     private suspend fun probePeers() = withContext(Dispatchers.IO) {
+        var failures = 0
+        var lastScan = 0L
         while (running) {
             delay(PROBE_TICK_MS)
-            peers.values.toList().forEach { peer ->
-                val token = peerToken(peer.device.id)
-                if (token == null) { peers.remove(peer.device.id) }
-                else exchangeControl(peer.address, peer.device.id, "ping", "", token)
+            if (peers.isEmpty()) { failures = 0; continue }
+            val scan = failures >= 2 && System.currentTimeMillis() - lastScan > 60_000
+            if (scan) lastScan = System.currentTimeMillis()
+            val connected = reconnectSavedPeers(force = true, scan = scan)
+            failures = if (connected < peers.size) failures + 1 else 0
+        }
+    }
+
+    /** Pings every saved peer at its last address; optionally scans the LAN for ones that moved. */
+    private suspend fun reconnectSavedPeers(force: Boolean, scan: Boolean): Int = withContext(Dispatchers.IO) {
+        // Each saved device counts once, however many addresses answered.
+        val connectedIds = mutableSetOf<String>()
+        val stale = mutableListOf<PeerRecord>()
+        peers.values.toList().forEach { peer ->
+            val token = peerToken(peer.device.id)
+            if (token == null) { peers.remove(peer.device.id); return@forEach }
+            if (!force && System.currentTimeMillis() - peer.lastSeenAt < 15_000) { connectedIds += peer.device.id; return@forEach }
+            val wasOffline = System.currentTimeMillis() - peer.lastSeenAt > 30_000
+            // The saved address may now belong to another device: confirm who answers before
+            // sending the saved credential.
+            if (identify(peer.address, 3000) == peer.device.id && exchangeControl(peer.address, peer.device.id, "ping", "", token)) {
+                connectedIds += peer.device.id
+                if (wasOffline) enqueueHistoryBackfill(peer.device.id)
+            } else stale += peer
+        }
+        if (scan && stale.isNotEmpty()) {
+            for ((address, id) in scanLan(stale)) {
+                if (id in connectedIds) continue
+                val token = peerToken(id) ?: continue
+                if (exchangeControl(address, id, "ping", "", token)) { connectedIds += id; enqueueHistoryBackfill(id) }
             }
         }
+        connectedIds.size
+    }
+
+    /** Asks a host who it is using a throwaway token, so saved credentials never go to unverified hosts. */
+    private fun identify(address: InetSocketAddress, timeoutMs: Int): String? = runCatching {
+        val current = currentDevice(getOrCreateDeviceId(), getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+            .getString("device_name", "Android ${Build.MODEL}").orEmpty())
+        val probe = java.util.UUID.randomUUID().toString().replace("-", "") + java.util.UUID.randomUUID().toString().replace("-", "")
+        Socket().use { socket ->
+            socket.connect(address, timeoutMs)
+            socket.soTimeout = 2000
+            writeResponse(socket, PairControl(PROTOCOL, "ping", current, listenPort, "", probe))
+            val bytes = readFrameHeader(DataInputStream(socket.getInputStream())) ?: return@runCatching null
+            mapper.readValue(bytes, PairReply::class.java).device.id
+        }
+    }.getOrNull()
+
+    private fun scanLan(wanted: List<PeerRecord>): List<Pair<InetSocketAddress, String>> {
+        val hosts = linkedSetOf<String>()
+        // Android emulators reach the development machine through this alias.
+        hosts += "10.0.2.2"
+        java.net.NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
+            .flatMap { it.interfaceAddresses }
+            .mapNotNull { it.address as? java.net.Inet4Address }
+            .filter { it.isSiteLocalAddress }
+            .forEach { own ->
+                val o = own.address.map { it.toInt() and 0xff }
+                for (last in 1..254) if (last != o[3]) hosts += "${o[0]}.${o[1]}.${o[2]}.$last"
+            }
+        val ports = (wanted.map { it.address.port } + (FIRST_SYNC_PORT..LAST_SYNC_PORT)).distinct()
+        val ids = wanted.map { it.device.id }.toSet()
+        val found = java.util.concurrent.CopyOnWriteArrayList<Pair<InetSocketAddress, String>>()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(48)
+        hosts.forEach { host ->
+            pool.execute {
+                for (port in ports) {
+                    val address = InetSocketAddress(host, port)
+                    val id = identify(address, 250)
+                    if (id != null) { if (id in ids) found += address to id; break }
+                }
+            }
+        }
+        pool.shutdown()
+        if (!pool.awaitTermination(60, java.util.concurrent.TimeUnit.SECONDS)) pool.shutdownNow()
+        return found
     }
 
 	private fun touchDeviceSeen(deviceId: String) {

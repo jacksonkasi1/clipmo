@@ -4,7 +4,7 @@
 //! messages over TCP. All network work is best-effort and runs away from the
 //! clipboard listener so local capture can never be blocked by a slow peer.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
@@ -27,7 +27,10 @@ use crate::models::{
 
 #[path = "sync_pairing.rs"]
 mod pairing;
+#[path = "sync_relay.rs"]
+mod relay;
 pub use pairing::new_code;
+pub use relay::{RelayInput, RelayStatus};
 
 const PROTOCOL: &str = "clipmo-lan-v3";
 const DISCOVERY_PORT: u16 = 47_633;
@@ -154,6 +157,11 @@ pub struct SyncService {
     suppressions: Arc<Mutex<HashMap<String, Suppression>>>,
     listen_port: u16,
     pairing: Arc<pairing::Pairing>,
+    relay: Arc<relay::Relay>,
+    senders: Arc<Mutex<HashMap<String, Arc<PeerQueue>>>>,
+    /// Hashes this device has just sent. The change watcher polls, so a star or delete
+    /// made within one tick of a copy would otherwise never be noticed.
+    sent: Arc<Mutex<HashSet<String>>>,
 }
 
 impl SyncService {
@@ -170,6 +178,9 @@ impl SyncService {
             suppressions: Arc::new(Mutex::new(HashMap::new())),
             listen_port: 0,
             pairing: Arc::new(pairing::Pairing::default()),
+            relay: Arc::new(relay::Relay::default()),
+            senders: Arc::new(Mutex::new(HashMap::new())),
+            sent: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -202,6 +213,9 @@ impl SyncService {
             suppressions: Arc::new(Mutex::new(HashMap::new())),
             listen_port,
             pairing: Arc::new(pairing::Pairing::default()),
+            relay: Arc::new(relay::Relay::default()),
+            senders: Arc::new(Mutex::new(HashMap::new())),
+            sent: Arc::new(Mutex::new(HashSet::new())),
         };
         service
             .load_peers()
@@ -210,7 +224,10 @@ impl SyncService {
 
         spawn_tcp_server(listener, service.clone(), app.clone())?;
         spawn_discovery(service.clone(), app.clone())?;
+        service.load_relay();
+        relay::spawn_relay_worker(service.clone(), app.clone())?;
         spawn_sender(service.clone())?;
+        spawn_peer_prober(service.clone(), app.clone())?;
         spawn_watcher(service.clone())?;
         Ok(service)
     }
@@ -303,6 +320,75 @@ impl SyncService {
         }
     }
 
+    /// Explicitly sends one item to every device (`target = None`) or a single saved
+    /// device, regardless of the automatic-sync type preferences. Returns whether it
+    /// was queued.
+    pub fn send_item_to(&self, item: &ClipItem, target: Option<String>) -> bool {
+        let (Some(store), Some(settings)) = (&self.store, &self.settings) else {
+            return false;
+        };
+        if !settings.read().sync_enabled {
+            return false;
+        }
+        if let Some(id) = &target {
+            if !self.peers.read().contains_key(id) {
+                return false;
+            }
+        }
+        let version = self.next_version();
+        let Ok(record) = store.stamp_item(item.id, &version) else {
+            return false;
+        };
+        let mut preferences = self.preferences.read().clone();
+        preferences.sync_text = true;
+        preferences.sync_images = true;
+        preferences.sync_files = true;
+        let Some(mut job) = build_upsert_job(item, &record, &preferences, true) else {
+            return false;
+        };
+        job.target = target;
+        self.push_job(job, &preferences)
+    }
+
+    /// Marks rows as deleted on this device only. A local tombstone stops peers'
+    /// backfill from resurrecting them, and the delete is not broadcast.
+    pub fn detach_deletions(&self, item_ids: &[i64]) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let conn_ids: Vec<(i64, Option<String>)> = {
+            let conn = store.conn.lock();
+            item_ids
+                .iter()
+                .map(|id| {
+                    (
+                        *id,
+                        query_record_by_id(&conn, *id)
+                            .ok()
+                            .flatten()
+                            .map(|record| record.id_hash),
+                    )
+                })
+                .collect()
+        };
+        for (_, hash) in conn_ids {
+            let Some(hash) = hash else { continue };
+            let mut version = self.next_version();
+            // Marked local so reconnect replays never delete the clip on other devices.
+            version.device_id = format!("local:{}", version.device_id);
+            if store.record_tombstone(&hash, &version).is_ok() {
+                self.suppress_delete(&hash);
+            }
+        }
+    }
+
+    /// Manual "Reconnect": probes every saved device now, scanning the LAN if needed.
+    pub fn reconnect_now(&self) -> usize {
+        let connected = self.probe_saved_peers(true, true);
+        self.enqueue_history_backfill();
+        connected
+    }
+
     pub fn sync_history_now(&self) -> usize {
         self.enqueue_history_backfill()
     }
@@ -323,10 +409,58 @@ impl SyncService {
             }
         };
         let item_count = items.len();
+        // Deletes first, so a device that missed them never keeps (or re-sends) the clips.
+        self.replay_tombstones();
         for item in items.into_iter().rev() {
             self.enqueue_item_with_delivery(&item, false);
         }
         item_count
+    }
+
+    /// Re-sends recent deletes made on synced devices. Device-only clears are never replayed.
+    fn replay_tombstones(&self) {
+        let (Some(store), Some(settings)) = (&self.store, &self.settings) else {
+            return;
+        };
+        if !settings.read().sync_enabled {
+            return;
+        }
+        let own_id = settings.read().sync_device_id.clone();
+        let rows: Vec<(String, SyncVersion)> = {
+            let conn = store.conn.lock();
+            let Ok(mut stmt) = conn.prepare(
+                "SELECT id_hash, origin_device_id, origin_lamport, origin_wall_ms
+                   FROM sync_tombstones
+                  WHERE origin_device_id NOT LIKE 'local:%' AND origin_device_id != 'local-clear'
+                  ORDER BY origin_wall_ms DESC LIMIT 3000",
+            ) else {
+                return;
+            };
+            let Ok(mapped) = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    SyncVersion {
+                        device_id: row.get(1)?,
+                        lamport: row.get::<_, i64>(2)?.max(0) as u64,
+                        wall_ms: row.get(3)?,
+                    },
+                ))
+            }) else {
+                return;
+            };
+            mapped.filter_map(|row| row.ok()).collect()
+        };
+        let preferences = self.preferences.read().clone();
+        for (id_hash, version) in rows {
+            // The receiver only accepts a delete from the device that made it.
+            if version.device_id != own_id {
+                continue;
+            }
+            self.push_job(
+                SyncJob::action(SyncBody::Tombstone { id_hash, version }),
+                &preferences,
+            );
+        }
     }
 
     fn defer_file_item(&self, id: i64, live: bool) {
@@ -369,14 +503,43 @@ impl SyncService {
         let Some(store) = &self.store else {
             return;
         };
-        let version = self.next_version();
-        let record = match store.stamp_item(item.id, &version) {
-            Ok(record) => record,
-            Err(error) => {
-                log::warn!("could not stamp clipboard item for sync: {error}");
-                return;
+        // A backfill resends an item's ORIGINAL version, never a fresh one. Re-stamping
+        // made old clips look newer than deletes the other device had already made, so
+        // cleared clips came back after reconnects. Only clips that originated here are
+        // backfilled; their own device is responsible for the rest.
+        let own_id = self
+            .settings
+            .as_ref()
+            .map(|s| s.read().sync_device_id.clone())
+            .unwrap_or_default();
+        let existing = if live {
+            None
+        } else {
+            query_record_by_id(&store.conn.lock(), item.id)
+                .ok()
+                .flatten()
+        };
+        let record = match existing {
+            Some(record) if record.version.device_id == own_id => record,
+            Some(_) => return,
+            None => {
+                let version = self.next_version();
+                match store.stamp_item(item.id, &version) {
+                    Ok(record) => record,
+                    Err(error) => {
+                        log::warn!("could not stamp clipboard item for sync: {error}");
+                        return;
+                    }
+                }
             }
         };
+        {
+            let mut sent = self.sent.lock();
+            if sent.len() > 5_000 {
+                sent.clear();
+            }
+            sent.insert(record.id_hash.clone());
+        }
         let preferences = self.preferences.read().clone();
         let Some(job) = build_upsert_job(&item, &record, &preferences, live) else {
             return;
@@ -463,10 +626,13 @@ impl SyncService {
         );
     }
 
-    fn push_job(&self, job: SyncJob, preferences: &SyncPreferences) {
-        if !self.queue.push(job, preferences.max_total_bytes()) {
+    /// Returns whether the job was accepted (a payload over the configured limit stays local).
+    fn push_job(&self, job: SyncJob, preferences: &SyncPreferences) -> bool {
+        let accepted = self.queue.push(job, preferences.max_total_bytes());
+        if !accepted {
             log::warn!("sync payload exceeded the configured queue limit and stayed local");
         }
+        accepted
     }
 
     fn next_version(&self) -> SyncVersion {
@@ -717,14 +883,28 @@ struct SyncJob {
     body: SyncBody,
     blobs: Vec<BlobSource>,
     estimated_bytes: u64,
+    /// Restricts delivery to one saved device; `None` means every device.
+    target: Option<String>,
 }
 
 impl SyncJob {
+    /// Fresh copies, edits and stars jump ahead of bulk work (backfills, deletes).
+    fn is_high_priority(&self) -> bool {
+        match &self.body {
+            SyncBody::ClipUpsert { clip }
+            | SyncBody::ImageUpsert { clip, .. }
+            | SyncBody::FilesUpsert { clip, .. } => clip.live,
+            SyncBody::ClipEdit { .. } | SyncBody::FavoriteToggle { .. } => true,
+            SyncBody::Tombstone { .. } => false,
+        }
+    }
+
     fn action(body: SyncBody) -> Self {
         Self {
             body,
             blobs: Vec::new(),
             estimated_bytes: 4 * 1024,
+            target: None,
         }
     }
 }
@@ -911,6 +1091,33 @@ fn broadcast_presence(socket: UdpSocket, service: SyncService) {
     }
 }
 
+/// Keeps saved devices connected even when UDP broadcasts never arrive
+/// (client isolation, firewalls, macOS Local Network, changed IP addresses).
+fn spawn_peer_prober(service: SyncService, app: AppHandle) -> io::Result<()> {
+    std::thread::Builder::new()
+        .name("sync-peer-prober".into())
+        .spawn(move || {
+            let mut failures = 0u32;
+            let mut last_scan = 0i64;
+            loop {
+                std::thread::sleep(Duration::from_secs(8));
+                let saved = service.peers.read().len();
+                if saved == 0 {
+                    failures = 0;
+                    continue;
+                }
+                let scan = failures >= 2 && now_ms() - last_scan > 60_000;
+                if scan {
+                    last_scan = now_ms();
+                }
+                let connected = service.probe_saved_peers(false, scan);
+                failures = if connected < saved { failures + 1 } else { 0 };
+                let _ = app.emit("sync-peers-updated", ());
+            }
+        })?;
+    Ok(())
+}
+
 fn spawn_tcp_server(listener: TcpListener, service: SyncService, app: AppHandle) -> io::Result<()> {
     std::thread::Builder::new()
         .name("sync-tcp-server".into())
@@ -1030,7 +1237,7 @@ fn write_sync_ack(stream: &mut TcpStream, ok: bool, error: Option<&str>) -> io::
 }
 
 fn apply_incoming(
-    stream: &mut TcpStream,
+    stream: &mut dyn Read,
     service: &SyncService,
     app: &AppHandle,
     envelope: SyncEnvelope,
@@ -1357,7 +1564,7 @@ fn cleanup_asset_paths(storage_root: &Path, paths: Vec<String>) {
     }
 }
 
-fn read_blob(stream: &mut TcpStream, size: u64, limit: u64) -> Result<Vec<u8>> {
+fn read_blob(stream: &mut dyn Read, size: u64, limit: u64) -> Result<Vec<u8>> {
     if size > limit || size > usize::MAX as u64 {
         return Err(Error::Other(
             "synced binary payload exceeded its limit".into(),
@@ -1368,11 +1575,81 @@ fn read_blob(stream: &mut TcpStream, size: u64, limit: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn spawn_sender(service: SyncService) -> io::Result<()> {
-    std::thread::Builder::new()
-        .name("sync-send".into())
+/// One outgoing queue per saved device, so an unreachable device never delays the
+/// others and a fresh copy is never stuck behind a bulk delete or backfill.
+#[derive(Default)]
+struct PeerQueue {
+    state: StdMutex<PeerQueueState>,
+    ready: Condvar,
+}
+
+#[derive(Default)]
+struct PeerQueueState {
+    high: VecDeque<Arc<SyncJob>>,
+    low: VecDeque<Arc<SyncJob>>,
+    /// After a failed delivery the device is skipped briefly; reconnect backfill
+    /// (items and deletes) catches it up, so there is nothing to retry here.
+    down_until: i64,
+}
+
+const PEER_BACKLOG_LIMIT: usize = 5_000;
+
+impl PeerQueue {
+    fn push(&self, job: Arc<SyncJob>) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let queue = if job.is_high_priority() {
+            &mut state.high
+        } else {
+            &mut state.low
+        };
+        if queue.len() >= PEER_BACKLOG_LIMIT {
+            queue.pop_front();
+        }
+        queue.push_back(job);
+        self.ready.notify_one();
+    }
+
+    fn pop(&self) -> Arc<SyncJob> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        loop {
+            let wait_ms = (state.down_until - now_ms()).max(0) as u64;
+            if wait_ms == 0 {
+                if let Some(job) = state.high.pop_front().or_else(|| state.low.pop_front()) {
+                    return job;
+                }
+                state = self
+                    .ready
+                    .wait(state)
+                    .unwrap_or_else(|error| error.into_inner());
+            } else {
+                // The device just failed to answer: pause briefly, then retry the same job.
+                state = self
+                    .ready
+                    .wait_timeout(state, Duration::from_millis(wait_ms))
+                    .unwrap_or_else(|error| error.into_inner())
+                    .0;
+            }
+        }
+    }
+
+    /// Keeps the job for the next attempt (nothing is dropped because a device blinked)
+    /// and pauses this device's queue briefly.
+    fn retry_later(&self, job: Arc<SyncJob>, seconds: i64) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.down_until = now_ms() + seconds * 1_000;
+        if job.is_high_priority() {
+            state.high.push_front(job);
+        } else {
+            state.low.push_front(job);
+        }
+    }
+}
+
+fn spawn_peer_worker(service: SyncService, peer_id: String, queue: Arc<PeerQueue>) {
+    let _ = std::thread::Builder::new()
+        .name(format!("sync-send-{}", &peer_id[..peer_id.len().min(8)]))
         .spawn(move || loop {
-            let job = service.queue.pop();
+            let job = queue.pop();
             let Some(settings) = &service.settings else {
                 continue;
             };
@@ -1380,37 +1657,98 @@ fn spawn_sender(service: SyncService) -> io::Result<()> {
             if !current.sync_enabled {
                 continue;
             }
-            let mut envelope = SyncEnvelope {
+            let Some(peer) = service.peers.read().get(&peer_id).cloned() else {
+                continue;
+            };
+            if !service.authenticates(&peer.device.id, &peer.token) {
+                continue;
+            }
+            let envelope = SyncEnvelope {
                 protocol: PROTOCOL.into(),
-                pairing_code: current.sync_pairing_code.clone(),
+                pairing_code: peer.token.clone(),
                 device: current.device_identity(),
                 tcp_port: service.listen_port,
                 body: job.body.clone(),
             };
-            let peers: Vec<_> = service.peers.read().values().cloned().collect();
-            for peer in peers {
-                if !service.authenticates(&peer.device.id, &peer.token) {
-                    continue;
-                }
-                envelope.pairing_code = peer.token.clone();
-                // A host may send the first backfill just before the joining side
-                // persists its credential. Retry transient failures, never a removed peer.
-                for attempt in 0..3 {
-                    if !service.authenticates(&peer.device.id, &peer.token)
-                        || !settings.read().sync_enabled
-                    {
+            let mut delivered = false;
+            // A device that answers "no" (stale version, invalid item) is not offline:
+            // retrying would block everything behind it, so that job is dropped.
+            let mut rejected = false;
+            for attempt in 0..2 {
+                match send_frame(peer.address, &envelope, &job.blobs) {
+                    Ok(()) => {
+                        delivered = true;
                         break;
                     }
-                    match send_frame(peer.address, &envelope, &job.blobs) {
-                        Ok(()) => break,
-                        Err(error) => {
-                            log::debug!("sync send to {} failed: {error}", peer.device.name);
-                            if attempt < 2 {
-                                std::thread::sleep(Duration::from_millis(500));
-                            }
+                    Err(error) => {
+                        log::debug!("sync send to {} failed: {error}", peer.device.name);
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::PermissionDenied | io::ErrorKind::InvalidData
+                        ) {
+                            rejected = true;
+                            break;
+                        }
+                        if attempt == 0 {
+                            std::thread::sleep(Duration::from_millis(250));
                         }
                     }
                 }
+            }
+            if !delivered && !rejected {
+                queue.retry_later(job, 3);
+            }
+        });
+}
+
+fn spawn_sender(service: SyncService) -> io::Result<()> {
+    std::thread::Builder::new()
+        .name("sync-send".into())
+        .spawn(move || loop {
+            let job = Arc::new(service.queue.pop());
+            let Some(settings) = &service.settings else {
+                continue;
+            };
+            if !settings.read().sync_enabled {
+                continue;
+            }
+            if job.target.is_none() {
+                if let SyncBody::ClipUpsert { .. }
+                | SyncBody::ClipEdit { .. }
+                | SyncBody::FavoriteToggle { .. }
+                | SyncBody::Tombstone { .. } = &job.body
+                {
+                    let envelope = SyncEnvelope {
+                        protocol: PROTOCOL.into(),
+                        pairing_code: String::new(),
+                        device: settings.read().device_identity(),
+                        tcp_port: service.listen_port,
+                        body: job.body.clone(),
+                    };
+                    service.relay_enqueue(&envelope);
+                }
+            }
+            let peers: Vec<String> = service.peers.read().keys().cloned().collect();
+            for peer_id in peers {
+                if job
+                    .target
+                    .as_deref()
+                    .is_some_and(|target| target != peer_id)
+                {
+                    continue;
+                }
+                let queue = {
+                    let mut senders = service.senders.lock();
+                    senders
+                        .entry(peer_id.clone())
+                        .or_insert_with(|| {
+                            let queue = Arc::new(PeerQueue::default());
+                            spawn_peer_worker(service.clone(), peer_id.clone(), queue.clone());
+                            queue
+                        })
+                        .clone()
+                };
+                queue.push(job.clone());
             }
         })?;
     Ok(())
@@ -1497,8 +1835,31 @@ fn spawn_watcher(service: SyncService) -> io::Result<()> {
                     }
                 };
 
+                let own_id = service
+                    .settings
+                    .as_ref()
+                    .map(|s| s.read().sync_device_id.clone())
+                    .unwrap_or_default();
                 for (id_hash, row) in &current {
                     let Some(before) = previous.get(id_hash) else {
+                        // A row created since the last tick may already have been starred
+                        // or tagged; the copy that was sent did not include that.
+                        let own = query_record_by_id(&store.conn.lock(), row.item_id)
+                            .ok()
+                            .flatten()
+                            .is_some_and(|record| record.version.device_id == own_id);
+                        if own && service.sent.lock().contains(id_hash) {
+                            if row.favorite {
+                                service.enqueue_favorite(row);
+                            }
+                            if row.tags_fingerprint != tags_fingerprint(&[]) {
+                                if let Some(db) = &service.db {
+                                    if let Ok(Some(item)) = db.get(row.item_id) {
+                                        service.enqueue_item(&item);
+                                    }
+                                }
+                            }
+                        }
                         continue;
                     };
                     if (before.content_hash != row.content_hash || before.content != row.content)
@@ -1532,7 +1893,21 @@ fn spawn_watcher(service: SyncService) -> io::Result<()> {
                     }
                 }
 
-                for id_hash in previous.keys().filter(|key| !current.contains_key(*key)) {
+                let mut gone: HashSet<String> = previous
+                    .keys()
+                    .filter(|key| !current.contains_key(*key))
+                    .cloned()
+                    .collect();
+                gone.extend(
+                    service
+                        .sent
+                        .lock()
+                        .iter()
+                        .filter(|key| !current.contains_key(*key))
+                        .cloned(),
+                );
+                for id_hash in &gone {
+                    service.sent.lock().remove(id_hash);
                     if !consume_delete_suppression(&service, id_hash) {
                         service.enqueue_tombstone(id_hash);
                     }
@@ -1678,6 +2053,7 @@ fn build_upsert_job(
                     },
                 ],
                 estimated_bytes: total.saturating_add(8 * 1024),
+                target: None,
             })
         }
         ItemKind::Files => {
@@ -1727,6 +2103,7 @@ fn build_upsert_job(
                 },
                 blobs,
                 estimated_bytes: total.saturating_add(16 * 1024),
+                target: None,
             })
         }
     }
@@ -2210,6 +2587,7 @@ mod tests {
             },
             blobs: Vec::new(),
             estimated_bytes: 8,
+            target: None,
         };
         let second = SyncJob {
             body: SyncBody::Tombstone {
@@ -2222,6 +2600,7 @@ mod tests {
             },
             blobs: Vec::new(),
             estimated_bytes: 8,
+            target: None,
         };
         assert!(queue.push(first, 8));
         assert!(queue.push(second, 8));

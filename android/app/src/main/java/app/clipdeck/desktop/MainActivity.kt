@@ -33,6 +33,7 @@ import app.clipdeck.desktop.data.ClipboardStore
 import app.clipdeck.desktop.data.TrustedDeviceRecord
 import app.clipdeck.desktop.ui.ClipmoApp
 import app.clipdeck.desktop.ui.ClipmoUiState
+import app.clipdeck.desktop.ui.RelayUi
 import app.clipdeck.desktop.ui.theme.ClipmoThemeMode
 import java.util.UUID
 import java.security.MessageDigest
@@ -53,6 +54,8 @@ class MainActivity : ComponentActivity() {
     private var copyLiveSyncToClipboard by mutableStateOf(false)
     private var pairingCode by mutableStateOf("")
     private var pairingStatus by mutableStateOf("")
+    private var relayUi by mutableStateOf(RelayUi())
+    private var relayVerifyMessage by mutableStateOf("")
     private var joinPending by mutableStateOf(false)
     private var pairingModeActive by mutableStateOf(false)
     private var pairingUntilMs by mutableStateOf(0L)
@@ -146,7 +149,7 @@ class MainActivity : ComponentActivity() {
                     }
                     refresh()
                 },
-                onClear = { store.clear(); refresh() },
+                onClear = { includeFavorites, deviceOnly -> store.clear(includeFavorites, deviceOnly); refresh() },
                 onMonitorChanged = ::handleMonitorChanged,
                 onScreenshotCaptureChanged = ::handleScreenshotCaptureChanged,
                 onSyncChanged = ::handleSyncChanged,
@@ -159,6 +162,11 @@ class MainActivity : ComponentActivity() {
                 onJoinDevice = ::joinDevice,
                 onScanPairing = ::scanPairing,
                 onSyncNow = ::syncNow,
+                onReconnect = ::reconnect,
+                onSendToDevice = ::sendToDevice,
+                relay = relayUi.copy(verifyMessage = relayVerifyMessage),
+                onSaveRelay = { e, b, u, s, p -> saveRelay(e, b, u, s, p) },
+                onVerifyRelay = ::verifyRelay,
                 onRefresh = ::refreshSync,
             )
         }
@@ -230,6 +238,7 @@ class MainActivity : ComponentActivity() {
             pairingUntilMs = until
             pairingModeActive = until > System.currentTimeMillis()
             pairingStatus = preferences.getString("pairing_status", "").orEmpty()
+            relayUi = readRelay()
             joinPending = preferences.getLong("join_until", 0L) > System.currentTimeMillis()
         }
     }
@@ -270,6 +279,92 @@ class MainActivity : ComponentActivity() {
             Intent(this, ClipSyncService::class.java).setAction(ClipSyncService.ACTION_SYNC_NOW),
         )
         Toast.makeText(this, "Syncing recent local history", Toast.LENGTH_SHORT).show()
+        refresh()
+    }
+
+    private fun sendToDevice(ids: Set<Long>, targetId: String?) {
+        if (!syncEnabled) {
+            Toast.makeText(this, "Enable LAN sync first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startForegroundService(
+            Intent(this, ClipSyncService::class.java)
+                .setAction(ClipSyncService.ACTION_SEND_TO)
+                .putExtra("ids", ids.toLongArray())
+                .putExtra("target", targetId.orEmpty()),
+        )
+        Toast.makeText(this, "Sending ${ids.size} clip${if (ids.size == 1) "" else "s"}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun readRelay(): RelayUi {
+        val secretSaved = preferences.getString("relay_secret", "").orEmpty().isNotEmpty()
+        val enabled = preferences.getBoolean("relay_enabled", false)
+        val error = preferences.getString("relay_error", null)
+        val ok = preferences.getLong("relay_last_ok", 0L)
+        return RelayUi(
+            enabled = enabled,
+            backend = preferences.getString("relay_backend", "endpoint").orEmpty(),
+            url = preferences.getString("relay_url", "").orEmpty(),
+            hasSecret = secretSaved,
+            hasPassphrase = preferences.getString("relay_key", "").orEmpty().isNotEmpty(),
+            status = when {
+                !enabled -> ""
+                error != null -> "Relay problem: $error"
+                ok > 0 -> "Relay connected"
+                else -> "Relay waiting for first sync…"
+            },
+        )
+    }
+
+    private fun saveRelay(enabled: Boolean, backend: String, url: String, secret: String?, passphrase: String?): Boolean {
+        if (enabled && !(url.startsWith("https://") || url.startsWith("http://10.0.2.2"))) {
+            Toast.makeText(this, "The relay address must start with https://", Toast.LENGTH_LONG).show()
+            return false
+        }
+        val editor = preferences.edit()
+            .putBoolean("relay_enabled", enabled).putString("relay_backend", backend).putString("relay_url", url.trim())
+            .remove("relay_error")
+        if (secret != null) editor.putString("relay_secret", secret.trim())
+        if (passphrase != null) {
+            val (key, channel) = RelayCrypto.derive(passphrase)
+            editor.putString("relay_key", key).putString("relay_channel", channel).remove("relay_cursor")
+        }
+        if (enabled && passphrase == null && preferences.getString("relay_key", "").isNullOrEmpty()) {
+            Toast.makeText(this, "Choose a sync passphrase for the relay", Toast.LENGTH_LONG).show()
+            return false
+        }
+        editor.apply()
+        relayUi = readRelay()
+        Toast.makeText(this, if (enabled) "Relay saved" else "Relay turned off", Toast.LENGTH_SHORT).show()
+        if (enabled && syncEnabled) startSyncService()
+        return true
+    }
+
+    /** Saves the entered settings, then proves them with a real encrypted round trip. */
+    private fun verifyRelay(enabled: Boolean, backend: String, url: String, secret: String?, passphrase: String?) {
+        if (!saveRelay(enabled, backend, url, secret, passphrase)) return
+        relayVerifyMessage = "Checking…"
+        Thread {
+            val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+            val config = RelayConfig(
+                true, preferences.getString("relay_backend", "endpoint").orEmpty(),
+                preferences.getString("relay_url", "").orEmpty(), preferences.getString("relay_secret", "").orEmpty(),
+                preferences.getString("relay_key", "").orEmpty(), preferences.getString("relay_channel", "").orEmpty(),
+            )
+            val result = RelayClient(mapper).verify(config)
+            runOnUiThread { relayVerifyMessage = result }
+        }.start()
+    }
+
+    private fun reconnect() {
+        if (!syncEnabled) {
+            Toast.makeText(this, "Enable LAN sync first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startForegroundService(
+            Intent(this, ClipSyncService::class.java).setAction(ClipSyncService.ACTION_RECONNECT),
+        )
+        Toast.makeText(this, "Reconnecting to saved devices…", Toast.LENGTH_SHORT).show()
         refresh()
     }
 

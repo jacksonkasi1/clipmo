@@ -127,6 +127,16 @@ private object ClipmoTimeFormat {
     val short: DateFormat = DateFormat.getTimeInstance(DateFormat.SHORT)
 }
 
+data class RelayUi(
+    val enabled: Boolean = false,
+    val backend: String = "endpoint",
+    val url: String = "",
+    val hasSecret: Boolean = false,
+    val hasPassphrase: Boolean = false,
+    val status: String = "",
+    val verifyMessage: String = "",
+)
+
 data class ClipmoUiState(
     val clips: List<ClipRecord>,
     val monitorEnabled: Boolean,
@@ -159,7 +169,7 @@ fun ClipmoApp(
     onAddToCollection: (Set<Long>, String) -> Unit,
     onRemoveFromCollection: (Set<Long>, String) -> Unit = { _, _ -> },
     onEditClip: (id: Long, content: String) -> Unit,
-    onClear: () -> Unit,
+    onClear: (includeFavorites: Boolean, deviceOnly: Boolean) -> Unit,
     onMonitorChanged: (Boolean) -> Unit,
     onScreenshotCaptureChanged: (Boolean) -> Unit,
     onSyncChanged: (Boolean) -> Unit,
@@ -172,6 +182,11 @@ fun ClipmoApp(
     onJoinDevice: (String) -> Unit = {},
     onScanPairing: () -> Unit = {},
     onSyncNow: () -> Unit = {},
+    onReconnect: () -> Unit = {},
+    onSendToDevice: (Set<Long>, String?) -> Unit = { _, _ -> },
+    relay: RelayUi = RelayUi(),
+    onSaveRelay: (enabled: Boolean, backend: String, url: String, secret: String?, passphrase: String?) -> Unit = { _, _, _, _, _ -> },
+    onVerifyRelay: (enabled: Boolean, backend: String, url: String, secret: String?, passphrase: String?) -> Unit = { _, _, _, _, _ -> },
     onRefresh: () -> Unit = {},
 ) {
     ClipmoTheme(state.themeMode) {
@@ -185,6 +200,13 @@ fun ClipmoApp(
         var lastDetail by remember { mutableStateOf<ClipRecord?>(null) }
         val haptic = LocalHapticFeedback.current
 
+        BackHandler(enabled = detailClip != null || screen != ClipmoScreen.HISTORY || pendingClear) {
+            when {
+                pendingClear -> pendingClear = false
+                detailClip != null -> detailClip = null
+                else -> screen = ClipmoScreen.HISTORY
+            }
+        }
         LaunchedEffect(detailClip) {
             detailClip?.let { lastDetail = it }
             sheetOpen = detailClip != null
@@ -223,12 +245,13 @@ fun ClipmoApp(
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onFavorite(it)
                             },
-                            onDelete = onDelete,
+                            onDelete = { pendingDelete = it },
                             onFavoriteMany = onFavoriteMany,
                             onDeleteMany = onDeleteMany,
                             onAddToCollection = onAddToCollection,
                             onOpenClip = { detailClip = it },
                             onRefresh = onRefresh,
+                            onSendToDevice = onSendToDevice,
                         )
                         ClipmoScreen.COLLECTIONS -> CollectionsScreen(
                             state = state,
@@ -252,6 +275,10 @@ fun ClipmoApp(
                             onJoinDevice = onJoinDevice,
                             onScanPairing = onScanPairing,
                             onSyncNow = onSyncNow,
+                            onReconnect = onReconnect,
+                            relay = relay,
+                            onSaveRelay = onSaveRelay,
+                            onVerifyRelay = onVerifyRelay,
                         )
                         ClipmoScreen.SETTINGS -> SettingsScreen(
                             state = state,
@@ -295,13 +322,11 @@ fun ClipmoApp(
                 )
             }
             if (pendingClear) {
-                ClipmoConfirmOverlay(
-                    title = "Clear clipboard history?",
-                    message = "This permanently removes every local clip and cannot be undone.",
-                    confirmLabel = "Clear all",
+                ClipmoClearOverlay(
+                    hasPairedDevices = state.trustedDevices.isNotEmpty(),
                     onDismiss = { pendingClear = false },
-                    onConfirm = {
-                        onClear()
+                    onConfirm = { includeFavorites, deviceOnly ->
+                        onClear(includeFavorites, deviceOnly)
                         pendingClear = false
                     },
                 )
@@ -450,6 +475,7 @@ private fun HistoryScreen(
     onAddToCollection: (Set<Long>, String) -> Unit,
     onOpenClip: (ClipRecord) -> Unit,
     onRefresh: () -> Unit,
+    onSendToDevice: (Set<Long>, String?) -> Unit,
 ) {
     val clips = state.clips
     var query by rememberSaveable { mutableStateOf("") }
@@ -457,8 +483,14 @@ private fun HistoryScreen(
     var selectedDevice by rememberSaveable { mutableStateOf("all") }
     var refreshing by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var selecting by remember { mutableStateOf(false) }
+    val selectionMode = selecting || selectedIds.isNotEmpty()
     var pendingBulkDelete by remember { mutableStateOf<Set<Long>?>(null) }
+    var sendPickerIds by remember { mutableStateOf<Set<Long>?>(null) }
     var collectionPickerIds by remember { mutableStateOf<Set<Long>?>(null) }
+    BackHandler(enabled = selectionMode || sendPickerIds != null) {
+        if (sendPickerIds != null) sendPickerIds = null else { selectedIds = emptySet(); selecting = false }
+    }
 
     val devices = remember(clips, state.trustedDevices, state.localDeviceId) {
         listOf(
@@ -499,15 +531,11 @@ private fun HistoryScreen(
         }
     }
 
-    val grouped = remember(shown, state.trustedDevices, state.localDeviceId) {
-        val trustedNames = state.trustedDevices.associate { it.id to it.name }
-        shown.groupBy { clip ->
-            when {
-                clip.isLocalTo(state.localDeviceId) -> "This phone"
-                !clip.originDevice.isNullOrBlank() -> trustedNames[clip.originDevice] ?: sourceLabel(clip.source)
-                else -> sourceLabel(clip.source)
-            }
-        }
+    // Clips are grouped by day (newest first); the device chips above already filter by device.
+    val grouped = remember(shown) {
+        val zone = java.time.ZoneId.systemDefault()
+        shown.groupBy { java.time.Instant.ofEpochMilli(it.timestamp).atZone(zone).toLocalDate() }
+            .toSortedMap(compareByDescending { it })
     }
 
     val pullState = rememberPullRefreshState(refreshing, { refreshing = true })
@@ -523,7 +551,7 @@ private fun HistoryScreen(
         ) {
             item {
                 Column(Modifier.padding(horizontal = ClipmoTheme.spacing.md)) {
-                    if (selectedIds.isNotEmpty()) {
+                    if (selectionMode) {
                         ClipmoSelectionBar(
                             selectedCount = selectedIds.size,
                             onStar = {
@@ -532,7 +560,8 @@ private fun HistoryScreen(
                             },
                             onDelete = { pendingBulkDelete = selectedIds },
                             onCollection = { collectionPickerIds = selectedIds },
-                            onClose = { selectedIds = emptySet() },
+                            onSend = if (state.trustedDevices.isEmpty()) null else ({ sendPickerIds = selectedIds }),
+                            onClose = { selectedIds = emptySet(); selecting = false },
                         )
                     } else {
                         ClipmoSearchBar(
@@ -540,6 +569,15 @@ private fun HistoryScreen(
                             hint = "Search ${clips.size} clips...",
                             onValueChange = { query = it },
                         )
+                        Spacer(Modifier.height(ClipmoTheme.spacing.xs))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            ClipmoButton(
+                                label = "Select",
+                                style = ClipmoButtonStyle.GHOST,
+                                icon = ClipmoIconKind.CHECK,
+                                onClick = { selecting = true },
+                            )
+                        }
                     }
 
                     Spacer(Modifier.height(ClipmoTheme.spacing.sm))
@@ -572,14 +610,24 @@ private fun HistoryScreen(
                     )
                 }
             } else {
-                grouped.forEach { (device, deviceClips) ->
-                    item {
-                        ClipmoDeviceHeader(device, deviceClips.size)
+                grouped.forEach { (day, dayClips) ->
+                    item(key = "day-$day") {
+                        ClipmoDayHeader(
+                            label = dayLabel(day),
+                            count = dayClips.size,
+                            selectionMode = selectionMode,
+                            allSelected = dayClips.all { it.id in selectedIds },
+                            onToggleAll = {
+                                val ids = dayClips.map { it.id }.toSet()
+                                selectedIds = if (ids.all { it in selectedIds }) selectedIds - ids else selectedIds + ids
+                                selecting = true
+                            },
+                        )
                     }
-                    items(deviceClips, key = { it.id }, contentType = { "clip" }) { clip ->
+                    items(dayClips, key = { it.id }, contentType = { "clip" }) { clip ->
                         ClipmoSwipeToDelete(
                             clip = clip,
-                            enabled = selectedIds.isEmpty(),
+                            enabled = !selectionMode,
                             onDelete = onDelete,
                             onChooseCollection = { collectionPickerIds = setOf(clip.id) },
                         ) {
@@ -589,7 +637,7 @@ private fun HistoryScreen(
                                 onFavorite = onFavorite,
                                 onDelete = onDelete,
                                 selected = clip.id in selectedIds,
-                                selectionMode = selectedIds.isNotEmpty(),
+                                selectionMode = selectionMode,
                                 onSelect = {
                                     selectedIds = if (clip.id in selectedIds) selectedIds - clip.id else selectedIds + clip.id
                                 },
@@ -619,7 +667,20 @@ private fun HistoryScreen(
                 onConfirm = {
                     onDeleteMany(ids)
                     selectedIds = emptySet()
+                    selecting = false
                     pendingBulkDelete = null
+                },
+            )
+        }
+
+        sendPickerIds?.let { ids ->
+            ClipmoSendOverlay(
+                devices = state.trustedDevices,
+                onDismiss = { sendPickerIds = null },
+                onSend = { target ->
+                    onSendToDevice(ids, target)
+                    selectedIds = emptySet()
+                    sendPickerIds = null
                 },
             )
         }
@@ -808,6 +869,10 @@ private fun DevicesScreen(
     onJoinDevice: (String) -> Unit,
     onScanPairing: () -> Unit,
     onSyncNow: () -> Unit,
+    onReconnect: () -> Unit,
+    relay: RelayUi,
+    onSaveRelay: (Boolean, String, String, String?, String?) -> Unit,
+    onVerifyRelay: (Boolean, String, String, String?, String?) -> Unit,
 ) {
     val colors = ClipmoTheme.colors
     val space = ClipmoTheme.spacing
@@ -910,6 +975,13 @@ private fun DevicesScreen(
                         icon = ClipmoIconKind.REFRESH,
                         onClick = onSyncNow,
                     )
+                    ClipmoButton(
+                        label = "Reconnect",
+                        style = ClipmoButtonStyle.SECONDARY,
+                        modifier = Modifier.weight(1f),
+                        icon = ClipmoIconKind.REFRESH,
+                        onClick = onReconnect,
+                    )
                 }
             }
 
@@ -981,6 +1053,9 @@ private fun DevicesScreen(
                 }
             }
 
+            Spacer(Modifier.height(space.xl))
+
+            ClipmoRelaySection(relay = relay, onSave = onSaveRelay, onVerify = onVerifyRelay)
             Spacer(Modifier.height(space.xl))
 
             if (state.pairingStatus.isNotBlank()) {
@@ -2066,6 +2141,50 @@ private fun ClipmoCopiedPill(copyPulse: Int, modifier: Modifier = Modifier) {
     }
 }
 
+private fun dayLabel(day: java.time.LocalDate): String {
+    val today = java.time.LocalDate.now()
+    return when {
+        day == today -> "Today"
+        day == today.minusDays(1) -> "Yesterday"
+        day.year == today.year -> day.format(java.time.format.DateTimeFormatter.ofPattern("EEE, d MMM"))
+        else -> day.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy"))
+    }
+}
+
+@Composable
+private fun ClipmoDayHeader(
+    label: String,
+    count: Int,
+    selectionMode: Boolean,
+    allSelected: Boolean,
+    onToggleAll: () -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    val space = ClipmoTheme.spacing
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = space.md, vertical = space.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicText(
+            label,
+            style = ClipmoTheme.typography.section.copy(color = colors.textSecondary),
+            modifier = Modifier.weight(1f),
+        )
+        if (selectionMode) {
+            ClipmoButton(
+                label = if (allSelected) "Deselect $count" else "Select $count",
+                style = if (allSelected) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.GHOST,
+                icon = ClipmoIconKind.CHECK,
+                onClick = onToggleAll,
+            )
+        } else {
+            BasicText(count.toString(), style = ClipmoTheme.typography.metadata.copy(color = colors.textMuted, fontWeight = FontWeight.Bold))
+        }
+    }
+}
+
 @Composable
 private fun ClipmoDeviceHeader(name: String, count: Int) {
     val colors = ClipmoTheme.colors
@@ -2104,6 +2223,7 @@ private fun ClipmoSelectionBar(
     onStar: () -> Unit,
     onDelete: () -> Unit,
     onCollection: () -> Unit,
+    onSend: (() -> Unit)? = null,
     onClose: () -> Unit,
 ) {
     val colors = ClipmoTheme.colors
@@ -2125,6 +2245,7 @@ private fun ClipmoSelectionBar(
             modifier = Modifier.weight(1f),
         )
         ClipmoIconButton(ClipmoIconKind.COLLECTION, "Add selected to collection", onCollection, colors.accent)
+        if (onSend != null) ClipmoIconButton(ClipmoIconKind.DEVICE, "Send selected to a device", onSend, colors.accent)
         ClipmoIconButton(ClipmoIconKind.STAR, "Star selected", onStar, colors.warning)
         ClipmoIconButton(ClipmoIconKind.DELETE, "Delete selected", onDelete, colors.danger)
         ClipmoIconButton(ClipmoIconKind.CLOSE, "Exit selection", onClose, colors.textSecondary)
@@ -2821,6 +2942,174 @@ private fun ClipmoConfirmOverlay(
             Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
                 ClipmoButton("Cancel", ClipmoButtonStyle.GHOST, Modifier.weight(1f), onClick = onDismiss)
                 ClipmoButton(confirmLabel, ClipmoButtonStyle.DANGER, Modifier.weight(1f), icon = ClipmoIconKind.DELETE, onClick = onConfirm)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClipmoRelaySection(
+    relay: RelayUi,
+    onSave: (Boolean, String, String, String?, String?) -> Unit,
+    onVerify: (Boolean, String, String, String?, String?) -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    val space = ClipmoTheme.spacing
+    val type = ClipmoTheme.typography
+    var enabled by rememberSaveable(relay.enabled) { mutableStateOf(relay.enabled) }
+    var firebase by rememberSaveable(relay.backend) { mutableStateOf(relay.backend == "firebase") }
+    var url by rememberSaveable(relay.url) { mutableStateOf(relay.url) }
+    var secret by rememberSaveable { mutableStateOf("") }
+    var passphrase by rememberSaveable { mutableStateOf("") }
+    var expanded by rememberSaveable { mutableStateOf(relay.enabled) }
+
+    BasicText("Relay (optional)", style = type.section.copy(color = colors.textSecondary))
+    Spacer(Modifier.height(space.xs))
+    BasicText(
+        "Sync through your own server when the network blocks direct connections. Encrypted on your devices; text clips only.",
+        style = type.metadata.copy(color = colors.textMuted),
+    )
+    Spacer(Modifier.height(space.sm))
+    ClipmoButton(
+        label = if (expanded) "Hide relay settings" else if (relay.enabled) "Relay on — edit" else "Set up relay",
+        style = ClipmoButtonStyle.SECONDARY,
+        onClick = { expanded = !expanded },
+    )
+    if (expanded) {
+        Spacer(Modifier.height(space.sm))
+        Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
+            ClipmoButton(if (enabled) "Enabled" else "Disabled", if (enabled) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.SECONDARY, Modifier.weight(1f), onClick = { enabled = !enabled })
+            ClipmoButton("Endpoint", if (!firebase) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.SECONDARY, Modifier.weight(1f), onClick = { firebase = false })
+            ClipmoButton("Firebase", if (firebase) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.SECONDARY, Modifier.weight(1f), onClick = { firebase = true })
+        }
+        Spacer(Modifier.height(space.sm))
+        ClipmoSearchBar(value = url, hint = if (firebase) "Database URL (https://…)" else "Endpoint URL (https://…)", onValueChange = { url = it.trim() }, searchIcon = false)
+        Spacer(Modifier.height(space.sm))
+        ClipmoSearchBar(value = secret, hint = if (relay.hasSecret) "Token saved — blank keeps it" else if (firebase) "Database secret / auth token" else "Access token", onValueChange = { secret = it.trim() }, searchIcon = false)
+        Spacer(Modifier.height(space.sm))
+        ClipmoSearchBar(value = passphrase, hint = if (relay.hasPassphrase) "Passphrase saved — blank keeps it" else "Sync passphrase (same on all devices)", onValueChange = { passphrase = it }, searchIcon = false)
+        Spacer(Modifier.height(space.sm))
+        ClipmoButton(
+            label = "Save relay",
+            style = ClipmoButtonStyle.PRIMARY,
+            icon = ClipmoIconKind.CHECK,
+            onClick = {
+                onSave(enabled, if (firebase) "firebase" else "endpoint", url, secret.ifBlank { null }, passphrase.ifBlank { null })
+                secret = ""
+                passphrase = ""
+            },
+        )
+        Spacer(Modifier.height(space.sm))
+        ClipmoButton(
+            label = "Verify connection",
+            style = ClipmoButtonStyle.SECONDARY,
+            icon = ClipmoIconKind.REFRESH,
+            onClick = {
+                onVerify(enabled, if (firebase) "firebase" else "endpoint", url, secret.ifBlank { null }, passphrase.ifBlank { null })
+                secret = ""
+                passphrase = ""
+            },
+        )
+        if (relay.verifyMessage.isNotBlank()) {
+            Spacer(Modifier.height(space.xs))
+            BasicText(relay.verifyMessage, style = type.metadata.copy(color = if (relay.verifyMessage.startsWith("✓")) colors.accent else colors.textSecondary))
+        }
+    }
+    if (relay.status.isNotBlank()) {
+        Spacer(Modifier.height(space.xs))
+        BasicText(relay.status, style = type.metadata.copy(color = colors.textSecondary))
+    }
+}
+
+@Composable
+private fun ClipmoSendOverlay(
+    devices: List<TrustedDeviceRecord>,
+    onDismiss: () -> Unit,
+    onSend: (String?) -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    val space = ClipmoTheme.spacing
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(colors.scrim)
+            .combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier
+                .widthIn(max = 340.dp)
+                .padding(space.xl)
+                .clip(RoundedCornerShape(ClipmoTheme.shapes.panel))
+                .background(colors.surfaceContainerLow)
+                .border(1.dp, colors.border, RoundedCornerShape(ClipmoTheme.shapes.panel))
+                .combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                .padding(space.lg),
+            verticalArrangement = Arrangement.spacedBy(space.sm),
+        ) {
+            BasicText("Send to device", style = ClipmoTheme.typography.title.copy(color = colors.textPrimary))
+            ClipmoButton("All devices", ClipmoButtonStyle.PRIMARY, Modifier.fillMaxWidth(), icon = ClipmoIconKind.DEVICE, onClick = { onSend(null) })
+            devices.forEach { device ->
+                ClipmoButton(
+                    device.name + if (device.online) "" else " (offline)",
+                    ClipmoButtonStyle.SECONDARY,
+                    Modifier.fillMaxWidth(),
+                    onClick = { onSend(device.id) },
+                )
+            }
+            ClipmoButton("Cancel", ClipmoButtonStyle.GHOST, Modifier.fillMaxWidth(), onClick = onDismiss)
+        }
+    }
+}
+
+@Composable
+private fun ClipmoClearOverlay(
+    hasPairedDevices: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (includeFavorites: Boolean, deviceOnly: Boolean) -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    val space = ClipmoTheme.spacing
+    var includeFavorites by remember { mutableStateOf(false) }
+    var deviceOnly by remember { mutableStateOf(true) }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(colors.scrim)
+            .combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier
+                .widthIn(max = 340.dp)
+                .padding(space.xl)
+                .clip(RoundedCornerShape(ClipmoTheme.shapes.panel))
+                .background(colors.surfaceContainerLow)
+                .border(1.dp, colors.border, RoundedCornerShape(ClipmoTheme.shapes.panel))
+                .combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                .padding(space.lg),
+            verticalArrangement = Arrangement.spacedBy(space.sm),
+        ) {
+            BasicText("Clear clipboard history", style = ClipmoTheme.typography.title.copy(color = colors.textPrimary))
+            BasicText("What to remove", style = ClipmoTheme.typography.bodyMedium.copy(color = colors.textSecondary))
+            Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
+                ClipmoButton("Keep favorites", if (!includeFavorites) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.SECONDARY, Modifier.weight(1f), onClick = { includeFavorites = false })
+                ClipmoButton("Everything", if (includeFavorites) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.SECONDARY, Modifier.weight(1f), onClick = { includeFavorites = true })
+            }
+            if (hasPairedDevices) {
+                BasicText("Where", style = ClipmoTheme.typography.bodyMedium.copy(color = colors.textSecondary))
+                Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
+                    ClipmoButton("This device", if (deviceOnly) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.SECONDARY, Modifier.weight(1f), onClick = { deviceOnly = true })
+                    ClipmoButton("All devices", if (!deviceOnly) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.SECONDARY, Modifier.weight(1f), onClick = { deviceOnly = false })
+                }
+            }
+            BasicText(
+                if (!hasPairedDevices || deviceOnly) "Other devices keep their copies." else "Paired devices will delete these clips too.",
+                style = ClipmoTheme.typography.bodyMedium.copy(color = colors.textSecondary),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
+                ClipmoButton("Cancel", ClipmoButtonStyle.GHOST, Modifier.weight(1f), onClick = onDismiss)
+                ClipmoButton("Clear", ClipmoButtonStyle.DANGER, Modifier.weight(1f), icon = ClipmoIconKind.DELETE, onClick = { onConfirm(includeFavorites, !hasPairedDevices || deviceOnly) })
             }
         }
     }

@@ -6,7 +6,7 @@ import type { TagColorMap } from './tag-color';
 import { create } from 'zustand';
 
 import { HISTORY_PAGE_SIZE, mergeUniquePage, pageMayHaveMore } from './paging';
-import { api, on } from './tauri';
+import { api, on, type ClearScope } from './tauri';
 import { loadTagColors, saveTagColors, tagColorKey } from './tag-color';
 import { isDevBuild, resolveWindowMode, type WindowMode } from './window-mode';
 
@@ -109,8 +109,8 @@ interface Actions {
   editItem: (id: number, content: string) => Promise<void>;
   deleteItem: (id: number) => Promise<void>;
   deleteSelected: () => Promise<void>;
-  clearHistory: (includeFavorites: boolean) => Promise<void>;
-  clearCategory: (kind: ItemKind, includeFavorites?: boolean) => Promise<void>;
+  clearHistory: (includeFavorites: boolean, scope?: ClearScope) => Promise<void>;
+  clearCategory: (kind: ItemKind, includeFavorites?: boolean, scope?: ClearScope) => Promise<void>;
   loadSettings: () => Promise<void>;
   loadSyncState: () => Promise<void>;
   saveSettings: (settings: Settings) => Promise<Settings>;
@@ -624,13 +624,13 @@ export const useStore = create<State & Actions>((set, get) => ({
     await get().refresh();
   },
 
-  clearHistory: async (includeFavorites) => {
-    await api.clearHistory(includeFavorites);
+  clearHistory: async (includeFavorites, scope = 'all') => {
+    await api.clearHistory(includeFavorites, scope);
     await get().refresh();
   },
 
-  clearCategory: async (kind, includeFavorites = false) => {
-    await api.clearCategory(kind, includeFavorites);
+  clearCategory: async (kind, includeFavorites = false, scope = 'all') => {
+    await api.clearCategory(kind, includeFavorites, scope);
     await get().refresh();
   },
 
