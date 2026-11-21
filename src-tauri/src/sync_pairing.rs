@@ -347,18 +347,25 @@ impl SyncService {
         }
         let peers: Vec<PeerRecord> = self.peers.read().values().cloned().collect();
         let mut stale = Vec::new();
-        let mut connected = 0;
+        // Each saved device counts once, however many addresses answered.
+        let mut connected_ids: HashSet<String> = HashSet::new();
         for peer in peers {
             if !force && now_ms() - peer.last_seen_at < 15_000 {
-                connected += 1;
+                connected_ids.insert(peer.device.id.clone());
                 continue;
             }
             let was_offline = now_ms() - peer.last_seen_at > 30_000;
-            if self
-                .exchange_control(peer.address, &peer.device.id, "ping", "", &peer.token)
-                .is_ok()
+            // The saved address may now belong to another device: confirm who answers
+            // before sending the saved credential.
+            let identity_matches = self
+                .identify(peer.address, Duration::from_secs(3))
+                .is_ok_and(|device| device.id == peer.device.id);
+            if identity_matches
+                && self
+                    .exchange_control(peer.address, &peer.device.id, "ping", "", &peer.token)
+                    .is_ok()
             {
-                connected += 1;
+                connected_ids.insert(peer.device.id.clone());
                 if was_offline {
                     self.enqueue_history_backfill();
                 }
@@ -368,18 +375,21 @@ impl SyncService {
         }
         if scan && !stale.is_empty() {
             for (address, device_id) in self.scan_lan(&stale) {
+                if connected_ids.contains(&device_id) {
+                    continue;
+                }
                 if let Some(peer) = stale.iter().find(|p| p.device.id == device_id) {
                     if self
                         .exchange_control(address, &peer.device.id, "ping", "", &peer.token)
                         .is_ok()
                     {
-                        connected += 1;
+                        connected_ids.insert(device_id);
                         self.enqueue_history_backfill();
                     }
                 }
             }
         }
-        connected
+        connected_ids.len()
     }
 
     /// Finds saved devices on the local IPv4 subnets (up to /24 each) by identity.
@@ -421,6 +431,9 @@ impl SyncService {
                 std::thread::spawn(move || loop {
                     let index = next.fetch_add(1, Ordering::SeqCst) as usize;
                     let Some(ip) = hosts.get(index) else { break };
+                    // A host that drops connections costs at most two timeouts, but a
+                    // timeout on one port must not hide a later port where the device listens.
+                    let mut timeouts = 0;
                     for port in ports.iter() {
                         let address = SocketAddr::new(IpAddr::V4(*ip), *port);
                         match service.identify(address, Duration::from_millis(250)) {
@@ -429,7 +442,12 @@ impl SyncService {
                                 break;
                             }
                             Ok(_) => break,
-                            Err(error) if error.kind() == io::ErrorKind::TimedOut => break,
+                            Err(error) if error.kind() == io::ErrorKind::TimedOut => {
+                                timeouts += 1;
+                                if timeouts >= 2 {
+                                    break;
+                                }
+                            }
                             Err(_) => {}
                         }
                     }

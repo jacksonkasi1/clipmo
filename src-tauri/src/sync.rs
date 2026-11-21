@@ -347,8 +347,7 @@ impl SyncService {
             return false;
         };
         job.target = target;
-        self.push_job(job, &preferences);
-        true
+        self.push_job(job, &preferences)
     }
 
     /// Marks rows as deleted on this device only. A local tombstone stops peers'
@@ -627,10 +626,13 @@ impl SyncService {
         );
     }
 
-    fn push_job(&self, job: SyncJob, preferences: &SyncPreferences) {
-        if !self.queue.push(job, preferences.max_total_bytes()) {
+    /// Returns whether the job was accepted (a payload over the configured limit stays local).
+    fn push_job(&self, job: SyncJob, preferences: &SyncPreferences) -> bool {
+        let accepted = self.queue.push(job, preferences.max_total_bytes());
+        if !accepted {
             log::warn!("sync payload exceeded the configured queue limit and stayed local");
         }
+        accepted
     }
 
     fn next_version(&self) -> SyncVersion {

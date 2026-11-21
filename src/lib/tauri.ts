@@ -79,6 +79,8 @@ export const api = {
   mcpStatus: () => invoke<McpStatus>('mcp_status'),
   setMcpEnabled: (enabled: boolean) => invoke<McpStatus>('set_mcp_enabled', { enabled }),
   rotateMcpToken: () => invoke<McpStatus>('rotate_mcp_token'),
+  verifyRelay: (input: RelayInput | null) => invoke<string>('verify_relay', { input }),
+  notify: (text: string, title = 'Clipmo') => message(text, { title, kind: 'info' }),
   relayStatus: () => invoke<RelayStatus>('relay_status'),
   saveRelay: (input: RelayInput) => invoke<RelayStatus>('save_relay', { input }),
   reconnectSync: () => invoke<number>('reconnect_sync'),
@@ -151,7 +153,9 @@ export const api = {
   confirmClear: async (text: string, title: string): Promise<ClearScope | null> => {
     const state = await invoke<SyncState>('sync_state').catch(() => null);
     if (!state || !state.enabled || state.peers.length === 0) {
-      return (await confirm(text, { title, kind: 'warning' })) ? 'all' : null;
+      // Nothing is paired, so only this device is affected. Deleting locally (not broadcasting)
+      // also means a device paired later never inherits this delete.
+      return (await confirm(text, { title, kind: 'warning' })) ? 'device' : null;
     }
     const choice = await message(
       `${text}\n\nThis device is paired with ${state.peers.length} other device${state.peers.length === 1 ? '' : 's'}. Where should this apply?`,

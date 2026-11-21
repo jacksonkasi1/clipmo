@@ -1103,6 +1103,22 @@ pub async fn rotate_mcp_token(
     Ok(state.mcp.rotate_token(&app))
 }
 
+/// Saves the entered relay settings, then proves they work with a real round trip.
+#[tauri::command]
+pub async fn verify_relay(
+    state: tauri::State<'_, AppState>,
+    input: Option<crate::sync::RelayInput>,
+) -> Result<String> {
+    if let Some(input) = input {
+        state.sync.save_relay(input)?;
+    }
+    let service = state.sync.clone();
+    tauri::async_runtime::spawn_blocking(move || service.verify_relay())
+        .await
+        .map_err(|error| Error::Other(error.to_string()))?
+        .map_err(Error::Other)
+}
+
 #[tauri::command]
 pub async fn reconnect_sync(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<usize> {
     let service = state.sync.clone();

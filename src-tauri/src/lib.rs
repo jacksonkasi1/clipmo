@@ -165,6 +165,7 @@ pub fn run() {
             commands::set_mcp_enabled,
             commands::rotate_mcp_token,
             commands::relay_status,
+            commands::verify_relay,
             commands::save_relay,
             commands::send_to_device,
             sync::load_sync_preferences,

@@ -301,6 +301,7 @@ class ClipSyncService : Service() {
 			launch { relayLoop(deviceId) }
 			if (intent?.action == ACTION_SYNC_NOW) enqueueHistoryBackfill()
 			if (intent?.action == ACTION_RECONNECT) reconnectSavedPeers(force = true, scan = true)
+			if (intent?.action == ACTION_SEND_TO) sendItemsTo(intent)
 		}
 
 		Log.i("ClipSyncService", "started on port=$listenPort deviceId=$deviceId")
@@ -1400,25 +1401,29 @@ class ClipSyncService : Service() {
 
     /** Pings every saved peer at its last address; optionally scans the LAN for ones that moved. */
     private suspend fun reconnectSavedPeers(force: Boolean, scan: Boolean): Int = withContext(Dispatchers.IO) {
-        var connected = 0
+        // Each saved device counts once, however many addresses answered.
+        val connectedIds = mutableSetOf<String>()
         val stale = mutableListOf<PeerRecord>()
         peers.values.toList().forEach { peer ->
             val token = peerToken(peer.device.id)
             if (token == null) { peers.remove(peer.device.id); return@forEach }
-            if (!force && System.currentTimeMillis() - peer.lastSeenAt < 15_000) { connected++; return@forEach }
+            if (!force && System.currentTimeMillis() - peer.lastSeenAt < 15_000) { connectedIds += peer.device.id; return@forEach }
             val wasOffline = System.currentTimeMillis() - peer.lastSeenAt > 30_000
-            if (exchangeControl(peer.address, peer.device.id, "ping", "", token)) {
-                connected++
+            // The saved address may now belong to another device: confirm who answers before
+            // sending the saved credential.
+            if (identify(peer.address, 3000) == peer.device.id && exchangeControl(peer.address, peer.device.id, "ping", "", token)) {
+                connectedIds += peer.device.id
                 if (wasOffline) enqueueHistoryBackfill(peer.device.id)
             } else stale += peer
         }
         if (scan && stale.isNotEmpty()) {
             for ((address, id) in scanLan(stale)) {
+                if (id in connectedIds) continue
                 val token = peerToken(id) ?: continue
-                if (exchangeControl(address, id, "ping", "", token)) { connected++; enqueueHistoryBackfill(id) }
+                if (exchangeControl(address, id, "ping", "", token)) { connectedIds += id; enqueueHistoryBackfill(id) }
             }
         }
-        connected
+        connectedIds.size
     }
 
     /** Asks a host who it is using a throwaway token, so saved credentials never go to unverified hosts. */
@@ -1461,7 +1466,7 @@ class ClipSyncService : Service() {
             }
         }
         pool.shutdown()
-        pool.awaitTermination(60, java.util.concurrent.TimeUnit.SECONDS)
+        if (!pool.awaitTermination(60, java.util.concurrent.TimeUnit.SECONDS)) pool.shutdownNow()
         return found
     }
 

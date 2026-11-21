@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
     private var pairingCode by mutableStateOf("")
     private var pairingStatus by mutableStateOf("")
     private var relayUi by mutableStateOf(RelayUi())
+    private var relayVerifyMessage by mutableStateOf("")
     private var joinPending by mutableStateOf(false)
     private var pairingModeActive by mutableStateOf(false)
     private var pairingUntilMs by mutableStateOf(0L)
@@ -163,8 +164,9 @@ class MainActivity : ComponentActivity() {
                 onSyncNow = ::syncNow,
                 onReconnect = ::reconnect,
                 onSendToDevice = ::sendToDevice,
-                relay = relayUi,
-                onSaveRelay = ::saveRelay,
+                relay = relayUi.copy(verifyMessage = relayVerifyMessage),
+                onSaveRelay = { e, b, u, s, p -> saveRelay(e, b, u, s, p) },
+                onVerifyRelay = ::verifyRelay,
                 onRefresh = ::refreshSync,
             )
         }
@@ -314,10 +316,10 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun saveRelay(enabled: Boolean, backend: String, url: String, secret: String?, passphrase: String?) {
+    private fun saveRelay(enabled: Boolean, backend: String, url: String, secret: String?, passphrase: String?): Boolean {
         if (enabled && !(url.startsWith("https://") || url.startsWith("http://10.0.2.2"))) {
             Toast.makeText(this, "The relay address must start with https://", Toast.LENGTH_LONG).show()
-            return
+            return false
         }
         val editor = preferences.edit()
             .putBoolean("relay_enabled", enabled).putString("relay_backend", backend).putString("relay_url", url.trim())
@@ -329,12 +331,29 @@ class MainActivity : ComponentActivity() {
         }
         if (enabled && passphrase == null && preferences.getString("relay_key", "").isNullOrEmpty()) {
             Toast.makeText(this, "Choose a sync passphrase for the relay", Toast.LENGTH_LONG).show()
-            return
+            return false
         }
         editor.apply()
         relayUi = readRelay()
         Toast.makeText(this, if (enabled) "Relay saved" else "Relay turned off", Toast.LENGTH_SHORT).show()
         if (enabled && syncEnabled) startSyncService()
+        return true
+    }
+
+    /** Saves the entered settings, then proves them with a real encrypted round trip. */
+    private fun verifyRelay(enabled: Boolean, backend: String, url: String, secret: String?, passphrase: String?) {
+        if (!saveRelay(enabled, backend, url, secret, passphrase)) return
+        relayVerifyMessage = "Checking…"
+        Thread {
+            val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+            val config = RelayConfig(
+                true, preferences.getString("relay_backend", "endpoint").orEmpty(),
+                preferences.getString("relay_url", "").orEmpty(), preferences.getString("relay_secret", "").orEmpty(),
+                preferences.getString("relay_key", "").orEmpty(), preferences.getString("relay_channel", "").orEmpty(),
+            )
+            val result = RelayClient(mapper).verify(config)
+            runOnUiThread { relayVerifyMessage = result }
+        }.start()
     }
 
     private fun reconnect() {

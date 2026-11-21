@@ -134,6 +134,7 @@ data class RelayUi(
     val hasSecret: Boolean = false,
     val hasPassphrase: Boolean = false,
     val status: String = "",
+    val verifyMessage: String = "",
 )
 
 data class ClipmoUiState(
@@ -185,6 +186,7 @@ fun ClipmoApp(
     onSendToDevice: (Set<Long>, String?) -> Unit = { _, _ -> },
     relay: RelayUi = RelayUi(),
     onSaveRelay: (enabled: Boolean, backend: String, url: String, secret: String?, passphrase: String?) -> Unit = { _, _, _, _, _ -> },
+    onVerifyRelay: (enabled: Boolean, backend: String, url: String, secret: String?, passphrase: String?) -> Unit = { _, _, _, _, _ -> },
     onRefresh: () -> Unit = {},
 ) {
     ClipmoTheme(state.themeMode) {
@@ -276,6 +278,7 @@ fun ClipmoApp(
                             onReconnect = onReconnect,
                             relay = relay,
                             onSaveRelay = onSaveRelay,
+                            onVerifyRelay = onVerifyRelay,
                         )
                         ClipmoScreen.SETTINGS -> SettingsScreen(
                             state = state,
@@ -869,6 +872,7 @@ private fun DevicesScreen(
     onReconnect: () -> Unit,
     relay: RelayUi,
     onSaveRelay: (Boolean, String, String, String?, String?) -> Unit,
+    onVerifyRelay: (Boolean, String, String, String?, String?) -> Unit,
 ) {
     val colors = ClipmoTheme.colors
     val space = ClipmoTheme.spacing
@@ -1051,7 +1055,7 @@ private fun DevicesScreen(
 
             Spacer(Modifier.height(space.xl))
 
-            ClipmoRelaySection(relay = relay, onSave = onSaveRelay)
+            ClipmoRelaySection(relay = relay, onSave = onSaveRelay, onVerify = onVerifyRelay)
             Spacer(Modifier.height(space.xl))
 
             if (state.pairingStatus.isNotBlank()) {
@@ -2947,6 +2951,7 @@ private fun ClipmoConfirmOverlay(
 private fun ClipmoRelaySection(
     relay: RelayUi,
     onSave: (Boolean, String, String, String?, String?) -> Unit,
+    onVerify: (Boolean, String, String, String?, String?) -> Unit,
 ) {
     val colors = ClipmoTheme.colors
     val space = ClipmoTheme.spacing
@@ -2994,6 +2999,21 @@ private fun ClipmoRelaySection(
                 passphrase = ""
             },
         )
+        Spacer(Modifier.height(space.sm))
+        ClipmoButton(
+            label = "Verify connection",
+            style = ClipmoButtonStyle.SECONDARY,
+            icon = ClipmoIconKind.REFRESH,
+            onClick = {
+                onVerify(enabled, if (firebase) "firebase" else "endpoint", url, secret.ifBlank { null }, passphrase.ifBlank { null })
+                secret = ""
+                passphrase = ""
+            },
+        )
+        if (relay.verifyMessage.isNotBlank()) {
+            Spacer(Modifier.height(space.xs))
+            BasicText(relay.verifyMessage, style = type.metadata.copy(color = if (relay.verifyMessage.startsWith("✓")) colors.accent else colors.textSecondary))
+        }
     }
     if (relay.status.isNotBlank()) {
         Spacer(Modifier.height(space.xs))
@@ -3089,7 +3109,7 @@ private fun ClipmoClearOverlay(
             )
             Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
                 ClipmoButton("Cancel", ClipmoButtonStyle.GHOST, Modifier.weight(1f), onClick = onDismiss)
-                ClipmoButton("Clear", ClipmoButtonStyle.DANGER, Modifier.weight(1f), icon = ClipmoIconKind.DELETE, onClick = { onConfirm(includeFavorites, hasPairedDevices && deviceOnly) })
+                ClipmoButton("Clear", ClipmoButtonStyle.DANGER, Modifier.weight(1f), icon = ClipmoIconKind.DELETE, onClick = { onConfirm(includeFavorites, !hasPairedDevices || deviceOnly) })
             }
         }
     }

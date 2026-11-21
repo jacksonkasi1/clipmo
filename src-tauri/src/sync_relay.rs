@@ -278,6 +278,58 @@ impl SyncService {
         Ok(self.relay_status())
     }
 
+    /// Proves the saved relay settings work: writes a small encrypted test message, reads
+    /// it back and decrypts it. The error text says which part is wrong.
+    pub fn verify_relay(&self) -> std::result::Result<String, String> {
+        let config = self.relay.config.read().clone();
+        if config.url.is_empty() {
+            return Err("Enter the server address first.".into());
+        }
+        if config.key.is_empty() {
+            return Err("Choose a sync passphrase first.".into());
+        }
+        let started = std::time::Instant::now();
+        let describe = |error: io::Error| {
+            let text = error.to_string();
+            if text.contains("HTTP 401") || text.contains("HTTP 403") {
+                "The server rejected the access password (token). Check it matches the one you set on the server.".to_string()
+            } else if text.contains("HTTP 404") {
+                "The server answered but this address is wrong (404). Use the full https:// address of your relay.".to_string()
+            } else if text.contains("unreachable") {
+                format!("Could not reach the server. Check the address and your internet connection. ({text})")
+            } else {
+                format!("The relay failed: {text}")
+            }
+        };
+        let id = new_item_id();
+        let probe = format!("clipmo-verify-{id}");
+        let blob = encrypt(&config.key, probe.as_bytes()).map_err(describe)?;
+        push_item(
+            &config,
+            &MailItem {
+                id: id.clone(),
+                device: "verify".into(),
+                blob,
+            },
+        )
+        .map_err(describe)?;
+        let before = format!("{:016}-", (now_ms() - 60_000).max(0));
+        let items = pull_items(&config, &before).map_err(describe)?;
+        let Some(item) = items.iter().find(|item| item.id == id) else {
+            return Err(
+                "The server accepted the message but did not return it. Check the server code."
+                    .into(),
+            );
+        };
+        match decrypt(&config.key, &item.blob) {
+            Ok(plain) if plain == probe.as_bytes() => Ok(format!(
+                "Connected. A test message was written, read back and decrypted in {} ms.",
+                started.elapsed().as_millis()
+            )),
+            _ => Err("The message came back but could not be decrypted.".into()),
+        }
+    }
+
     pub(super) fn load_relay(&self) {
         let Some(store) = &self.store else { return };
         let raw: Option<String> = store

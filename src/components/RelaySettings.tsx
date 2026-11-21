@@ -37,6 +37,28 @@ export function RelaySettings() {
     return () => window.clearInterval(timer);
   }, []);
 
+  const verify = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await api.verifyRelay({
+        enabled,
+        backend,
+        url,
+        secret: secret ? secret : null,
+        passphrase: passphrase ? passphrase : null,
+      });
+      setSecret('');
+      setPassphrase('');
+      await load();
+      setMessage(`✓ ${result}`);
+    } catch (error) {
+      setMessage(`✗ ${mutationErrorMessage('Connection check failed.', error)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const save = async () => {
     setBusy(true);
     setMessage(null);
@@ -115,6 +137,9 @@ export function RelaySettings() {
       </label>
       <div className="history-actions">
         <button type="button" className="primary-button" disabled={busy} onClick={() => void save()}>Save relay</button>
+        <button type="button" className="secondary-button" disabled={busy || !url} onClick={() => void verify()} title="Saves these settings, then writes and reads back an encrypted test message through your server.">
+          {busy ? 'Checking…' : 'Verify connection'}
+        </button>
       </div>
       {status?.enabled && (
         <p role="status">

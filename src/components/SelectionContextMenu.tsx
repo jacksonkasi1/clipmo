@@ -48,7 +48,14 @@ export function SelectionContextMenu({ x, y, onClose }: Props) {
     return () => { active = false; };
   }, []);
   const sendSelected = (targetId: string | null) => async () => {
-    await api.sendToDevice(selected.map((item) => item.id), targetId);
+    try {
+      const queued = await api.sendToDevice(selected.map((item) => item.id), targetId);
+      if (queued === 0) {
+        await api.notify('Nothing was sent. Make sure LAN sync is on and the device is paired, then try again.');
+      }
+    } catch (error) {
+      await api.notify(`Could not send: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
   const [openSubmenu, setOpenSubmenu] = useState<SubmenuId | null>(null);

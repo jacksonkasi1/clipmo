@@ -271,9 +271,12 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
             </ul>
           )}
           {peers.length > 0 && (
-            <button type="button" className="secondary-button" disabled={busy} onClick={() => void reconnectDevices()}>
+            <button type="button" className="secondary-button" disabled={busy || !sync?.enabled} onClick={() => void reconnectDevices()}>
               Reconnect saved devices
             </button>
+          )}
+          {peers.length > 0 && !sync?.enabled && (
+            <p role="status">Turn on LAN sync in Settings to reconnect saved devices.</p>
           )}
           {connecting && <p role="status">Connecting… Keep pairing open on the other device.</p>}
           {notice && <p role="status"><CheckCircle2 size={16} aria-hidden /> {notice}</p>}

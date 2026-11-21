@@ -66,6 +66,30 @@ object RelayCrypto {
 }
 
 class RelayClient(private val mapper: ObjectMapper) {
+	/** Writes an encrypted test message, reads it back and decrypts it. Returns a human message. */
+	fun verify(config: RelayConfig): String {
+		if (config.url.isBlank()) return "✗ Enter the server address first."
+		if (config.keyHex.isBlank()) return "✗ Choose a sync passphrase first."
+		val started = System.currentTimeMillis()
+		return try {
+			val id = RelayCrypto.newItemId()
+			val probe = "clipmo-verify-$id"
+			push(config, MailItem(id, "verify", RelayCrypto.encrypt(config.keyHex, probe.toByteArray())))
+			val back = pull(config, "%016d-".format(System.currentTimeMillis() - 60_000)).firstOrNull { it.id == id }
+				?: return "✗ The server accepted the message but did not return it. Check the server code."
+			val plain = RelayCrypto.decrypt(config.keyHex, back.blob)
+			if (plain != null && String(plain) == probe) "✓ Connected. A test message was written, read back and decrypted in ${System.currentTimeMillis() - started} ms."
+			else "✗ The message came back but could not be decrypted."
+		} catch (e: Exception) {
+			val text = e.message ?: e.javaClass.simpleName
+			when {
+				"HTTP 401" in text || "HTTP 403" in text -> "✗ The server rejected the access password (token). Check it matches the one you set on the server."
+				"HTTP 404" in text -> "✗ The server answered but this address is wrong (404). Use the full https:// address of your relay."
+				else -> "✗ Could not reach the relay: $text"
+			}
+		}
+	}
+
 	private fun open(url: String, method: String, bearer: String? = null): HttpURLConnection =
 		(URL(url).openConnection() as HttpURLConnection).apply {
 			requestMethod = method
