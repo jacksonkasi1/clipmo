@@ -26,7 +26,7 @@ works. Backend = "Firebase", URL = `https://<project>-default-rtdb.firebaseio.co
 Secret = a database secret / auth token. Entries live under `/clipmo/<channel>`.
 Optionally add a scheduled cleanup (or a Cloud Function) to expire old entries.
 
-## Option C: any SQL database (Turso, Postgres, ...)
-Run `schema.sql` and expose the same two routes (`POST /v1/:channel`, `GET
+## Option C: Turso / Postgres / any SQL database
+Clipmo never connects to a database directly. A database needs a small server in front of it (like the Worker in Option A) that speaks the relay API; in Clipmo you then choose "Cloudflare Worker (or your own HTTP server)" and enter that server's address. Run `schema.sql` on your database and expose the same two routes (`POST /v1/:channel`, `GET
 /v1/:channel?after=`) from any server or serverless function, then use "Custom endpoint".
 `worker.js` is about 30 lines to port.

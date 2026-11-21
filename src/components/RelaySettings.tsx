@@ -68,27 +68,42 @@ export function RelaySettings() {
       <label>
         <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /> Enable relay
       </label>
-      <label>
+      <label title="Where encrypted clips are parked while your devices are not connected to each other.">
         Backend
         <select value={backend} onChange={(event) => setBackend(event.target.value as RelayBackend)}>
-          <option value="endpoint">Custom endpoint (Cloudflare Worker, Turso, Postgres…)</option>
+          <option value="endpoint">Cloudflare Worker (or your own HTTP server)</option>
           <option value="firebase">Firebase Realtime Database</option>
         </select>
+        <small className="relay-hint">
+          {backend === 'firebase'
+            ? 'Your own Firebase project. Clipmo talks to its database directly.'
+            : 'A small server you deploy once (the included Cloudflare Worker is the easy way). It stores encrypted clips in its own database (D1, Turso or Postgres) — you never enter database details here, only the server address.'}
+        </small>
       </label>
-      <label>
-        {backend === 'firebase' ? 'Database URL' : 'Endpoint URL'}
-        <input type="url" value={url} placeholder="https://…" onChange={(event) => setUrl(event.target.value)} />
+      <label title={backend === 'firebase' ? 'Firebase console → Realtime Database → copy the URL at the top.' : 'The https:// address printed after you deploy the Worker (or your server).'}>
+        {backend === 'firebase' ? 'Database URL' : 'Server address'}
+        <input type="url" value={url} placeholder={backend === 'firebase' ? 'https://your-project-default-rtdb.firebaseio.com' : 'https://clipmo-relay.your-name.workers.dev'} onChange={(event) => setUrl(event.target.value)} />
+        <small className="relay-hint">
+          {backend === 'firebase'
+            ? 'Firebase console → Realtime Database → the URL shown at the top of the data tab.'
+            : 'The https:// address shown after you deploy the relay (see relay/README.md).'}
+        </small>
       </label>
-      <label>
-        {backend === 'firebase' ? 'Database secret / auth token' : 'Access token'}
+      <label title={backend === 'firebase' ? 'A Realtime Database secret or auth token so only you can read and write.' : 'The RELAY_TOKEN you set when deploying the Worker. It only lets this app talk to your server.'}>
+        {backend === 'firebase' ? 'Database secret / auth token' : 'Access password for your server'}
         <input
           type="password"
           value={secret}
           placeholder={status?.hasSecret ? 'Saved — leave blank to keep' : ''}
           onChange={(event) => setSecret(event.target.value)}
         />
+        <small className="relay-hint">
+          {backend === 'firebase'
+            ? 'Firebase console → Project settings → Service accounts → Database secrets (or an auth token). Keeps strangers out of your database.'
+            : 'The value you chose with "wrangler secret put RELAY_TOKEN". Keeps strangers from using your server. Not your encryption key.'}
+        </small>
       </label>
-      <label>
+      <label title="Used to encrypt your clips on this device before they leave it. Type the exact same passphrase on every device. It is never sent anywhere, so it cannot be recovered if you forget it.">
         Sync passphrase (same on all devices)
         <input
           type="password"
@@ -96,6 +111,7 @@ export function RelaySettings() {
           placeholder={status?.hasPassphrase ? 'Saved — leave blank to keep' : ''}
           onChange={(event) => setPassphrase(event.target.value)}
         />
+        <small className="relay-hint">Your secret encryption phrase — choose any long phrase and use the same one on every device. The server only ever stores scrambled text.</small>
       </label>
       <div className="history-actions">
         <button type="button" className="primary-button" disabled={busy} onClick={() => void save()}>Save relay</button>

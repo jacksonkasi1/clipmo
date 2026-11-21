@@ -3418,3 +3418,4 @@ kbd {
 .relay-settings { display: grid; gap: 10px; }
 .relay-settings label { display: grid; gap: 4px; }
 .relay-settings input[type='url'], .relay-settings input[type='password'], .relay-settings select { padding: 6px 8px; }
+.relay-hint { color: var(--text-muted); font-size: 11px; line-height: 1.4; font-weight: 400; }
