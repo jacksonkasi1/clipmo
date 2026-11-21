@@ -302,6 +302,8 @@ Add to `opencode.json` (project) or `~/.config/opencode/opencode.json`:
 | `set_tags`, `add_tags`, `remove_tags`, `list_tags` | Manage tags |
 | `list_collections`, `create_collection`, `delete_collection` | Manage collections |
 | `add_to_collection`, `remove_from_collection` | Organize clips |
+| `list_devices` | Paired devices and whether each is connected |
+| `send_to_device` | Force-send clips to one device or all devices |
 | `clear_history` | Destructive; needs `confirm=true`. Keeps favorites unless `include_favorites`; `scope` is `all` or `device` |
 
 Quick check without any client:

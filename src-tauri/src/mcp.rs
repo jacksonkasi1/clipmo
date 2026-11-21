@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::models::{ItemKind, ListQuery, NewItem, SyncStatus};
+use crate::mcp_tools::{rpc_error, tool_definitions};
 use crate::AppState;
 
 const FIRST_PORT: u16 = 47_650;
@@ -239,50 +240,6 @@ fn handle(app: AppHandle, mut request: tiny_http::Request) {
     respond(request, 200, Some(body));
 }
 
-fn rpc_error(id: Value, code: i32, message: &str) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
-}
-
-fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
-    json!({
-        "name": name,
-        "description": description,
-        "inputSchema": { "type": "object", "properties": properties, "required": required }
-    })
-}
-
-fn tool_definitions() -> Vec<Value> {
-    let id = json!({ "type": "integer", "description": "Clip id from list_clips" });
-    let ids = json!({ "type": "array", "items": { "type": "integer" } });
-    let strings = json!({ "type": "array", "items": { "type": "string" } });
-    vec![
-        tool("list_clips", "List or search clipboard history, newest first. Content is truncated; use get_clip for the full text.",
-            json!({
-                "search": { "type": "string" },
-                "kind": { "type": "string", "enum": ["text","link","email","color","image","files"] },
-                "favorites_only": { "type": "boolean" },
-                "tag": { "type": "string", "description": "Only clips with this tag" },
-                "limit": { "type": "integer", "description": "Default 20, max 100" }
-            }), &[]),
-        tool("get_clip", "Get one clip with its full text.", json!({ "id": id }), &["id"]),
-        tool("add_clip", "Add a text clip to history.",
-            json!({ "text": { "type": "string" }, "favorite": { "type": "boolean" }, "tags": strings }), &["text"]),
-        tool("set_favorite", "Star or unstar a clip.", json!({ "id": id, "favorite": { "type": "boolean" } }), &["id", "favorite"]),
-        tool("delete_clip", "Delete one clip (also removes it from synced devices).", json!({ "id": id }), &["id"]),
-        tool("set_tags", "Replace the tags on a clip.", json!({ "id": id, "tags": strings }), &["id", "tags"]),
-        tool("add_tags", "Add tags to a clip.", json!({ "id": id, "tags": strings }), &["id", "tags"]),
-        tool("remove_tags", "Remove tags from a clip.", json!({ "id": id, "tags": strings }), &["id", "tags"]),
-        tool("list_tags", "List all tags.", json!({}), &[]),
-        tool("list_collections", "List collections with item counts.", json!({}), &[]),
-        tool("create_collection", "Create an empty collection.", json!({ "name": { "type": "string" } }), &["name"]),
-        tool("delete_collection", "Delete a collection (clips are kept).", json!({ "name": { "type": "string" } }), &["name"]),
-        tool("add_to_collection", "Add clips to a collection.", json!({ "ids": ids, "collection": { "type": "string" } }), &["ids", "collection"]),
-        tool("remove_from_collection", "Remove clips from a collection.", json!({ "ids": ids, "collection": { "type": "string" } }), &["ids", "collection"]),
-        tool("clear_history", "DESTRUCTIVE. Delete clips. Requires confirm=true. Favorites are kept unless include_favorites=true. scope 'device' removes only on this device; 'all' (default) also deletes on synced devices.",
-            json!({ "confirm": { "type": "boolean" }, "include_favorites": { "type": "boolean" }, "scope": { "type": "string", "enum": ["all","device"] } }), &["confirm"]),
-    ]
-}
-
 fn summarize(item: &crate::models::ClipItem, full: bool) -> Value {
     let content: String = if full {
         item.content.clone()
@@ -411,6 +368,36 @@ fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<Value, String>
             }
             changed();
             Ok(json!({ "ok": true }))
+        }
+        "list_devices" => {
+            let settings = state.settings.read().clone();
+            let sync = state.sync.state(&settings);
+            Ok(json!({
+                "syncEnabled": sync.enabled,
+                "thisDevice": sync.device.name,
+                "devices": sync.peers.iter().map(|peer| json!({
+                    "id": peer.device.id,
+                    "name": peer.device.name,
+                    "platform": peer.device.platform,
+                    "connected": peer.status == SyncStatus::Synced,
+                })).collect::<Vec<_>>()
+            }))
+        }
+        "send_to_device" => {
+            let ids: Vec<i64> = args.get("ids").and_then(Value::as_array).map(|v| v.iter().filter_map(Value::as_i64).collect()).unwrap_or_default();
+            if ids.is_empty() {
+                return Err("'ids' must list at least one clip id".into());
+            }
+            let target = args.get("device_id").and_then(Value::as_str).map(str::to_string);
+            let mut sent = 0;
+            for id in ids {
+                if let Some(item) = state.db.get(id).map_err(e)? {
+                    if state.sync.send_item_to(&item, target.clone()) {
+                        sent += 1;
+                    }
+                }
+            }
+            Ok(json!({ "queued": sent }))
         }
         "list_tags" => Ok(json!(state.db.known_tags().map_err(e)?)),
         "list_collections" => Ok(json!(state.db.collections().map_err(e)?)),

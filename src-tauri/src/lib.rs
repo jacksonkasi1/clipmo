@@ -16,6 +16,7 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 
 #[cfg(not(test))]
 pub mod mcp;
+pub mod mcp_tools;
 mod capture_policy;
 pub mod clipboard;
 #[cfg(not(test))]
