@@ -53,7 +53,7 @@ internal fun contentHashForSync(kind: ItemKind, content: String, idHash: String)
 	return bytes.take(16).joinToString("") { "%02x".format(it) }
 }
 const val HARD_MAX_MESSAGE_BYTES = 128L * 1024 * 1024
-const val LIVE_CLIP_MAX_AGE_MS = 30_000L
+const val LIVE_CLIP_MAX_AGE_MS = 120_000L
 const val LIVE_CLIP_FUTURE_TOLERANCE_MS = 5_000L
 const val KEY_COPY_LIVE_SYNC_TO_CLIPBOARD = "copy_live_sync_to_clipboard"
 const val KEY_LAST_REMOTE_CLIPBOARD_AT = "last_remote_clipboard_at"
@@ -498,7 +498,7 @@ class ClipSyncService : Service() {
 			}
 		}
 
-	private suspend fun enqueueItem(itemId: Long, kind: ItemKind, live: Boolean = true, targetPeerId: String? = null) = syncMutex.withLock {
+	private suspend fun enqueueItem(itemId: Long, kind: ItemKind, live: Boolean = true, targetPeerId: String? = null, reuseVersion: Boolean = false) = syncMutex.withLock {
 		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
 		val cursor = db.query("items", null, "id=?", arrayOf(itemId.toString()), null, null, null)
 		cursor.use { c ->
@@ -516,12 +516,20 @@ class ClipSyncService : Service() {
 				db.update("items", values, "id=?", arrayOf(itemId.toString()))
 			}
 			val contentHash = contentHashForSync(kind, content, idHash)
-			val version = SyncVersion(
-				device_id = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
-					.getString("device_id", "local")!!,
-				lamport = lamport.getAndIncrement(),
-				wall_ms = ts
-			)
+			val myId = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE).getString("device_id", "local")!!
+			// A backfill resends the ORIGINAL version. A fresh one would make an old clip look
+			// newer than a delete another device already made, so deleted clips reappeared.
+			val storedLamport = c.getColumnIndex("origin_lamport").takeIf { it >= 0 && !c.isNull(it) }?.let(c::getLong) ?: 0L
+			val storedDevice = c.getColumnIndex("origin_device").takeIf { it >= 0 && !c.isNull(it) }?.let(c::getString)
+			val version = if (reuseVersion && storedLamport > 0 && storedDevice == myId) {
+				SyncVersion(myId, storedLamport, c.getColumnIndex("origin_wall_ms").takeIf { it >= 0 }?.let(c::getLong) ?: ts)
+			} else if (reuseVersion && storedDevice != null && storedDevice != myId) {
+				return@withLock // another device owns this clip and resends it itself
+			} else {
+				SyncVersion(myId, lamport.getAndIncrement(), ts).also { fresh ->
+					db.execSQL("UPDATE items SET origin_lamport=?, origin_wall_ms=? WHERE id=?", arrayOf(fresh.lamport, fresh.wall_ms, itemId))
+				}
+			}
 			val snapshot = ClipSnapshot(
 				id_hash = idHash,
 				kind = kind,
@@ -548,11 +556,14 @@ class ClipSyncService : Service() {
 				if (targetPeerId != null) {
 					job.pendingPeers = mutableSetOf(targetPeerId)
 				}
-				jobQueue.add(job)
+				// Fresh copies jump ahead of bulk work such as backfills and deletes.
+				if (live && targetPeerId == null) jobQueue.addFirst(job) else jobQueue.addLast(job)
 			}
 		}
 		db.close()
 	}
+
+	private val peerDownUntil = ConcurrentHashMap<String, Long>()
 
 	private suspend fun drainSendQueue(deviceId: String, deviceName: String) {
 		while (running) {
@@ -584,9 +595,8 @@ class ClipSyncService : Service() {
 				continue
 			}
 			if (targets.isEmpty()) {
-                job.pendingPeers = null
-				syncMutex.withLock { jobQueue.addFirst(job) }
-				delay(1_000)
+				// Nobody to deliver to right now; reconnect backfill (items + deletes) catches devices up.
+				job.pendingPeers = null
 				continue
 			}
 			for (peerId in targets.toList()) {
@@ -595,6 +605,7 @@ class ClipSyncService : Service() {
                 if (token == null) { targets.remove(peerId); peers.remove(peerId); continue }
                 val peer = peers[peerId] ?: continue
                 if (peer.address.address.isAnyLocalAddress) continue
+                if (System.currentTimeMillis() < (peerDownUntil[peerId] ?: 0L)) { targets.remove(peerId); continue }
                 if (sendToPeer(peer.address, envelope.copy(pairing_code = token), job.blobs)) {
 					targets.remove(peerId)
 					touchDeviceSeen(peerId)
@@ -602,12 +613,11 @@ class ClipSyncService : Service() {
 						"ClipSyncService",
 						"sent ${job.body.javaClass.simpleName} version=${job.body.version().lamport} to ${peer.device.platform}",
 					)
+				} else {
+					// Skip an unreachable device briefly; reconnect backfill catches it up.
+					peerDownUntil[peerId] = System.currentTimeMillis() + 5_000
+					targets.remove(peerId)
 				}
-			}
-			if (targets.isNotEmpty()) {
-                // An offline recipient must not block newer clips to online devices.
-				syncMutex.withLock { jobQueue.addLast(job) }
-				delay(1_000)
 			}
 		}
 	}
@@ -679,7 +689,7 @@ class ClipSyncService : Service() {
 		val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
 		var lastSeenId = prefs.getLong("sync_last_seen_id", 0L)
 		while (running) {
-			delay(1000L)
+			delay(400L)
 			if (!prefs.getBoolean("sync_enabled", false)) continue
 			try {
 				processMutationOutbox(deviceId)
@@ -728,6 +738,25 @@ class ClipSyncService : Service() {
 		}
 	}
 
+	/** Re-sends deletes this device made, so a device that was offline still removes those clips. */
+	private suspend fun replayTombstones(targetPeerId: String?) {
+		val myId = getOrCreateDeviceId()
+		val bodies = mutableListOf<SyncBody>()
+		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
+		db.rawQuery(
+			"SELECT id_hash, origin_lamport, origin_wall_ms FROM sync_tombstones WHERE origin_device=? ORDER BY origin_wall_ms DESC LIMIT 3000",
+			arrayOf(myId),
+		).use { c ->
+			while (c.moveToNext()) bodies += SyncBody.Tombstone(c.getString(0), SyncVersion(myId, c.getLong(1), c.getLong(2)))
+		}
+		db.close()
+		syncMutex.withLock {
+			bodies.forEach { body ->
+				jobQueue.addLast(SyncJob(body).also { job -> if (targetPeerId != null) job.pendingPeers = mutableSetOf(targetPeerId) })
+			}
+		}
+	}
+
 	private suspend fun enqueueHistoryBackfill(targetPeerId: String? = null) {
 		val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
 		val items = mutableListOf<Pair<Long, ItemKind>>()
@@ -745,7 +774,8 @@ class ClipSyncService : Service() {
 			}
 		}
 		db.close()
-		items.forEach { (id, kind) -> enqueueItem(id, kind, live = false, targetPeerId = targetPeerId) }
+		replayTombstones(targetPeerId)
+		items.forEach { (id, kind) -> enqueueItem(id, kind, live = false, targetPeerId = targetPeerId, reuseVersion = true) }
 		Log.i("ClipSyncService", "manual sync queued ${items.size} local items for target=${targetPeerId ?: "all"}")
 	}
 

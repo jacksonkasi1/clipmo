@@ -198,6 +198,13 @@ fun ClipmoApp(
         var lastDetail by remember { mutableStateOf<ClipRecord?>(null) }
         val haptic = LocalHapticFeedback.current
 
+        BackHandler(enabled = detailClip != null || screen != ClipmoScreen.HISTORY || pendingClear) {
+            when {
+                pendingClear -> pendingClear = false
+                detailClip != null -> detailClip = null
+                else -> screen = ClipmoScreen.HISTORY
+            }
+        }
         LaunchedEffect(detailClip) {
             detailClip?.let { lastDetail = it }
             sheetOpen = detailClip != null
@@ -476,6 +483,9 @@ private fun HistoryScreen(
     var pendingBulkDelete by remember { mutableStateOf<Set<Long>?>(null) }
     var sendPickerIds by remember { mutableStateOf<Set<Long>?>(null) }
     var collectionPickerIds by remember { mutableStateOf<Set<Long>?>(null) }
+    BackHandler(enabled = selectedIds.isNotEmpty() || sendPickerIds != null) {
+        if (sendPickerIds != null) sendPickerIds = null else selectedIds = emptySet()
+    }
 
     val devices = remember(clips, state.trustedDevices, state.localDeviceId) {
         listOf(
