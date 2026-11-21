@@ -1,6 +1,8 @@
 // ** import lib
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 
+import { getPlatform } from './platform';
+
 /**
  * Hands native keyboard focus to this window's webview.
  *
@@ -11,6 +13,9 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
  * capability is missing this silently does nothing.
  */
 export async function focusNativeWebview(): Promise<void> {
+  // macOS only. On Windows, moving native focus to the webview child window makes the quick
+  // window lose focus, which auto-hides it (the Windows release smoke test caught this).
+  if (getPlatform() !== 'macos') return;
   try {
     await getCurrentWebview().setFocus();
   } catch {
