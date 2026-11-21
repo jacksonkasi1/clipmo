@@ -146,7 +146,7 @@ class MainActivity : ComponentActivity() {
                     }
                     refresh()
                 },
-                onClear = { store.clear(); refresh() },
+                onClear = { includeFavorites, deviceOnly -> store.clear(includeFavorites, deviceOnly); refresh() },
                 onMonitorChanged = ::handleMonitorChanged,
                 onScreenshotCaptureChanged = ::handleScreenshotCaptureChanged,
                 onSyncChanged = ::handleSyncChanged,
@@ -159,6 +159,8 @@ class MainActivity : ComponentActivity() {
                 onJoinDevice = ::joinDevice,
                 onScanPairing = ::scanPairing,
                 onSyncNow = ::syncNow,
+                onReconnect = ::reconnect,
+                onSendToDevice = ::sendToDevice,
                 onRefresh = ::refreshSync,
             )
         }
@@ -270,6 +272,32 @@ class MainActivity : ComponentActivity() {
             Intent(this, ClipSyncService::class.java).setAction(ClipSyncService.ACTION_SYNC_NOW),
         )
         Toast.makeText(this, "Syncing recent local history", Toast.LENGTH_SHORT).show()
+        refresh()
+    }
+
+    private fun sendToDevice(ids: Set<Long>, targetId: String?) {
+        if (!syncEnabled) {
+            Toast.makeText(this, "Enable LAN sync first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startForegroundService(
+            Intent(this, ClipSyncService::class.java)
+                .setAction(ClipSyncService.ACTION_SEND_TO)
+                .putExtra("ids", ids.toLongArray())
+                .putExtra("target", targetId.orEmpty()),
+        )
+        Toast.makeText(this, "Sending ${ids.size} clip${if (ids.size == 1) "" else "s"}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun reconnect() {
+        if (!syncEnabled) {
+            Toast.makeText(this, "Enable LAN sync first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startForegroundService(
+            Intent(this, ClipSyncService::class.java).setAction(ClipSyncService.ACTION_RECONNECT),
+        )
+        Toast.makeText(this, "Reconnecting to saved devices…", Toast.LENGTH_SHORT).show()
         refresh()
     }
 

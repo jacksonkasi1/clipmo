@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Link2, MonitorUp, RefreshCw, Wifi, X } from 'lucide-react';
 
 import { useStore } from '../lib/store';
+import { api } from '../lib/tauri';
 import QRCode from 'qrcode';
 import { version } from '../../package.json';
 
@@ -91,6 +92,21 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
     try { await closePairing(); }
     catch (reason) { setError(mutationErrorMessage('Pairing could not be closed.', reason)); }
     finally { setBusy(false); }
+  };
+
+  const reconnectDevices = async () => {
+    setBusy(true);
+    setError(null);
+    setNotice('');
+    try {
+      const connected = await api.reconnectSync();
+      await loadSyncState();
+      setNotice(connected > 0
+        ? `${connected} saved device${connected === 1 ? '' : 's'} connected.`
+        : 'No saved device answered. Open Clipmo on it, join the same network, and allow Clipmo through its firewall.');
+    } catch (reason) {
+      setError(mutationErrorMessage('Reconnect failed.', reason));
+    } finally { setBusy(false); }
   };
 
   const joinDevice = async () => {
@@ -253,6 +269,11 @@ export function PairDeviceDialog({ open, onClose, onSettingsUpdated }: PairDevic
                 </li>
               ))}
             </ul>
+          )}
+          {peers.length > 0 && (
+            <button type="button" className="secondary-button" disabled={busy} onClick={() => void reconnectDevices()}>
+              Reconnect saved devices
+            </button>
           )}
           {connecting && <p role="status">Connecting… Keep pairing open on the other device.</p>}
           {notice && <p role="status"><CheckCircle2 size={16} aria-hidden /> {notice}</p>}

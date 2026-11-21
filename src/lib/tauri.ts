@@ -24,7 +24,9 @@ import type {
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { confirm, open } from '@tauri-apps/plugin-dialog';
+import { confirm, message, open } from '@tauri-apps/plugin-dialog';
+
+export type ClearScope = 'device' | 'all';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { toast } from './toast';
 
@@ -67,10 +69,13 @@ export const api = {
   editItem: (id: number, content: string) =>
     invoke<ClipItem>('edit_item', { id, content }),
   deleteItem: (id: number) => invoke<void>('delete_item', { id }),
-  clearHistory: (includeFavorites: boolean) =>
-    invoke<void>('clear_history', { includeFavorites }),
-  clearCategory: (kind: ItemKind, includeFavorites = false) =>
-    invoke<void>('clear_category', { kind, includeFavorites }),
+  clearHistory: (includeFavorites: boolean, scope: ClearScope = 'all') =>
+    invoke<void>('clear_history', { includeFavorites, scope }),
+  clearCategory: (kind: ItemKind, includeFavorites = false, scope: ClearScope = 'all') =>
+    invoke<void>('clear_category', { kind, includeFavorites, scope }),
+  reconnectSync: () => invoke<number>('reconnect_sync'),
+  sendToDevice: (ids: number[], targetId: string | null) =>
+    invoke<number>('send_to_device', { ids, targetId }),
   counts: () => invoke<Counts>('counts'),
   knownDevices: () => invoke<DeviceIdentity[]>('known_devices'),
   knownTags: () => invoke<string[]>('known_tags'),
@@ -130,6 +135,21 @@ export const api = {
     multiple: true,
     filters: [{ name: 'Applications', extensions: ['exe'] }],
   }),
+  /**
+   * Confirms a clear. With paired devices the user also picks whether it applies
+   * to this device only or to every device. Returns null when cancelled.
+   */
+  confirmClear: async (text: string, title: string): Promise<ClearScope | null> => {
+    const state = await invoke<SyncState>('sync_state').catch(() => null);
+    if (!state || !state.enabled || state.peers.length === 0) {
+      return (await confirm(text, { title, kind: 'warning' })) ? 'all' : null;
+    }
+    const choice = await message(
+      `${text}\n\nThis device is paired with ${state.peers.length} other device${state.peers.length === 1 ? '' : 's'}. Where should this apply?`,
+      { title, kind: 'warning', buttons: { yes: 'This device only', no: 'All devices', cancel: 'Cancel' } },
+    );
+    return choice === 'This device only' ? 'device' : choice === 'All devices' ? 'all' : null;
+  },
   confirm: (message: string, title = 'Clipmo') =>
     confirm(message, { title, kind: 'warning' }),
   revealItem: (path: string) => revealItemInDir(path),

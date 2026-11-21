@@ -22,7 +22,7 @@ import { IconButton } from './IconButton';
 import { APP_SHORTCUTS, shortcutKeys } from '../lib/shortcuts';
 import { getPlatform } from '../lib/platform';
 import { useStore } from '../lib/store';
-import { api } from '../lib/tauri';
+import { api, type ClearScope } from '../lib/tauri';
 
 const ICONS: Record<string, LucideIcon> = {
   navigate: ArrowDownUp,
@@ -111,9 +111,9 @@ export function CommandPalette() {
         void setShowPreview(!showPreview);
         break;
       case 'clear': {
-        let approved: boolean;
+        let approved: ClearScope | null;
         try {
-          approved = await api.confirm(
+          approved = await api.confirmClear(
             'Clear all non-favorite history items? Favorites will stay pinned.',
             'Clear history',
           );
@@ -121,7 +121,7 @@ export function CommandPalette() {
           console.error('Failed to confirm clearing clipboard history', error);
           return;
         }
-        if (approved) await clearHistory(false);
+        if (approved) await clearHistory(false, approved);
         break;
       }
       case 'hide':

@@ -402,8 +402,13 @@ pub async fn clear_history(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     include_favorites: bool,
+    scope: Option<String>,
 ) -> Result<()> {
     let _storage_guard = state.storage_operation.read();
+    if scope.as_deref() == Some("device") {
+        let ids = state.db.ids_for_clear(include_favorites, None)?;
+        state.sync.detach_deletions(&ids);
+    }
     let orphans = state.db.clear(include_favorites)?;
     cleanup_asset_paths(&state.storage_root.read(), orphans);
     let _ = app.emit("clip-updated", ());
@@ -416,8 +421,13 @@ pub async fn clear_category(
     state: tauri::State<'_, AppState>,
     kind: ItemKind,
     include_favorites: bool,
+    scope: Option<String>,
 ) -> Result<()> {
     let _storage_guard = state.storage_operation.read();
+    if scope.as_deref() == Some("device") {
+        let ids = state.db.ids_for_clear(include_favorites, Some(kind))?;
+        state.sync.detach_deletions(&ids);
+    }
     let orphans = state.db.clear_kind(kind, include_favorites)?;
     cleanup_asset_paths(&state.storage_root.read(), orphans);
     let _ = app.emit("clip-updated", ());
@@ -1016,6 +1026,33 @@ pub async fn sync_history_now(app: AppHandle, state: tauri::State<'_, AppState>)
     let queued = state.sync.sync_history_now();
     let _ = app.emit("sync-peers-updated", ());
     Ok(queued)
+}
+
+#[tauri::command]
+pub async fn send_to_device(
+    state: tauri::State<'_, AppState>,
+    ids: Vec<i64>,
+    target_id: Option<String>,
+) -> Result<usize> {
+    let mut sent = 0;
+    for id in ids {
+        if let Some(item) = state.db.get(id)? {
+            if state.sync.send_item_to(&item, target_id.clone()) {
+                sent += 1;
+            }
+        }
+    }
+    Ok(sent)
+}
+
+#[tauri::command]
+pub async fn reconnect_sync(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<usize> {
+    let service = state.sync.clone();
+    let connected = tauri::async_runtime::spawn_blocking(move || service.reconnect_now())
+        .await
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let _ = app.emit("sync-peers-updated", ());
+    Ok(connected)
 }
 
 #[tauri::command]

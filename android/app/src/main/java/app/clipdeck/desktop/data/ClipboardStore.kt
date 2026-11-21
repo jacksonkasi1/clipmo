@@ -392,13 +392,30 @@ class ClipboardStore(context: Context) :
         }
     }
 
-    fun clear() {
+    /**
+     * Clears history. [deviceOnly] removes rows here without telling other devices:
+     * a local tombstone stops their backfill from bringing the rows back.
+     */
+    fun clear(includeFavorites: Boolean = true, deviceOnly: Boolean = false) {
+        val where = if (includeFavorites) null else "fav=0"
         writableDatabase.beginTransaction()
         try {
-            writableDatabase.rawQuery("SELECT id_hash FROM items WHERE id_hash IS NOT NULL", null).use { cursor ->
-                while (cursor.moveToNext()) enqueueMutation(writableDatabase, "tombstone", cursor.getString(0), null)
+            val now = System.currentTimeMillis()
+            writableDatabase.rawQuery(
+                "SELECT id_hash FROM items WHERE id_hash IS NOT NULL" + if (where == null) "" else " AND $where",
+                null,
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val idHash = cursor.getString(0)
+                    if (deviceOnly) {
+                        writableDatabase.execSQL(
+                            "INSERT OR REPLACE INTO sync_tombstones(id_hash, origin_device, origin_lamport, origin_wall_ms) VALUES(?, 'local-clear', ?, ?)",
+                            arrayOf(idHash, now, now),
+                        )
+                    } else enqueueMutation(writableDatabase, "tombstone", idHash, null)
+                }
             }
-            writableDatabase.delete("items", null, null)
+            writableDatabase.delete("items", where, null)
             writableDatabase.setTransactionSuccessful()
         } finally {
             writableDatabase.endTransaction()

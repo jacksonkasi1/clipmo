@@ -197,8 +197,10 @@ class ClipSyncService : Service() {
 		const val CHANNEL_ID = "clipmo_sync_channel"
 		const val NOTIF_ID = 2
 		const val ACTION_SYNC_NOW = "app.clipdeck.desktop.action.SYNC_NOW"
+		const val ACTION_SEND_TO = "app.clipdeck.desktop.action.SEND_TO"
+		const val ACTION_RECONNECT = "app.clipdeck.desktop.action.RECONNECT"
 		const val CONNECT_TIMEOUT_MS = 900L
-		const val PROBE_TICK_MS = 10_000L
+		const val PROBE_TICK_MS = 8_000L
 	}
 
 	private val binder = LocalBinder()
@@ -270,6 +272,8 @@ class ClipSyncService : Service() {
 
 		if (running) {
 			if (intent?.action == ACTION_SYNC_NOW) serviceScope.launch { enqueueHistoryBackfill() }
+			if (intent?.action == ACTION_RECONNECT) serviceScope.launch { reconnectSavedPeers(force = true, scan = true); enqueueHistoryBackfill() }
+			if (intent?.action == ACTION_SEND_TO) serviceScope.launch { sendItemsTo(intent) }
 			return START_STICKY
 		}
 		val preferences = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
@@ -294,6 +298,7 @@ class ClipSyncService : Service() {
 			launch { watchLocalChanges(deviceId) }
 			launch { probePeers() }
 			if (intent?.action == ACTION_SYNC_NOW) enqueueHistoryBackfill()
+			if (intent?.action == ACTION_RECONNECT) reconnectSavedPeers(force = true, scan = true)
 		}
 
 		Log.i("ClipSyncService", "started on port=$listenPort deviceId=$deviceId")
@@ -625,6 +630,25 @@ class ClipSyncService : Service() {
 			} catch (error: Exception) {
 				Log.w("ClipSyncService", "local sync watcher iteration failed", error)
 			}
+		}
+	}
+
+	/** Explicit "send to device": [ids] go to one saved device, or all when no target is given. */
+	private suspend fun sendItemsTo(intent: Intent) {
+		val ids = intent.getLongArrayExtra("ids") ?: return
+		val target = intent.getStringExtra("target")?.takeIf { it.isNotBlank() }
+		ids.forEach { id ->
+			val db = openOrCreateDatabase("clipdeck.db", Context.MODE_PRIVATE, null)
+			val type = db.rawQuery("SELECT type FROM items WHERE id=?", arrayOf(id.toString())).use { if (it.moveToFirst()) it.getString(0) else null }
+			db.close()
+			val kind = when (type) {
+				null -> return@forEach
+				"URL" -> ItemKind.link
+				"IMAGE" -> ItemKind.image
+				"FILE" -> ItemKind.files
+				else -> ItemKind.text
+			}
+			enqueueItem(id, kind, live = true, targetPeerId = target)
 		}
 	}
 
@@ -1256,14 +1280,83 @@ class ClipSyncService : Service() {
 	// broadcasts the phone never receives — showed as offline. Probing the
 	// same TCP channel sync uses makes the badge mean "reachable right now".
     private suspend fun probePeers() = withContext(Dispatchers.IO) {
+        var failures = 0
+        var lastScan = 0L
         while (running) {
             delay(PROBE_TICK_MS)
-            peers.values.toList().forEach { peer ->
-                val token = peerToken(peer.device.id)
-                if (token == null) { peers.remove(peer.device.id) }
-                else exchangeControl(peer.address, peer.device.id, "ping", "", token)
+            if (peers.isEmpty()) { failures = 0; continue }
+            val scan = failures >= 2 && System.currentTimeMillis() - lastScan > 60_000
+            if (scan) lastScan = System.currentTimeMillis()
+            val connected = reconnectSavedPeers(force = true, scan = scan)
+            failures = if (connected < peers.size) failures + 1 else 0
+        }
+    }
+
+    /** Pings every saved peer at its last address; optionally scans the LAN for ones that moved. */
+    private suspend fun reconnectSavedPeers(force: Boolean, scan: Boolean): Int = withContext(Dispatchers.IO) {
+        var connected = 0
+        val stale = mutableListOf<PeerRecord>()
+        peers.values.toList().forEach { peer ->
+            val token = peerToken(peer.device.id)
+            if (token == null) { peers.remove(peer.device.id); return@forEach }
+            if (!force && System.currentTimeMillis() - peer.lastSeenAt < 15_000) { connected++; return@forEach }
+            val wasOffline = System.currentTimeMillis() - peer.lastSeenAt > 30_000
+            if (exchangeControl(peer.address, peer.device.id, "ping", "", token)) {
+                connected++
+                if (wasOffline) enqueueHistoryBackfill(peer.device.id)
+            } else stale += peer
+        }
+        if (scan && stale.isNotEmpty()) {
+            for ((address, id) in scanLan(stale)) {
+                val token = peerToken(id) ?: continue
+                if (exchangeControl(address, id, "ping", "", token)) { connected++; enqueueHistoryBackfill(id) }
             }
         }
+        connected
+    }
+
+    /** Asks a host who it is using a throwaway token, so saved credentials never go to unverified hosts. */
+    private fun identify(address: InetSocketAddress, timeoutMs: Int): String? = runCatching {
+        val current = currentDevice(getOrCreateDeviceId(), getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+            .getString("device_name", "Android ${Build.MODEL}").orEmpty())
+        val probe = java.util.UUID.randomUUID().toString().replace("-", "") + java.util.UUID.randomUUID().toString().replace("-", "")
+        Socket().use { socket ->
+            socket.connect(address, timeoutMs)
+            socket.soTimeout = 2000
+            writeResponse(socket, PairControl(PROTOCOL, "ping", current, listenPort, "", probe))
+            val bytes = readFrameHeader(DataInputStream(socket.getInputStream())) ?: return@runCatching null
+            mapper.readValue(bytes, PairReply::class.java).device.id
+        }
+    }.getOrNull()
+
+    private fun scanLan(wanted: List<PeerRecord>): List<Pair<InetSocketAddress, String>> {
+        val hosts = linkedSetOf<String>()
+        // Android emulators reach the development machine through this alias.
+        hosts += "10.0.2.2"
+        java.net.NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
+            .flatMap { it.interfaceAddresses }
+            .mapNotNull { it.address as? java.net.Inet4Address }
+            .filter { it.isSiteLocalAddress }
+            .forEach { own ->
+                val o = own.address.map { it.toInt() and 0xff }
+                for (last in 1..254) if (last != o[3]) hosts += "${o[0]}.${o[1]}.${o[2]}.$last"
+            }
+        val ports = (wanted.map { it.address.port } + (FIRST_SYNC_PORT..LAST_SYNC_PORT)).distinct()
+        val ids = wanted.map { it.device.id }.toSet()
+        val found = java.util.concurrent.CopyOnWriteArrayList<Pair<InetSocketAddress, String>>()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(48)
+        hosts.forEach { host ->
+            pool.execute {
+                for (port in ports) {
+                    val address = InetSocketAddress(host, port)
+                    val id = identify(address, 250)
+                    if (id != null) { if (id in ids) found += address to id; break }
+                }
+            }
+        }
+        pool.shutdown()
+        pool.awaitTermination(60, java.util.concurrent.TimeUnit.SECONDS)
+        return found
     }
 
 	private fun touchDeviceSeen(deviceId: String) {

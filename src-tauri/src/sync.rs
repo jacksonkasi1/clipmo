@@ -211,6 +211,7 @@ impl SyncService {
         spawn_tcp_server(listener, service.clone(), app.clone())?;
         spawn_discovery(service.clone(), app.clone())?;
         spawn_sender(service.clone())?;
+        spawn_peer_prober(service.clone(), app.clone())?;
         spawn_watcher(service.clone())?;
         Ok(service)
     }
@@ -301,6 +302,74 @@ impl SyncService {
             }
             _ => {}
         }
+    }
+
+    /// Explicitly sends one item to every device (`target = None`) or a single saved
+    /// device, regardless of the automatic-sync type preferences. Returns whether it
+    /// was queued.
+    pub fn send_item_to(&self, item: &ClipItem, target: Option<String>) -> bool {
+        let (Some(store), Some(settings)) = (&self.store, &self.settings) else {
+            return false;
+        };
+        if !settings.read().sync_enabled {
+            return false;
+        }
+        if let Some(id) = &target {
+            if !self.peers.read().contains_key(id) {
+                return false;
+            }
+        }
+        let version = self.next_version();
+        let Ok(record) = store.stamp_item(item.id, &version) else {
+            return false;
+        };
+        let mut preferences = self.preferences.read().clone();
+        preferences.sync_text = true;
+        preferences.sync_images = true;
+        preferences.sync_files = true;
+        let Some(mut job) = build_upsert_job(item, &record, &preferences, true) else {
+            return false;
+        };
+        job.target = target;
+        self.push_job(job, &preferences);
+        true
+    }
+
+    /// Marks rows as deleted on this device only. A local tombstone stops peers'
+    /// backfill from resurrecting them, and the delete is not broadcast.
+    pub fn detach_deletions(&self, item_ids: &[i64]) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let conn_ids: Vec<(i64, Option<String>)> = {
+            let conn = store.conn.lock();
+            item_ids
+                .iter()
+                .map(|id| {
+                    (
+                        *id,
+                        query_record_by_id(&conn, *id)
+                            .ok()
+                            .flatten()
+                            .map(|record| record.id_hash),
+                    )
+                })
+                .collect()
+        };
+        for (_, hash) in conn_ids {
+            let Some(hash) = hash else { continue };
+            let version = self.next_version();
+            if store.record_tombstone(&hash, &version).is_ok() {
+                self.suppress_delete(&hash);
+            }
+        }
+    }
+
+    /// Manual "Reconnect": probes every saved device now, scanning the LAN if needed.
+    pub fn reconnect_now(&self) -> usize {
+        let connected = self.probe_saved_peers(true, true);
+        self.enqueue_history_backfill();
+        connected
     }
 
     pub fn sync_history_now(&self) -> usize {
@@ -717,6 +786,8 @@ struct SyncJob {
     body: SyncBody,
     blobs: Vec<BlobSource>,
     estimated_bytes: u64,
+    /// Restricts delivery to one saved device; `None` means every device.
+    target: Option<String>,
 }
 
 impl SyncJob {
@@ -725,6 +796,7 @@ impl SyncJob {
             body,
             blobs: Vec::new(),
             estimated_bytes: 4 * 1024,
+            target: None,
         }
     }
 }
@@ -909,6 +981,33 @@ fn broadcast_presence(socket: UdpSocket, service: SyncService) {
         }
         std::thread::sleep(DISCOVERY_TICK);
     }
+}
+
+/// Keeps saved devices connected even when UDP broadcasts never arrive
+/// (client isolation, firewalls, macOS Local Network, changed IP addresses).
+fn spawn_peer_prober(service: SyncService, app: AppHandle) -> io::Result<()> {
+    std::thread::Builder::new()
+        .name("sync-peer-prober".into())
+        .spawn(move || {
+            let mut failures = 0u32;
+            let mut last_scan = 0i64;
+            loop {
+                std::thread::sleep(Duration::from_secs(8));
+                let saved = service.peers.read().len();
+                if saved == 0 {
+                    failures = 0;
+                    continue;
+                }
+                let scan = failures >= 2 && now_ms() - last_scan > 60_000;
+                if scan {
+                    last_scan = now_ms();
+                }
+                let connected = service.probe_saved_peers(false, scan);
+                failures = if connected < saved { failures + 1 } else { 0 };
+                let _ = app.emit("sync-peers-updated", ());
+            }
+        })?;
+    Ok(())
 }
 
 fn spawn_tcp_server(listener: TcpListener, service: SyncService, app: AppHandle) -> io::Result<()> {
@@ -1389,6 +1488,9 @@ fn spawn_sender(service: SyncService) -> io::Result<()> {
             };
             let peers: Vec<_> = service.peers.read().values().cloned().collect();
             for peer in peers {
+                if job.target.as_deref().is_some_and(|target| target != peer.device.id) {
+                    continue;
+                }
                 if !service.authenticates(&peer.device.id, &peer.token) {
                     continue;
                 }
@@ -1678,6 +1780,7 @@ fn build_upsert_job(
                     },
                 ],
                 estimated_bytes: total.saturating_add(8 * 1024),
+                target: None,
             })
         }
         ItemKind::Files => {
@@ -1727,6 +1830,7 @@ fn build_upsert_job(
                 },
                 blobs,
                 estimated_bytes: total.saturating_add(16 * 1024),
+                target: None,
             })
         }
     }
@@ -2210,6 +2314,7 @@ mod tests {
             },
             blobs: Vec::new(),
             estimated_bytes: 8,
+            target: None,
         };
         let second = SyncJob {
             body: SyncBody::Tombstone {
@@ -2222,6 +2327,7 @@ mod tests {
             },
             blobs: Vec::new(),
             estimated_bytes: 8,
+            target: None,
         };
         assert!(queue.push(first, 8));
         assert!(queue.push(second, 8));

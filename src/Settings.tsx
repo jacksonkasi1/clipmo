@@ -249,11 +249,11 @@ export default function Settings() {
     if (count === 0) return;
     setMutationError(null);
     try {
-      const approved = await api.confirm(
+      const scope = await api.confirmClear(
         `Delete ${count} non-favorite ${label.toLowerCase()} item${count === 1 ? '' : 's'}? Favorites will stay.`,
         `Clear ${label}`,
       );
-      if (approved) await clearCategory(kind);
+      if (scope) await clearCategory(kind, false, scope);
     } catch (error) {
       setMutationError(mutationErrorMessage(`${label} history could not be cleared.`, error));
     }
@@ -262,13 +262,13 @@ export default function Settings() {
   const removeHistory = async (includeFavorites: boolean) => {
     setMutationError(null);
     try {
-      const approved = await api.confirm(
+      const scope = await api.confirmClear(
         includeFavorites
           ? 'Delete every history item, including favorites? This cannot be undone.'
           : 'Clear all non-favorite history items? Favorites will stay pinned.',
         includeFavorites ? 'Delete all history' : 'Clear history',
       );
-      if (approved) await clearHistory(includeFavorites);
+      if (scope) await clearHistory(includeFavorites, scope);
     } catch (error) {
       setMutationError(mutationErrorMessage('Clipboard history could not be cleared.', error));
     }
