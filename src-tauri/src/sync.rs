@@ -1589,9 +1589,6 @@ const PEER_BACKLOG_LIMIT: usize = 5_000;
 impl PeerQueue {
     fn push(&self, job: Arc<SyncJob>) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if now_ms() < state.down_until {
-            return;
-        }
         let queue = if job.is_high_priority() {
             &mut state.high
         } else {
@@ -1607,21 +1604,36 @@ impl PeerQueue {
     fn pop(&self) -> Arc<SyncJob> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         loop {
-            if let Some(job) = state.high.pop_front().or_else(|| state.low.pop_front()) {
-                return job;
+            let wait_ms = (state.down_until - now_ms()).max(0) as u64;
+            if wait_ms == 0 {
+                if let Some(job) = state.high.pop_front().or_else(|| state.low.pop_front()) {
+                    return job;
+                }
+                state = self
+                    .ready
+                    .wait(state)
+                    .unwrap_or_else(|error| error.into_inner());
+            } else {
+                // The device just failed to answer: pause briefly, then retry the same job.
+                state = self
+                    .ready
+                    .wait_timeout(state, Duration::from_millis(wait_ms))
+                    .unwrap_or_else(|error| error.into_inner())
+                    .0;
             }
-            state = self
-                .ready
-                .wait(state)
-                .unwrap_or_else(|error| error.into_inner());
         }
     }
 
-    fn mark_down(&self, seconds: i64) {
+    /// Keeps the job for the next attempt (nothing is dropped because a device blinked)
+    /// and pauses this device's queue briefly.
+    fn retry_later(&self, job: Arc<SyncJob>, seconds: i64) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.down_until = now_ms() + seconds * 1_000;
-        state.high.clear();
-        state.low.clear();
+        if job.is_high_priority() {
+            state.high.push_front(job);
+        } else {
+            state.low.push_front(job);
+        }
     }
 }
 
@@ -1651,6 +1663,9 @@ fn spawn_peer_worker(service: SyncService, peer_id: String, queue: Arc<PeerQueue
                 body: job.body.clone(),
             };
             let mut delivered = false;
+            // A device that answers "no" (stale version, invalid item) is not offline:
+            // retrying would block everything behind it, so that job is dropped.
+            let mut rejected = false;
             for attempt in 0..2 {
                 match send_frame(peer.address, &envelope, &job.blobs) {
                     Ok(()) => {
@@ -1659,14 +1674,21 @@ fn spawn_peer_worker(service: SyncService, peer_id: String, queue: Arc<PeerQueue
                     }
                     Err(error) => {
                         log::debug!("sync send to {} failed: {error}", peer.device.name);
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::PermissionDenied | io::ErrorKind::InvalidData
+                        ) {
+                            rejected = true;
+                            break;
+                        }
                         if attempt == 0 {
                             std::thread::sleep(Duration::from_millis(250));
                         }
                     }
                 }
             }
-            if !delivered {
-                queue.mark_down(5);
+            if !delivered && !rejected {
+                queue.retry_later(job, 3);
             }
         });
 }

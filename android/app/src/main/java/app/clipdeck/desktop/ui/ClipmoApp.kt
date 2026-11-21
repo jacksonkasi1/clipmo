@@ -243,7 +243,7 @@ fun ClipmoApp(
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onFavorite(it)
                             },
-                            onDelete = onDelete,
+                            onDelete = { pendingDelete = it },
                             onFavoriteMany = onFavoriteMany,
                             onDeleteMany = onDeleteMany,
                             onAddToCollection = onAddToCollection,
@@ -480,11 +480,13 @@ private fun HistoryScreen(
     var selectedDevice by rememberSaveable { mutableStateOf("all") }
     var refreshing by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var selecting by remember { mutableStateOf(false) }
+    val selectionMode = selecting || selectedIds.isNotEmpty()
     var pendingBulkDelete by remember { mutableStateOf<Set<Long>?>(null) }
     var sendPickerIds by remember { mutableStateOf<Set<Long>?>(null) }
     var collectionPickerIds by remember { mutableStateOf<Set<Long>?>(null) }
-    BackHandler(enabled = selectedIds.isNotEmpty() || sendPickerIds != null) {
-        if (sendPickerIds != null) sendPickerIds = null else selectedIds = emptySet()
+    BackHandler(enabled = selectionMode || sendPickerIds != null) {
+        if (sendPickerIds != null) sendPickerIds = null else { selectedIds = emptySet(); selecting = false }
     }
 
     val devices = remember(clips, state.trustedDevices, state.localDeviceId) {
@@ -526,15 +528,11 @@ private fun HistoryScreen(
         }
     }
 
-    val grouped = remember(shown, state.trustedDevices, state.localDeviceId) {
-        val trustedNames = state.trustedDevices.associate { it.id to it.name }
-        shown.groupBy { clip ->
-            when {
-                clip.isLocalTo(state.localDeviceId) -> "This phone"
-                !clip.originDevice.isNullOrBlank() -> trustedNames[clip.originDevice] ?: sourceLabel(clip.source)
-                else -> sourceLabel(clip.source)
-            }
-        }
+    // Clips are grouped by day (newest first); the device chips above already filter by device.
+    val grouped = remember(shown) {
+        val zone = java.time.ZoneId.systemDefault()
+        shown.groupBy { java.time.Instant.ofEpochMilli(it.timestamp).atZone(zone).toLocalDate() }
+            .toSortedMap(compareByDescending { it })
     }
 
     val pullState = rememberPullRefreshState(refreshing, { refreshing = true })
@@ -550,7 +548,7 @@ private fun HistoryScreen(
         ) {
             item {
                 Column(Modifier.padding(horizontal = ClipmoTheme.spacing.md)) {
-                    if (selectedIds.isNotEmpty()) {
+                    if (selectionMode) {
                         ClipmoSelectionBar(
                             selectedCount = selectedIds.size,
                             onStar = {
@@ -560,7 +558,7 @@ private fun HistoryScreen(
                             onDelete = { pendingBulkDelete = selectedIds },
                             onCollection = { collectionPickerIds = selectedIds },
                             onSend = if (state.trustedDevices.isEmpty()) null else ({ sendPickerIds = selectedIds }),
-                            onClose = { selectedIds = emptySet() },
+                            onClose = { selectedIds = emptySet(); selecting = false },
                         )
                     } else {
                         ClipmoSearchBar(
@@ -568,6 +566,15 @@ private fun HistoryScreen(
                             hint = "Search ${clips.size} clips...",
                             onValueChange = { query = it },
                         )
+                        Spacer(Modifier.height(ClipmoTheme.spacing.xs))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            ClipmoButton(
+                                label = "Select",
+                                style = ClipmoButtonStyle.GHOST,
+                                icon = ClipmoIconKind.CHECK,
+                                onClick = { selecting = true },
+                            )
+                        }
                     }
 
                     Spacer(Modifier.height(ClipmoTheme.spacing.sm))
@@ -600,14 +607,24 @@ private fun HistoryScreen(
                     )
                 }
             } else {
-                grouped.forEach { (device, deviceClips) ->
-                    item {
-                        ClipmoDeviceHeader(device, deviceClips.size)
+                grouped.forEach { (day, dayClips) ->
+                    item(key = "day-$day") {
+                        ClipmoDayHeader(
+                            label = dayLabel(day),
+                            count = dayClips.size,
+                            selectionMode = selectionMode,
+                            allSelected = dayClips.all { it.id in selectedIds },
+                            onToggleAll = {
+                                val ids = dayClips.map { it.id }.toSet()
+                                selectedIds = if (ids.all { it in selectedIds }) selectedIds - ids else selectedIds + ids
+                                selecting = true
+                            },
+                        )
                     }
-                    items(deviceClips, key = { it.id }, contentType = { "clip" }) { clip ->
+                    items(dayClips, key = { it.id }, contentType = { "clip" }) { clip ->
                         ClipmoSwipeToDelete(
                             clip = clip,
-                            enabled = selectedIds.isEmpty(),
+                            enabled = !selectionMode,
                             onDelete = onDelete,
                             onChooseCollection = { collectionPickerIds = setOf(clip.id) },
                         ) {
@@ -617,7 +634,7 @@ private fun HistoryScreen(
                                 onFavorite = onFavorite,
                                 onDelete = onDelete,
                                 selected = clip.id in selectedIds,
-                                selectionMode = selectedIds.isNotEmpty(),
+                                selectionMode = selectionMode,
                                 onSelect = {
                                     selectedIds = if (clip.id in selectedIds) selectedIds - clip.id else selectedIds + clip.id
                                 },
@@ -647,6 +664,7 @@ private fun HistoryScreen(
                 onConfirm = {
                     onDeleteMany(ids)
                     selectedIds = emptySet()
+                    selecting = false
                     pendingBulkDelete = null
                 },
             )
@@ -2115,6 +2133,50 @@ private fun ClipmoCopiedPill(copyPulse: Int, modifier: Modifier = Modifier) {
                     color = colors.textPrimary,
                 ),
             )
+        }
+    }
+}
+
+private fun dayLabel(day: java.time.LocalDate): String {
+    val today = java.time.LocalDate.now()
+    return when {
+        day == today -> "Today"
+        day == today.minusDays(1) -> "Yesterday"
+        day.year == today.year -> day.format(java.time.format.DateTimeFormatter.ofPattern("EEE, d MMM"))
+        else -> day.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy"))
+    }
+}
+
+@Composable
+private fun ClipmoDayHeader(
+    label: String,
+    count: Int,
+    selectionMode: Boolean,
+    allSelected: Boolean,
+    onToggleAll: () -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    val space = ClipmoTheme.spacing
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = space.md, vertical = space.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicText(
+            label,
+            style = ClipmoTheme.typography.section.copy(color = colors.textSecondary),
+            modifier = Modifier.weight(1f),
+        )
+        if (selectionMode) {
+            ClipmoButton(
+                label = if (allSelected) "Deselect $count" else "Select $count",
+                style = if (allSelected) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.GHOST,
+                icon = ClipmoIconKind.CHECK,
+                onClick = onToggleAll,
+            )
+        } else {
+            BasicText(count.toString(), style = ClipmoTheme.typography.metadata.copy(color = colors.textMuted, fontWeight = FontWeight.Bold))
         }
     }
 }
