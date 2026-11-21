@@ -59,14 +59,18 @@ Windows, macOS Intel/Apple Silicon, and Android builds are published on the
 | --- | --- | --- |
 | macOS — Apple Silicon (M-series) | [ARM64 DMG](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_arm64.dmg) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_arm64.sha256) |
 | macOS — Intel | [x86_64 DMG](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_x86_64.dmg) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_x86_64.sha256) |
-| Windows — x64 | [Windows installer](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_x64-setup.exe) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/SHA256SUMS.txt) |
-| Android 10+ | [APK](https://github.com/jacksonkasi1/clipmo/releases/tag/v0.3.0) (see the release assets) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/SHA256SUMS.txt) |
+| Windows — x64 (unsigned) | [Windows installer](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_x64-setup.exe) | [SHA-256](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_x64-setup.sha256) |
+| Android 10+ | [APK](https://github.com/jacksonkasi1/clipmo/releases/download/v0.3.0/Clipmo_0.3.0_android-test-signed.apk) | [Release page](https://github.com/jacksonkasi1/clipmo/releases/tag/v0.3.0) |
+
+> **Windows:** this installer is not code-signed yet, so SmartScreen shows "Windows protected your PC" — choose
+> **More info → Run anyway**. Compare the file's SHA-256 with the checksum above if you want to be sure it is untouched.
+> **Android:** the APK is signed with a test key; Android will ask you to allow installing from your browser or Files app.
 
 The Mac downloads include native vibrancy and are also available as app ZIPs.
 See the [release notes](https://github.com/jacksonkasi1/clipmo/releases/tag/v0.3.0)
 for what changed, build provenance, verification, and platform signing details.
 
-**Install Android:** download the APK to the phone (or `adb install -r Clipmo_0.3.0_android*.apk`),
+**Install Android:** download the APK to the phone (or `adb install -r Clipmo_0.3.0_android-test-signed.apk`),
 allow "Install unknown apps" for your browser/files app when asked, open Clipmo and allow notifications
 (they keep sync running). Then pair it with a desktop: on the desktop choose **Add / Pair device**, on the phone
 open **Devices** and enter the six-digit code or scan the QR code.
