@@ -129,6 +129,7 @@ pub fn run() {
             commands::delete_collection,
             commands::known_sources,
             commands::apply_filter_action,
+            commands::active_hotkeys,
             commands::load_settings,
             commands::save_settings,
             commands::set_launch_at_login,

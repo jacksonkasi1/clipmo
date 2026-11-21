@@ -517,6 +517,22 @@ pub async fn apply_filter_action(
     Ok(())
 }
 
+/// Whether the saved `[quick, full]` shortcuts are the ones the OS actually
+/// accepted. Settings uses this to warn instead of showing a shortcut that does
+/// nothing (for example when another app already owns the combination).
+#[tauri::command]
+pub fn active_hotkeys(state: tauri::State<'_, AppState>) -> [bool; 2] {
+    let (quick, full) = {
+        let settings = state.settings.read();
+        (settings.hotkey.clone(), settings.full_window_hotkey.clone())
+    };
+    let active = state.hotkeys.lock();
+    [
+        crate::hotkey::parse(&quick).ok().is_some_and(|s| active.quick == Some(s)),
+        crate::hotkey::parse(&full).ok().is_some_and(|s| active.full == Some(s)),
+    ]
+}
+
 #[tauri::command]
 pub async fn load_settings(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<Settings> {
     let registered = autostart_enabled(&app)?;
