@@ -27,7 +27,10 @@ use crate::models::{
 
 #[path = "sync_pairing.rs"]
 mod pairing;
+#[path = "sync_relay.rs"]
+mod relay;
 pub use pairing::new_code;
+pub use relay::{RelayInput, RelayStatus};
 
 const PROTOCOL: &str = "clipmo-lan-v3";
 const DISCOVERY_PORT: u16 = 47_633;
@@ -154,6 +157,7 @@ pub struct SyncService {
     suppressions: Arc<Mutex<HashMap<String, Suppression>>>,
     listen_port: u16,
     pairing: Arc<pairing::Pairing>,
+    relay: Arc<relay::Relay>,
 }
 
 impl SyncService {
@@ -170,6 +174,7 @@ impl SyncService {
             suppressions: Arc::new(Mutex::new(HashMap::new())),
             listen_port: 0,
             pairing: Arc::new(pairing::Pairing::default()),
+            relay: Arc::new(relay::Relay::default()),
         }
     }
 
@@ -202,6 +207,7 @@ impl SyncService {
             suppressions: Arc::new(Mutex::new(HashMap::new())),
             listen_port,
             pairing: Arc::new(pairing::Pairing::default()),
+            relay: Arc::new(relay::Relay::default()),
         };
         service
             .load_peers()
@@ -210,6 +216,8 @@ impl SyncService {
 
         spawn_tcp_server(listener, service.clone(), app.clone())?;
         spawn_discovery(service.clone(), app.clone())?;
+        service.load_relay();
+        relay::spawn_relay_worker(service.clone(), app.clone())?;
         spawn_sender(service.clone())?;
         spawn_peer_prober(service.clone(), app.clone())?;
         spawn_watcher(service.clone())?;
@@ -1129,7 +1137,7 @@ fn write_sync_ack(stream: &mut TcpStream, ok: bool, error: Option<&str>) -> io::
 }
 
 fn apply_incoming(
-    stream: &mut TcpStream,
+    stream: &mut dyn Read,
     service: &SyncService,
     app: &AppHandle,
     envelope: SyncEnvelope,
@@ -1456,7 +1464,7 @@ fn cleanup_asset_paths(storage_root: &Path, paths: Vec<String>) {
     }
 }
 
-fn read_blob(stream: &mut TcpStream, size: u64, limit: u64) -> Result<Vec<u8>> {
+fn read_blob(stream: &mut dyn Read, size: u64, limit: u64) -> Result<Vec<u8>> {
     if size > limit || size > usize::MAX as u64 {
         return Err(Error::Other(
             "synced binary payload exceeded its limit".into(),
@@ -1486,6 +1494,9 @@ fn spawn_sender(service: SyncService) -> io::Result<()> {
                 tcp_port: service.listen_port,
                 body: job.body.clone(),
             };
+            if job.target.is_none() {
+                service.relay_enqueue(&envelope);
+            }
             let peers: Vec<_> = service.peers.read().values().cloned().collect();
             for peer in peers {
                 if job.target.as_deref().is_some_and(|target| target != peer.device.id) {

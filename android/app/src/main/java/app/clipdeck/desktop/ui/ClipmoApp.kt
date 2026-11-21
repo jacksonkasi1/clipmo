@@ -127,6 +127,15 @@ private object ClipmoTimeFormat {
     val short: DateFormat = DateFormat.getTimeInstance(DateFormat.SHORT)
 }
 
+data class RelayUi(
+    val enabled: Boolean = false,
+    val backend: String = "endpoint",
+    val url: String = "",
+    val hasSecret: Boolean = false,
+    val hasPassphrase: Boolean = false,
+    val status: String = "",
+)
+
 data class ClipmoUiState(
     val clips: List<ClipRecord>,
     val monitorEnabled: Boolean,
@@ -174,6 +183,8 @@ fun ClipmoApp(
     onSyncNow: () -> Unit = {},
     onReconnect: () -> Unit = {},
     onSendToDevice: (Set<Long>, String?) -> Unit = { _, _ -> },
+    relay: RelayUi = RelayUi(),
+    onSaveRelay: (enabled: Boolean, backend: String, url: String, secret: String?, passphrase: String?) -> Unit = { _, _, _, _, _ -> },
     onRefresh: () -> Unit = {},
 ) {
     ClipmoTheme(state.themeMode) {
@@ -256,6 +267,8 @@ fun ClipmoApp(
                             onScanPairing = onScanPairing,
                             onSyncNow = onSyncNow,
                             onReconnect = onReconnect,
+                            relay = relay,
+                            onSaveRelay = onSaveRelay,
                         )
                         ClipmoScreen.SETTINGS -> SettingsScreen(
                             state = state,
@@ -826,6 +839,8 @@ private fun DevicesScreen(
     onScanPairing: () -> Unit,
     onSyncNow: () -> Unit,
     onReconnect: () -> Unit,
+    relay: RelayUi,
+    onSaveRelay: (Boolean, String, String, String?, String?) -> Unit,
 ) {
     val colors = ClipmoTheme.colors
     val space = ClipmoTheme.spacing
@@ -1006,6 +1021,9 @@ private fun DevicesScreen(
                 }
             }
 
+            Spacer(Modifier.height(space.xl))
+
+            ClipmoRelaySection(relay = relay, onSave = onSaveRelay)
             Spacer(Modifier.height(space.xl))
 
             if (state.pairingStatus.isNotBlank()) {
@@ -2850,6 +2868,64 @@ private fun ClipmoConfirmOverlay(
                 ClipmoButton(confirmLabel, ClipmoButtonStyle.DANGER, Modifier.weight(1f), icon = ClipmoIconKind.DELETE, onClick = onConfirm)
             }
         }
+    }
+}
+
+@Composable
+private fun ClipmoRelaySection(
+    relay: RelayUi,
+    onSave: (Boolean, String, String, String?, String?) -> Unit,
+) {
+    val colors = ClipmoTheme.colors
+    val space = ClipmoTheme.spacing
+    val type = ClipmoTheme.typography
+    var enabled by rememberSaveable(relay.enabled) { mutableStateOf(relay.enabled) }
+    var firebase by rememberSaveable(relay.backend) { mutableStateOf(relay.backend == "firebase") }
+    var url by rememberSaveable(relay.url) { mutableStateOf(relay.url) }
+    var secret by rememberSaveable { mutableStateOf("") }
+    var passphrase by rememberSaveable { mutableStateOf("") }
+    var expanded by rememberSaveable { mutableStateOf(relay.enabled) }
+
+    BasicText("Relay (optional)", style = type.section.copy(color = colors.textSecondary))
+    Spacer(Modifier.height(space.xs))
+    BasicText(
+        "Sync through your own server when the network blocks direct connections. Encrypted on your devices; text clips only.",
+        style = type.metadata.copy(color = colors.textMuted),
+    )
+    Spacer(Modifier.height(space.sm))
+    ClipmoButton(
+        label = if (expanded) "Hide relay settings" else if (relay.enabled) "Relay on — edit" else "Set up relay",
+        style = ClipmoButtonStyle.SECONDARY,
+        onClick = { expanded = !expanded },
+    )
+    if (expanded) {
+        Spacer(Modifier.height(space.sm))
+        Row(horizontalArrangement = Arrangement.spacedBy(space.sm)) {
+            ClipmoButton(if (enabled) "Enabled" else "Disabled", if (enabled) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.SECONDARY, Modifier.weight(1f), onClick = { enabled = !enabled })
+            ClipmoButton("Endpoint", if (!firebase) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.SECONDARY, Modifier.weight(1f), onClick = { firebase = false })
+            ClipmoButton("Firebase", if (firebase) ClipmoButtonStyle.PRIMARY else ClipmoButtonStyle.SECONDARY, Modifier.weight(1f), onClick = { firebase = true })
+        }
+        Spacer(Modifier.height(space.sm))
+        ClipmoSearchBar(value = url, hint = if (firebase) "Database URL (https://…)" else "Endpoint URL (https://…)", onValueChange = { url = it.trim() }, searchIcon = false)
+        Spacer(Modifier.height(space.sm))
+        ClipmoSearchBar(value = secret, hint = if (relay.hasSecret) "Token saved — blank keeps it" else if (firebase) "Database secret / auth token" else "Access token", onValueChange = { secret = it.trim() }, searchIcon = false)
+        Spacer(Modifier.height(space.sm))
+        ClipmoSearchBar(value = passphrase, hint = if (relay.hasPassphrase) "Passphrase saved — blank keeps it" else "Sync passphrase (same on all devices)", onValueChange = { passphrase = it }, searchIcon = false)
+        Spacer(Modifier.height(space.sm))
+        ClipmoButton(
+            label = "Save relay",
+            style = ClipmoButtonStyle.PRIMARY,
+            icon = ClipmoIconKind.CHECK,
+            onClick = {
+                onSave(enabled, if (firebase) "firebase" else "endpoint", url, secret.ifBlank { null }, passphrase.ifBlank { null })
+                secret = ""
+                passphrase = ""
+            },
+        )
+    }
+    if (relay.status.isNotBlank()) {
+        Spacer(Modifier.height(space.xs))
+        BasicText(relay.status, style = type.metadata.copy(color = colors.textSecondary))
     }
 }
 

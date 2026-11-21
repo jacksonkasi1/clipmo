@@ -38,9 +38,13 @@ sysinfo = "0.33"
 image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg", "webp"] }
 window-vibrancy = "0.8"
 if-addrs = "0.14"
+base64 = "0.22"
+ureq = { version = "2", features = ["json"] }
+aes-gcm = "0.10"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+hex = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

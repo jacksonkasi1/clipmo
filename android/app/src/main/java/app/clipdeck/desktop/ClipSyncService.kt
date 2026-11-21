@@ -232,6 +232,7 @@ class ClipSyncService : Service() {
 		val blobs: List<File> = emptyList(),
 		val estimatedBytes: Long = 1024,
 		var pendingPeers: MutableSet<String>? = null,
+		var relayed: Boolean = false,
 	)
 
 	data class Suppression(
@@ -297,6 +298,7 @@ class ClipSyncService : Service() {
 			launch { drainSendQueue(deviceId, deviceName) }
 			launch { watchLocalChanges(deviceId) }
 			launch { probePeers() }
+			launch { relayLoop(deviceId) }
 			if (intent?.action == ACTION_SYNC_NOW) enqueueHistoryBackfill()
 			if (intent?.action == ACTION_RECONNECT) reconnectSavedPeers(force = true, scan = true)
 		}
@@ -569,7 +571,18 @@ class ClipSyncService : Service() {
 				body = job.body
 			)
 
+			// Broadcast jobs (not "send to one device") also go to the relay once, when enabled.
+			val relay = relayConfig()
+			if (relay.enabled && !job.relayed) {
+				job.relayed = true
+				if (job.pendingPeers == null && job.body.isRelayEligible()) queueRelay(envelope)
+			}
 			val targets = job.pendingPeers ?: peers.keys.toMutableSet().also { job.pendingPeers = it }
+			if (targets.isEmpty() && relay.enabled) {
+				// No direct peer is reachable; the relay carries it and reconnect backfill covers LAN peers.
+				job.pendingPeers = null
+				continue
+			}
 			if (targets.isEmpty()) {
                 job.pendingPeers = null
 				syncMutex.withLock { jobQueue.addFirst(job) }
@@ -595,6 +608,69 @@ class ClipSyncService : Service() {
                 // An offline recipient must not block newer clips to online devices.
 				syncMutex.withLock { jobQueue.addLast(job) }
 				delay(1_000)
+			}
+		}
+	}
+
+	// ---- Relay (optional, end-to-end encrypted, user-owned mailbox) ----
+	private val relayClient by lazy { RelayClient(mapper) }
+	private val relayOutbox = java.util.concurrent.ConcurrentLinkedQueue<Pair<String, String>>()
+
+	private fun SyncBody.isRelayEligible() =
+		this is SyncBody.ClipUpsert || this is SyncBody.ClipEdit || this is SyncBody.FavoriteToggle || this is SyncBody.Tombstone
+
+	private fun relayConfig(): RelayConfig {
+		val p = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+		return RelayConfig(
+			p.getBoolean("relay_enabled", false), p.getString("relay_backend", "endpoint").orEmpty(),
+			p.getString("relay_url", "").orEmpty(), p.getString("relay_secret", "").orEmpty(),
+			p.getString("relay_key", "").orEmpty(), p.getString("relay_channel", "").orEmpty(),
+		)
+	}
+
+	private fun queueRelay(envelope: SyncEnvelope) {
+		if (relayOutbox.size >= 500) relayOutbox.poll()
+		val json = mapper.writeValueAsString(envelope.copy(pairing_code = ""))
+		relayOutbox.add(RelayCrypto.newItemId() to json)
+	}
+
+	private suspend fun relayLoop(deviceId: String) = withContext(Dispatchers.IO) {
+		val prefs = getSharedPreferences("clipmo_sync", Context.MODE_PRIVATE)
+		while (running) {
+			delay(4_000)
+			val config = relayConfig()
+			if (!config.enabled || config.keyHex.isBlank() || !prefs.getBoolean("sync_enabled", false)) continue
+			try {
+				while (true) {
+					val (id, json) = relayOutbox.peek() ?: break
+					relayClient.push(config, MailItem(id, deviceId, RelayCrypto.encrypt(config.keyHex, json.toByteArray())))
+					relayOutbox.poll()
+				}
+				var cursor = prefs.getString("relay_cursor", null) ?: "%016d-".format(System.currentTimeMillis() - 600_000)
+				for (item in relayClient.pull(config, cursor)) {
+					cursor = item.id
+					if (item.device == deviceId) continue
+					val plain = RelayCrypto.decrypt(config.keyHex, item.blob) ?: continue
+					if (plain.size > 512 * 1024) continue
+					val envelope = runCatching { mapper.readValue(plain, SyncEnvelope::class.java) }.getOrNull() ?: continue
+					if (envelope.device.id != item.device || envelope.body.version().device_id != envelope.device.id
+						|| !validIdHash(envelope.body.idHash())) continue
+					lamport.updateAndGet { maxOf(it, envelope.body.version().lamport) + 1 }
+					incomingMutex.withLock {
+						when (val body = envelope.body) {
+							is SyncBody.ClipUpsert -> applyClipUpsert(envelope, body.clip)
+							is SyncBody.ClipEdit -> applyClipEdit(body)
+							is SyncBody.FavoriteToggle -> applyFavoriteToggle(body)
+							is SyncBody.Tombstone -> applyTombstone(body)
+							else -> Unit
+						}
+					}
+				}
+				prefs.edit().putString("relay_cursor", cursor).putLong("relay_last_ok", System.currentTimeMillis())
+					.remove("relay_error").apply()
+			} catch (e: Exception) {
+				Log.d("ClipSyncService", "relay: ${e.message}")
+				prefs.edit().putString("relay_error", e.message ?: "Relay failed").apply()
 			}
 		}
 	}

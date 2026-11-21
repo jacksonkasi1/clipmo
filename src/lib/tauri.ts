@@ -18,6 +18,8 @@ import type {
   SourceApp,
   FilterScope,
   BulkFilterAction,
+  RelayInput,
+  RelayStatus,
 } from './types';
 
 // ** import lib
@@ -73,6 +75,8 @@ export const api = {
     invoke<void>('clear_history', { includeFavorites, scope }),
   clearCategory: (kind: ItemKind, includeFavorites = false, scope: ClearScope = 'all') =>
     invoke<void>('clear_category', { kind, includeFavorites, scope }),
+  relayStatus: () => invoke<RelayStatus>('relay_status'),
+  saveRelay: (input: RelayInput) => invoke<RelayStatus>('save_relay', { input }),
   reconnectSync: () => invoke<number>('reconnect_sync'),
   sendToDevice: (ids: number[], targetId: string | null) =>
     invoke<number>('send_to_device', { ids, targetId }),

@@ -33,6 +33,7 @@ import app.clipdeck.desktop.data.ClipboardStore
 import app.clipdeck.desktop.data.TrustedDeviceRecord
 import app.clipdeck.desktop.ui.ClipmoApp
 import app.clipdeck.desktop.ui.ClipmoUiState
+import app.clipdeck.desktop.ui.RelayUi
 import app.clipdeck.desktop.ui.theme.ClipmoThemeMode
 import java.util.UUID
 import java.security.MessageDigest
@@ -53,6 +54,7 @@ class MainActivity : ComponentActivity() {
     private var copyLiveSyncToClipboard by mutableStateOf(false)
     private var pairingCode by mutableStateOf("")
     private var pairingStatus by mutableStateOf("")
+    private var relayUi by mutableStateOf(RelayUi())
     private var joinPending by mutableStateOf(false)
     private var pairingModeActive by mutableStateOf(false)
     private var pairingUntilMs by mutableStateOf(0L)
@@ -161,6 +163,8 @@ class MainActivity : ComponentActivity() {
                 onSyncNow = ::syncNow,
                 onReconnect = ::reconnect,
                 onSendToDevice = ::sendToDevice,
+                relay = relayUi,
+                onSaveRelay = ::saveRelay,
                 onRefresh = ::refreshSync,
             )
         }
@@ -232,6 +236,7 @@ class MainActivity : ComponentActivity() {
             pairingUntilMs = until
             pairingModeActive = until > System.currentTimeMillis()
             pairingStatus = preferences.getString("pairing_status", "").orEmpty()
+            relayUi = readRelay()
             joinPending = preferences.getLong("join_until", 0L) > System.currentTimeMillis()
         }
     }
@@ -287,6 +292,49 @@ class MainActivity : ComponentActivity() {
                 .putExtra("target", targetId.orEmpty()),
         )
         Toast.makeText(this, "Sending ${ids.size} clip${if (ids.size == 1) "" else "s"}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun readRelay(): RelayUi {
+        val secretSaved = preferences.getString("relay_secret", "").orEmpty().isNotEmpty()
+        val enabled = preferences.getBoolean("relay_enabled", false)
+        val error = preferences.getString("relay_error", null)
+        val ok = preferences.getLong("relay_last_ok", 0L)
+        return RelayUi(
+            enabled = enabled,
+            backend = preferences.getString("relay_backend", "endpoint").orEmpty(),
+            url = preferences.getString("relay_url", "").orEmpty(),
+            hasSecret = secretSaved,
+            hasPassphrase = preferences.getString("relay_key", "").orEmpty().isNotEmpty(),
+            status = when {
+                !enabled -> ""
+                error != null -> "Relay problem: $error"
+                ok > 0 -> "Relay connected"
+                else -> "Relay waiting for first sync…"
+            },
+        )
+    }
+
+    private fun saveRelay(enabled: Boolean, backend: String, url: String, secret: String?, passphrase: String?) {
+        if (enabled && !(url.startsWith("https://") || url.startsWith("http://10.0.2.2"))) {
+            Toast.makeText(this, "The relay address must start with https://", Toast.LENGTH_LONG).show()
+            return
+        }
+        val editor = preferences.edit()
+            .putBoolean("relay_enabled", enabled).putString("relay_backend", backend).putString("relay_url", url.trim())
+            .remove("relay_error")
+        if (secret != null) editor.putString("relay_secret", secret.trim())
+        if (passphrase != null) {
+            val (key, channel) = RelayCrypto.derive(passphrase)
+            editor.putString("relay_key", key).putString("relay_channel", channel).remove("relay_cursor")
+        }
+        if (enabled && passphrase == null && preferences.getString("relay_key", "").isNullOrEmpty()) {
+            Toast.makeText(this, "Choose a sync passphrase for the relay", Toast.LENGTH_LONG).show()
+            return
+        }
+        editor.apply()
+        relayUi = readRelay()
+        Toast.makeText(this, if (enabled) "Relay saved" else "Relay turned off", Toast.LENGTH_SHORT).show()
+        if (enabled && syncEnabled) startSyncService()
     }
 
     private fun reconnect() {

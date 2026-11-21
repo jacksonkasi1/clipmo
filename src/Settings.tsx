@@ -4,6 +4,7 @@ import type { ApplicationInfo, Backdrop, FileFilterMode, IgnoredApp, ImageCompre
 
 // ** import utils
 import { formatBytes } from './lib/formatting';
+import { RelaySettings } from './components/RelaySettings';
 import { shortcutFromKeyEvent, shortcutRecorderKeyAction } from './lib/global-shortcut';
 import { mutationErrorMessage } from './lib/mutation-error';
 
@@ -16,6 +17,7 @@ import {
   AppWindow,
   Archive,
   Check,
+  Cloud,
   CircleAlert,
   FolderOpen,
   HardDrive,
@@ -532,6 +534,12 @@ export default function Settings() {
               ))
             )}
           </div>
+        </Section>
+        )}
+
+        {activeCategory === 'sync' && (
+        <Section title="Relay (optional)" description="Sync through your own server when the network blocks direct connections." icon={<Cloud size={18} />}>
+          <RelaySettings />
         </Section>
         )}
 

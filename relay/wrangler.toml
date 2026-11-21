@@ -1,0 +1,8 @@
+name = "clipmo-relay"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "clipmo-relay"
+database_id = "REPLACE_WITH_YOUR_D1_ID"

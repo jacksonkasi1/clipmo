@@ -1046,6 +1046,19 @@ pub async fn send_to_device(
 }
 
 #[tauri::command]
+pub async fn relay_status(state: tauri::State<'_, AppState>) -> Result<crate::sync::RelayStatus> {
+    Ok(state.sync.relay_status())
+}
+
+#[tauri::command]
+pub async fn save_relay(
+    state: tauri::State<'_, AppState>,
+    input: crate::sync::RelayInput,
+) -> Result<crate::sync::RelayStatus> {
+    state.sync.save_relay(input)
+}
+
+#[tauri::command]
 pub async fn reconnect_sync(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<usize> {
     let service = state.sync.clone();
     let connected = tauri::async_runtime::spawn_blocking(move || service.reconnect_now())

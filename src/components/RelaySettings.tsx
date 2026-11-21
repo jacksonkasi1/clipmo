@@ -1,0 +1,116 @@
+// ** import lib
+import { useEffect, useState } from 'react';
+import { Cloud } from 'lucide-react';
+
+import { api } from '../lib/tauri';
+import { mutationErrorMessage } from '../lib/mutation-error';
+import type { RelayBackend, RelayStatus } from '../lib/types';
+
+/**
+ * Optional end-to-end-encrypted relay for networks that block direct LAN sync.
+ * The mailbox is the user's own (Cloudflare Worker, Firebase, ...); the passphrase
+ * never leaves their devices.
+ */
+export function RelaySettings() {
+  const [status, setStatus] = useState<RelayStatus | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [backend, setBackend] = useState<RelayBackend>('endpoint');
+  const [url, setUrl] = useState('');
+  const [secret, setSecret] = useState('');
+  const [passphrase, setPassphrase] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = async () => {
+    const next = await api.relayStatus();
+    setStatus(next);
+    setEnabled(next.enabled);
+    setBackend(next.backend === 'firebase' ? 'firebase' : 'endpoint');
+    setUrl(next.url);
+  };
+
+  useEffect(() => {
+    void load().catch(() => undefined);
+    const timer = window.setInterval(() => {
+      void api.relayStatus().then(setStatus).catch(() => undefined);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const next = await api.saveRelay({
+        enabled,
+        backend,
+        url,
+        secret: secret ? secret : null,
+        passphrase: passphrase ? passphrase : null,
+      });
+      setStatus(next);
+      setSecret('');
+      setPassphrase('');
+      setMessage(enabled ? 'Relay saved. Use the same passphrase on every device.' : 'Relay turned off.');
+    } catch (error) {
+      setMessage(mutationErrorMessage('Relay could not be saved.', error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="relay-settings">
+      <p>
+        <Cloud size={14} aria-hidden /> Sync through your own server when devices cannot reach each other directly.
+        Everything is encrypted on your devices with your passphrase; text clips, edits, favorites and deletes use the relay.
+      </p>
+      <label>
+        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /> Enable relay
+      </label>
+      <label>
+        Backend
+        <select value={backend} onChange={(event) => setBackend(event.target.value as RelayBackend)}>
+          <option value="endpoint">Custom endpoint (Cloudflare Worker, Turso, Postgres…)</option>
+          <option value="firebase">Firebase Realtime Database</option>
+        </select>
+      </label>
+      <label>
+        {backend === 'firebase' ? 'Database URL' : 'Endpoint URL'}
+        <input type="url" value={url} placeholder="https://…" onChange={(event) => setUrl(event.target.value)} />
+      </label>
+      <label>
+        {backend === 'firebase' ? 'Database secret / auth token' : 'Access token'}
+        <input
+          type="password"
+          value={secret}
+          placeholder={status?.hasSecret ? 'Saved — leave blank to keep' : ''}
+          onChange={(event) => setSecret(event.target.value)}
+        />
+      </label>
+      <label>
+        Sync passphrase (same on all devices)
+        <input
+          type="password"
+          value={passphrase}
+          placeholder={status?.hasPassphrase ? 'Saved — leave blank to keep' : ''}
+          onChange={(event) => setPassphrase(event.target.value)}
+        />
+      </label>
+      <div className="history-actions">
+        <button type="button" className="primary-button" disabled={busy} onClick={() => void save()}>Save relay</button>
+      </div>
+      {status?.enabled && (
+        <p role="status">
+          {status.lastError
+            ? `Relay problem: ${status.lastError}`
+            : status.lastOkAt > 0
+              ? `Connected · last sync ${new Date(status.lastOkAt).toLocaleTimeString()}`
+              : 'Waiting for the first sync…'}
+        </p>
+      )}
+      {message && <p role="status">{message}</p>}
+      <p>Setup guide for Cloudflare, Firebase and SQL backends: <code>relay/README.md</code> in the Clipmo repository.</p>
+    </div>
+  );
+}

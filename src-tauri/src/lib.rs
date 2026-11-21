@@ -154,6 +154,8 @@ pub fn run() {
             commands::sync_state,
             commands::sync_history_now,
             commands::reconnect_sync,
+            commands::relay_status,
+            commands::save_relay,
             commands::send_to_device,
             sync::load_sync_preferences,
             sync::save_sync_preferences,
