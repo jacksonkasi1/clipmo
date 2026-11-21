@@ -14,8 +14,9 @@ use tauri::{Manager, WindowEvent};
 #[cfg(not(test))]
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 
-// Used by the Windows capture path only; macOS builds keep it for shared tests.
-#[cfg_attr(not(windows), allow(dead_code))]
+// Used by the capture path outside tests (and by Windows source detection); the test build and
+// macOS keep it for shared tests, so dead-code lints must not fail release lint jobs.
+#[cfg_attr(any(test, not(windows)), allow(dead_code))]
 mod capture_policy;
 pub mod clipboard;
 #[cfg(not(test))]
